@@ -12,7 +12,7 @@ cd ~/<your_directory>
 git clone https://github.com/sheng09/sacpy.git
 ```
 
-2. Configure your [PYTHONPATH](https://docs.python.org/2/using/cmdline.html#envvar-PYTHONPATH). And below line into your `~/.bash_profile`, or `~/.bash_rc`, etc. 
+2. Configure your [PYTHONPATH](https://docs.python.org/2/using/cmdline.html#envvar-PYTHONPATH). Add below line into your `~/.bash_profile`, or `~/.bash_rc`, etc. 
 
 ```
 export PATH="<your_directory>:${PYTHONPATH}" # for sh, bash
