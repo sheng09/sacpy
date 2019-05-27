@@ -81,7 +81,7 @@ import numpy as np
 import scipy.signal as signal
 import struct
 import sys
-
+import sacpy.geomath as geomath
 ###
 #  dependend methods
 ###
@@ -530,6 +530,9 @@ class sactrace:
         #
         ###
 
+###
+#  sactrace container
+###
 class sactrace_list(list):
     """
     Is this necessary ?
@@ -586,7 +589,7 @@ class sactrace_list(list):
         """
         #sorted(self, key=)
         tmp = {'descend': -1, 'ascend': 1}
-        print(np.argsort([it[sachdr_key] for it in self ] )[::tmp[sequence] ])
+        #print(np.argsort([it[sachdr_key] for it in self ] )[::tmp[sequence] ])
         lst = [self[idx] for idx in  np.argsort([it[sachdr_key] for it in self ] )[::tmp[sequence] ] ]
         self.clear()
         self.extend(lst)
@@ -614,7 +617,413 @@ class sactrace_list(list):
         scale = 1.0 / max(np.max(trace), -np.min(trace) )
         return trace * scale
 
+###
+#  sachdr container
+#  - sachdr_list: list of `sachdr`
+#  - sachdr_dict: dict of `sachdr`
+###
+class sachdr_list(list):
+    """
+    A list object for storing sac header.
+    #
+    This is for processing sac header, and associated, informations without
+    touching time series, like selecting, sorting, pairing, etc.
+    """
+    def __init__(self):
+        """
+        Empty constructor
+        """
+        pass
+    def deepcopy(self):
+        """
+        Deepcopy and return a new object.
+        """
+        return copy.deepcopy(self)
+    ### IO
+    def read_fnm_lst(self, fnm_lst):
+        """
+        Read headers from a list of sac filenames for initialization.
+        """
+        self.extend( [rd_sachdr(fnm) for fnm in fnm_lst] )
+    def write_table(self, filename, key_lst, sep='\t'):
+        """
+        Write table into file given keys.
+        filename: string of filename for output;
+        key_lst: a list contain keys for the table. (eg. ['filename', 'stlo', 'stla', 'stnm'] )
+        sep: column separator, default is tab '\t';
+        """
+        with open(filename, 'w') as fid:
+            print('\n'.join( [sep.join(['{:}'.format(it[key]) for key in key_lst]) for it in self ] ) , file=fid )
+    ### update and self-revision methods
+    def select(self, key, range):
+        """
+        Select and update given range for specific key.
+        key: key being used for selection;
+        range: a range of [low, high] for selection.
+        #
+        eg. select('mag', (6.0, 7.0) ) for selecting data with magnitude in [6.0, 7.0).
+        """
+        tmp = [it for it in self if it[key] >= range[0] and it[key] < range[1] ]
+        self.clear()
+        self.extend(tmp)
+    def sort(self, key, sequence= 'ascend'):
+        """
+        Sort with respect to specified `key`.
+        key: reference for sorting; (eg. 'mag' );
+        sequence: 'descend' or 'ascend';
+        """
+        tmp = {'descend': -1, 'ascend': 1}
+        lst = [self[idx] for idx in np.argsort([it[key] for it in self ] )[::tmp[sequence] ] ]
+        self.clear()
+        self.extend(lst)
+    def rm_duplication(self):
+        """
+        Update by removing duplicated items for same `filename`.
+        Note this function will destroy the sequence.
+        """
+        tmp = self.to_sachdr_dict(False).to_sachdr_list(False)
+        self.clear()
+        self.extend(tmp)
+    def set_id(self, start_value= 0):
+        """
+        Set a increasing key `key` to `sachdr`, started from `start_value`.
+        """
+        if 'id' in self[0]:
+            print('Err: some id already set, in start_value.set_id(...)' )
+            sys.exit(0)
+        id = start_value
+        for it in self:
+            it['id'] = id
+            id = id + 1
+    ###
+    def to_sachdr_dict(self, deepcopy=True):
+        """
+        Generate and return an object of `sachdr_dict`, and duplicated filenames will be removed.
+        deepcopy: True (default) or False for deepcopy
+        """
+        vol = sachdr_dict()
+        if deepcopy:
+            for it in self:
+                fnm = it['filename']
+                if fnm not in vol:
+                    vol[fnm] = copy.deepcopy(it)
+        else:
+            for it in self:
+                fnm = it['filename']
+                if fnm not in vol:
+                    vol[fnm] = it
+        return vol
+    def get_key_lst(self, key):
+        """
+        Get and return a list of sac header key values.
+        key: specified key; (eg. 'mag')
+        """
+        return [it[key] for it in self ]
+    def get_key_range(self, key):
+        """
+        Get and return (min, max) key value for all sac headers.
+        key: specified key; (eg. 'mag')
+        """
+        tmp = self.get_key_lst(key)
+        return  np.min(tmp), np.max(tmp)
+    ###
+class sachdr_dict(dict):
+    """
+    A dict object for storing sac headers. Key used here is filename.
+    #
+    This is for processing sac header, and associated, informations without
+    touching time series, like selecting, sorting, pairing, etc.
+    """
+    def __init__(self):
+        """
+        Empty constructor
+        """
+        pass
+    def deepcopy(self):
+        """
+        Deepcopy and return a new object.
+        """
+        return copy.deepcopy(self)
+    ### IO
+    def read_fnm_lst(self, fnm_lst):
+        """
+        Read headers from a list of sac filenames for initialization.
+        """
+        for fnm in fnm_lst:
+            if fnm not in self:
+                self[fnm] = rd_sachdr(fnm)
+    def write_table(self, filename, key_lst, sep='\t'):
+        """
+        Write table into file given keys. Note that line sequence is random.
+        filename: string of filename for output;
+        key_lst: a list contain keys for the table. (eg. ['filename', 'stlo', 'stla', 'stnm'] )
+        sep: column separator, default is tab '\t';
+        """
+        with open(filename, 'w') as fid:
+            print('\n'.join( [sep.join(['{:}'.format(it[key]) for key in key_lst]) for it in self.values() ] ) , file=fid )
+    ### update and self-revision methods
+    ###
+    def to_sachdr_list(self, deepcopy=True):
+        """
+        Generate and return an object of `sachdr_list`, and its sequence is random.
+        deepcopy: True (default) or False for deepcopy
+        """
+        if deepcopy:
+            return copy.deepcopy(list( self.values() ) )
+        else:
+            return list( self.values() ) 
+    ###
+
+###
+#  high-level `sachdr_list` container
+#  - sachdr_ev_dict: dict with respect to event
+#                    evkey -> `sachdr_list`
+#              HOW ABOUT A NEW VARIABLE NAME ???
+###
+class sachdr_ev_dict(dict):
+    """
+    A dict object for storing sac headers grouped with respect
+    to different events.
+    Key used here are user- defined, eg. strings, and corresponding values
+    are list of `sachdr` object for that event.
+    #
+    """
+    def __init__(self):
+        """
+        Empty constructor
+        """
+        pass
+    ### Inserting, and accessing, and updating
+    def add(self, evkey, hdr_lst):
+        """
+        Add a list of `sachdr` with same event information.
+        #
+        evkey: user- defined key, can be anything, eg. string.
+        hdr_lst: a list of `sachdr` objects;
+        """
+        if evkey not in self:
+            self[evkey] = sachdr_list()
+        self[evkey].extend(hdr_lst)
+    def set_id(self, start_id= 0):
+        """
+        Set a increasing key `key` to all `sachdr`, started from `start_value`.
+        """
+        id = start_id
+        for v in self.values():
+            v.set_id(id)
+            id = v.get_key_range('id')[1] + 1
+    ###
+    ### 
+    def to_sachdr_pair_ev_list(self):
+        """
+        Generate and return an object of sachdr_pair_ev_list, which 
+        contains all pair of sachdr with same event information.
+        """
+        tmp = sachdr_pair_ev_list()
+        for v in self.values():
+            for it1 in v:
+                tmp.extend( [sachdr_pair_ev(it1, it2) for it2 in v] )
+        return tmp
+    ###
+    #def __mk_key(self, evlo, evla, evdp_km, mag, otime):
+    #    """
+    #    Make key given a set of event information.
+    #    #
+    #    evlo, evla, evdp_km, mag, otime: event information;
+    #    """
+    #    return (evlo, evla, evdp_km, mag, otime)
+    #    #{'evlo': evlo, 'evla': evla, 'evdp': evdp_km, 'mag': mag, 'otime': otime}
+
+###
+#  sachdr_pair
+#  - sachdr_pair:    base class
+#  - sachdr_pair_ev: class for pair having same event
+###
+class sachdr_pair(dict):
+    """
+    A pair of two sac header. Note that the order of two sac header is important.
+    
+    Two headers can be access by:
+    eg['hdr1'], eg['hdr2'].
+    And, more keys can be added into this object.
+    """
+    def __init__(self, h1, h2):
+        """
+        Construtor.
+        h1, h2: `sachdr` object;
+        """
+        self.set_hdr(h1, h2)
+    def set_hdr(self, h1, h2):
+        """
+        Set two sac headers.
+        h1, h2: `sachdr` object;
+        """
+        #self.h1 = h1
+        #self.h2 = h2
+        self['hdr1'] = h1
+        self['hdr2'] = h2
+    def __eq__(self, other):
+        """
+        Check whether two `sachdr_pair_ev` object are equal based on filenames.
+        """
+        return self.h1['filename'] == other.h1['filename'] and self.h2['filename'] == other.h2['filename']
+class sachdr_pair_ev(sachdr_pair):
+    """
+    A pair of two sac header with same event. Note that the order of two sac header is important.
+
+    Critical key are:
+        ['hdr1']      : 1st sachdr object
+        ['hdr1']      : 2nd sachdr object
+        ['st_dist']   : inter-station distance in degree;
+        ['daz']       : azimuth difference;
+        ['dbaz']      : back- azimuth difference;
+        ['gc2ev']     : distance from event to great circle formed by two stations;
+        ['gc2st1']    : distance from the 1st station to great circle formed by event and the 2nd station;
+        ['gc2st2']    : distance from the 2nd station to great circle formed by event and the 1st station;
+    """
+    def __init__(self, h1, h2):
+        """
+        Construtor.
+        h1, h2: `sachdr` object;
+        """
+        sachdr_pair.__init__(self, h1, h2)
+        #print(self.h1, self.h2)
+        evlo, evla  = h1['evlo'], h1['evla']
+        stlo1, stla1 = h1['stlo'], h1['stla']
+        stlo2, stla2 = h2['stlo'], h2['stla']
+        h1['az'] = geomath.azimuth(evlo, evla, stlo1, stla1)
+        h2['az'] = geomath.azimuth(evlo, evla, stlo2, stla2)
+        h1['baz'] = geomath.azimuth(stlo1, stla1, evlo, evla)
+        h2['baz'] = geomath.azimuth(stlo1, stla1, evlo, evla)
+        self['st_dist'] = geomath.haversine(stlo1, stla1, stlo2, stla2 )
+        self['daz'       ] = h1['az'] - h2['az']
+        self['dbaz'      ] = h1['baz'] - h2['baz']
+        self['gc2ev'     ] = geomath.point_distance_to_great_circle_plane(evlo, evla, stlo1, stla1, stlo2, stla2)
+        self['gc2st1'    ] = geomath.point_distance_to_great_circle_plane(stlo1, stla1, evlo, evla, stlo2, stla2)
+        self['gc2st2'    ] = geomath.point_distance_to_great_circle_plane(stlo2, stla2, evlo, evla, stlo1, stla1)
+    def __str__(self):
+        s = sachdr_pair.__str__(self)
+        #s += '\n'
+        #s += '\n'.join( ['{:<9s}: {:f}'.format(key, self[key]) for key in ['st_dist', 'daz', 'dbaz', 'gc2ev', 'gc2st1', 'gc2st2'] ] )
+        return s
+
+###
+#  sachdr_pair container
+#  - sachdr_pair_ev_list: list of `sachdr_pair_ev`
+###
+class sachdr_pair_ev_list(list):
+    """
+    """
+    def __init__(self):
+        """
+        A list object for storing `sachdr_pair_ev`.
+        """
+    ### IO
+    def write_table(self, filename, sachdr_key_lst, pair_key_lst, sep='\t'):
+        """
+        Write table into file given keys.
+        filename: string of filename for output;
+        sachdr_key_lst: a list containing sachdr keys for the table. 
+            (eg. ['filename', 'stlo', ...], or other user defined keys )
+        pair_key_lst:   a list containing sachdr_pair_ev keys for the table.
+            (eg. ['st_dist', 'daz', ...], or other user defined keys )
+        sep: column separator, default is tab '\t';
+        """
+        with open(filename, 'w') as fid:
+            s = []
+            for it in self:
+                tmp = []
+                #print(it['hdr1'])
+                tmp.extend([ '{:}'.format(it['hdr1'][key]) for key in sachdr_key_lst] )
+                tmp.extend([ '{:}'.format(it['hdr2'][key]) for key in sachdr_key_lst] )
+                tmp.extend([ '{:}'.format(it[key]        ) for key in pair_key_lst  ] )
+                s.append(sep.join(tmp) )
+                #s = '\n'.join( [sep.join([it.hd1[key] for key in sachdr_key_lst] ) + sep +
+                #                sep.join([it.hd2[key] for key in sachdr_key_lst] ) + sep +
+                #                sep.join([it[key] for key in pair_key_lst] ) 
+                #                for it in self] )
+            print('\n'.join(s), file= fid)
+    def select(self, key, range):
+        """
+        Select and update given range for specific key.
+        key: key being used for selection, can be 'st_dist', 'daz', 'dbaz', 'gc2ev', 'gc2st1', 
+             'gc2st2', as defined in `sachdr_pair_ev`, or other user defined key;
+        range: a range of [low, high] for selection.
+        #
+        eg. select('daz', (-5.0, 5.0) ) for selecting data with magnitude in [6.0, 7.0).
+        """
+        tmp = [it for it in self if it[key] >= range[0] and it[key] < range[1] ]
+        self.clear()
+        self.extend(tmp)
+    ###
+    def to_sachdr_dict(self):
+        """
+        Generate and return an object of `sachdr_dict` for all sac files used.
+        """
+        tmp = sachdr_dict()
+        for it_pair in self:
+            for it in [it_pair['hdr1'], it_pair['hdr2'] ]:
+                fnm = it['filename']
+                if fnm not in tmp:
+                    tmp[fnm] = it
+        return tmp
+
+###
+#  high-level `sachdr_pair_ev_list` container
+###
+#class 
+
+##########################
+##########################
+##########################
 if __name__ == "__main__":
+    import glob
+    vol = sachdr_ev_dict()
+    id = 1
+    for evdir in glob.glob('/mnt/Tdata/.ccPhysics/10_real_data/04/whitened_bp_data_1_12/2010*'):
+        evkey = evdir.split('/')[-1]
+        fnmlst = glob.glob(evdir+'/*BHZ.SAC')
+        tmp = sachdr_list()
+        tmp.read_fnm_lst(fnmlst)
+        vol.add(evkey, tmp )
+    vol.set_id(1)
+    print(vol.keys() ) 
+    pair_vol = vol.to_sachdr_pair_ev_list()
+    pair_vol.select('daz', ( -5, 5) )
+    print(len(pair_vol) )
+    pair_vol.write_table('test.txt', ['id'], ['daz'] )
+    sub_vol = pair_vol.to_sachdr_dict()
+    sub_vol.write_table('test.2.txt', ['filename', 'id'] )
+    print(len(sub_vol) )
+    sys.exit(0)
+    ####################
+    ###
+    vol = sachdr_list()
+    vol.read_fnm_lst(glob.glob('/mnt/Tdata/.ccPhysics/10_real_data/04/whitened_bp_data_1_12/2010*/*.BHZ.SAC') )
+    ### select
+    vol.select('mag', (6.9, 9999) )
+    ###
+    sys.exit(0)
+    ###
+    vol = sachdr_list()
+    vol.read_fnm_lst(['test2.sac', 'test.sac', 'test.sac'])
+    vol.write_table('junk.txt', ['b', 'e', 'npts', 'delta', 'kstnm', 'filename'])
+    v2 = vol.deepcopy()
+    v2.clear()
+    print(len(vol), len(v2) )
+    print(vol, v2)
+    d = vol.to_sachdr_dict()
+    print(d)
+    print(vol)
+    vol.rm_duplication()
+    print(vol)
+    ###
+    p = sachdr_pair_ev(vol[0], vol[1])
+    p2 =sachdr_pair(vol[0], vol[1])
+    print(p)
+    print(p2)
+    sys.exit(0)
+    sys.exit()
     wrt_sac_2('test.sac', np.array([1,2,3,4,5,6,7] ), 1.0, 0.0, **{'kstnm': 'aaaaaaaaaaaaaaaaaa', 'kevnm': 'bbbbbbbbbbbbbbbbbbbb'} )
     s = rd_sac('test.sac')
     print(s)
@@ -624,7 +1033,8 @@ if __name__ == "__main__":
     s2 = rd_sac('test2.sac')
     print(s)
     #print([s['kt0'] ] )
-    #sys.exit(0)
+    ##
+    
     vol  = sactrace_list()
     vol.read_fnm_lst(['1.sac', '2.sac', '3.sac'])
     vol.sort('mag', 'descend')
