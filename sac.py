@@ -918,6 +918,7 @@ class sachdr_pair_ev_list(list):
         """
         A list object for storing `sachdr_pair_ev`.
         """
+        pass
     ### IO
     def write_table(self, filename, sachdr_key_lst, pair_key_lst, sep='\t'):
         """
