@@ -19,6 +19,16 @@ export PATH="<your_directory>:${PYTHONPATH}" # for sh, bash
 setenv PATH "<your_directory>:${PYTHONPATH}" # for csh
 ```
 
+3. Keep updating
+
+Update [sacpy]() to lastest version. Please keep updating often for less bugs, and new features, functions, etc.
+
+```
+cd ~/<your_directory> 
+git pull origin master
+```
+
+
 # 2. Examples
 
 ```
