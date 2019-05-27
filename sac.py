@@ -610,7 +610,7 @@ class sactrace_list(list):
         ax = plt.subplot(111)
         for  tr in self:
             ax.plot(tr.get_time_axis(), tr.dat, label= tr['filename'] )
-            ax.legend(loc = 'upper right')
+        ax.legend(loc = 'upper right')
         plt.show()
     @staticmethod
     def normed(trace):
