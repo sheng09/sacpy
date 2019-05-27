@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 
 """
-xcc in python
+sac in python3.x
 """
 
-__title__ = 'xccpy.sacpy'
+__title__ = 'sacpy'
 __version__ = '0.0.2'
 __author__ = 'Sheng Wang'
 
-__all__ = ['IntKernel2D']
+__all__ = ['sac']
 
 
 

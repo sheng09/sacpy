@@ -25,6 +25,7 @@ setenv PATH "<your_directory>:${PYTHONPATH}" # for csh
 File IO dependent methods
 -------------------------
 
+>>> from sacpy.sac import *
 >>> # io, view,  basic processing
 >>> s = rd_sac('1.sac')
 >>> s.plot()       
