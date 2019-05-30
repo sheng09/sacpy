@@ -81,6 +81,8 @@ import numpy as np
 import scipy.signal as signal
 import struct
 import sys
+import glob
+import pickle
 import sacpy.geomath as geomath
 ###
 #  dependend methods
@@ -218,6 +220,8 @@ class sachdr:
                 'kt9', 'kf', 'kuser0',
                 'kuser1', 'kuser2', 'kcmpnm',
                 'knetwk', 'kdatrd', 'kinst' ]
+    little_endian_format  = '<70f40i192s' #'f' * 70 + 'i' * 40 + '192s'
+    big_endian_format     = '>70f40i192s' #'f' * 70 + 'i' * 40 + '192s'
     ###
     def __init__(self):
         """
@@ -239,7 +243,9 @@ class sachdr:
             self.d_arch['filename'] = copy.deepcopy(f)
             f = open(f, 'rb')
         hdrvol = f.read(632)
-        info = struct.unpack('70f40i192s', hdrvol)
+        #print(sachdr.little_endian_format)
+        info = struct.unpack(sachdr.little_endian_format, hdrvol)
+        info = info if 1< info[76] < 7 else struct.unpack(sachdr.big_endian_format, hdrvol)
         ###
         dict_f = dict()
         dict_i = dict()
@@ -657,7 +663,7 @@ class sachdr_list(list):
     ### update and self-revision methods
     def select(self, key, range):
         """
-        Select and update given range for specific key.
+        Select and update inplacely given range for specific key.
         key: key being used for selection;
         range: a range of [low, high] for selection.
         #
@@ -666,6 +672,18 @@ class sachdr_list(list):
         tmp = [it for it in self if it[key] >= range[0] and it[key] < range[1] ]
         self.clear()
         self.extend(tmp)
+    def select_return(self, key, range):
+        """
+        Select and return a new sachdr_list object
+        given range for specific key.
+        key: key being used for selection;
+        range: a range of [low, high] for selection.
+        #
+        eg. select_return('mag', (6.0, 7.0) ) for selecting data with magnitude in [6.0, 7.0).
+        """
+        tmp = sachdr_list()
+        tmp.extend( [it for it in self if range[0] <= it[key] < range[1] ] )
+        return tmp
     def sort(self, key, sequence= 'ascend'):
         """
         Sort with respect to specified `key`.
@@ -768,10 +786,9 @@ class sachdr_dict(dict):
         Generate and return an object of `sachdr_list`, and its sequence is random.
         deepcopy: True (default) or False for deepcopy
         """
-        if deepcopy:
-            return copy.deepcopy(list( self.values() ) )
-        else:
-            return list( self.values() ) 
+        tmp = sachdr_list()
+        tmp.extend(list( self.values() ) )
+        return copy.deepcopy(tmp) if deepcopy else tmp
     ###
 
 ###
@@ -793,6 +810,57 @@ class sachdr_ev_dict(dict):
         Empty constructor
         """
         pass
+    ### IO
+    def init_dir_template(self, fnm_template, verbose= False):
+        """
+        Read all sac file headers based on `fnm_template` to build this archive.
+        fnm_template: filenames template for header reading and grouping;
+        verbose: (default is False)
+        eg: fnm_template = '/dat/2010*/*BHZ.SAC'
+            for which, all sac files are grouped with respect to event
+            that each `/dat/2010*/` directory contains sac files having
+            same event information.
+            Then, all sac files match this template will be read, and each 
+            directory path `/dat/2010*/` will be used as key, and files
+            within will be used as corresponding dat.
+            And data structure will be:
+
+            <this archive> + ['/dat/2010_01'] ->    (sachdr of '/dat/2010_01/a.BHZ.SAC' ) 
+                           |                        (sachdr of '/dat/2010_01/b.BHZ.SAC' )
+                           |                         ...
+                           |                        (sachdr of '/dat/2010_01/?.BHZ.SAC' )
+                           |                        # list if sachdr having same event info
+                           |
+                           + ['/dat/2010_02'] ->    (sachdr of '/dat/2010_02/a.BHZ.SAC' )
+                           |                        (sachdr of '/dat/2010_02/b.BHZ.SAC' )
+                           |                         ...
+                           ...
+
+
+        """
+        root_dir = '/'.join( fnm_template.split('/')[:-1] )
+        final_template = '{:}/' + fnm_template.split('/')[-1]
+        for sub_dir in sorted(glob.glob(root_dir) ):
+            lst = sachdr_list()
+            fnm_str =  final_template.format(sub_dir)
+            lst.read_fnm_lst( sorted(glob.glob(fnm_str ) ) )
+            if verbose:
+                print('{:} : ({:d})'.format(fnm_str, len(lst) ) )
+            self.add(sub_dir, lst)
+    def pickle_save(self, filename):
+        """
+        Use pickle package to save this archive.
+        filename:
+        """
+        with open(filename, 'wb') as fid:
+            pickle.dump(self, fid, pickle.HIGHEST_PROTOCOL )
+    def pickle_load(self, filename):
+        """
+        Load archive from file saved by pickle.
+        filename:
+        """
+        with open(filename, 'rb') as fid:
+            self.update(pickle.load(fid) )
     ### Inserting, and accessing, and updating
     def add(self, evkey, hdr_lst):
         """
@@ -812,7 +880,52 @@ class sachdr_ev_dict(dict):
         for v in self.values():
             v.set_id(id)
             id = v.get_key_range('id')[1] + 1
+    def get_ev_info(self, evkey=None, sachdr_key_lst=['mag']):
+        """
+        Get event information specified by `sachdr_key_lst` given `evkey`.
+        evkey: `evkey` used to search for a single event. (None for all event)
+        sachdr_key_lst: list of sac header used to acquire info. (eg. 'mag', 'evlo', ...)
+        """
+        if evkey:
+             return [ self[evkey][0][sackey] for sackey in sachdr_key_lst]
+        return [ [v[0][sackey] for sackey in sachdr_key_lst] for v in self.values() ]
+    def get_volumn_size(self):
+        """
+        Return number of events, and number of all sac files.
+        (nev, nsac)
+        """
+        nev = len(self)
+        nsac = np.sum( [len(v) for v in self.values()] )
+        return nev, nsac
     ###
+    def select_4_ev_return(self, sachdr_event_key, range, deepcopy=False):
+        """
+        Select and return a new `sachdr_ev_dict` object given range 
+        for specified `sachdr_event_key`;
+        sachdr_event_key: sac header key used to select; (eg: 'mag')
+        range: [x1, x2) the range for selecting.
+        deepcopy: whether use deepcopy in constructing new object (default is False);
+        """
+        tmp = sachdr_ev_dict()
+        for key, value in self.items():
+            v = value[0][sachdr_event_key] #self.get_ev_info(key, [sachdr_event_key])[0]
+            #print(v)
+            if range[0] <= v < range[1]:
+                tmp[key] = copy.deepcopy(value) if deepcopy else value
+        return tmp
+    def select_4_st_return(self, sachdr_st_key, range, deepcopy=False):
+        """
+        Select and return a new `sachdr_ev_dict` object given range 
+        for specified `sachdr_st_key`;
+        sachdr_st_key: sac header key used to select; (eg: 'gcarc' )
+        range: [x1, x2) the range for selecting.
+        deepcopy: whether use deepcopy in constructing new object (default is False);
+        """
+        tmp = sachdr_ev_dict()
+        for key, value in self.items():
+            v = value.select_return(sachdr_st_key, range)
+            tmp[key] = copy.deepcopy(v) if deepcopy else v
+        return tmp
     ### 
     def to_sachdr_pair_ev_list(self):
         """
@@ -867,6 +980,13 @@ class sachdr_pair(dict):
         Check whether two `sachdr_pair_ev` object are equal based on filenames.
         """
         return self.h1['filename'] == other.h1['filename'] and self.h2['filename'] == other.h2['filename']
+    ### accessing
+    def get_sachdr(self, sachdr_key_lst):
+        """
+        Return header variables for two headers, given specified key names.
+        sachdr_key_lst: list of sac header variable names; (eg. ['kstnm', 'id', ...] )
+        """
+        return [self['hdr1'][key] for key in sachdr_key_lst], [self['hdr2'][key] for key in sachdr_key_lst ]
 class sachdr_pair_ev(sachdr_pair):
     """
     A pair of two sac header with same event. Note that the order of two sac header is important.
@@ -896,11 +1016,11 @@ class sachdr_pair_ev(sachdr_pair):
         h1['baz'] = geomath.azimuth(stlo1, stla1, evlo, evla)
         h2['baz'] = geomath.azimuth(stlo1, stla1, evlo, evla)
         self['st_dist'] = geomath.haversine(stlo1, stla1, stlo2, stla2 )
-        self['daz'       ] = h1['az'] - h2['az']
-        self['dbaz'      ] = h1['baz'] - h2['baz']
-        self['gc2ev'     ] = geomath.point_distance_to_great_circle_plane(evlo, evla, stlo1, stla1, stlo2, stla2)
-        self['gc2st1'    ] = geomath.point_distance_to_great_circle_plane(stlo1, stla1, evlo, evla, stlo2, stla2)
-        self['gc2st2'    ] = geomath.point_distance_to_great_circle_plane(stlo2, stla2, evlo, evla, stlo1, stla1)
+        self['daz'       ] = np.abs(h1['az']  - h2['az']  )
+        self['dbaz'      ] = np.abs(h1['baz'] - h2['baz'] )
+        self['gc2ev'     ] = np.abs( geomath.point_distance_to_great_circle_plane(evlo, evla, stlo1, stla1, stlo2, stla2) )
+        self['gc2st1'    ] = np.abs( geomath.point_distance_to_great_circle_plane(stlo1, stla1, evlo, evla, stlo2, stla2) )
+        self['gc2st2'    ] = np.abs( geomath.point_distance_to_great_circle_plane(stlo2, stla2, evlo, evla, stlo1, stla1) )
     def __str__(self):
         s = sachdr_pair.__str__(self)
         #s += '\n'
@@ -951,24 +1071,82 @@ class sachdr_pair_ev_list(list):
              'gc2st2', as defined in `sachdr_pair_ev`, or other user defined key;
         range: a range of [low, high] for selection.
         #
-        eg. select('daz', (-5.0, 5.0) ) for selecting data with magnitude in [6.0, 7.0).
+        eg. select('daz', (-5.0, 5.0) ) for selecting data with daz in (-5.0, 5.0).
         """
         tmp = [it for it in self if it[key] >= range[0] and it[key] < range[1] ]
         self.clear()
         self.extend(tmp)
-    ###
-    def to_sachdr_dict(self):
+    def select_4_return(self, key, range):
+        """
+        Select and return a new `sachdr_pair_ev_list` object given range for specific key.
+        key: key being used for selection, can be 'st_dist', 'daz', 'dbaz', 'gc2ev', 'gc2st1', 
+             'gc2st2', as defined in `sachdr_pair_ev`, or other user defined key;
+        range: a range of [low, high] for selection.
+        #
+        eg. select('daz', (0.0, 5.0) ) for selecting data with daz in (0.0, 5.0).
+        """
+        tmp = sachdr_pair_ev_list()
+        tmp.extend( [it for it in self if it[key] >= range[0] and it[key] < range[1] ] )
+        return tmp
+    def pickle_save(self, filename):
+        """
+
+        """
+        """
+        Use pickle package to save this archive.
+        filename:
+        """
+        with open(filename, 'wb') as fid:
+            pickle.dump(self, fid, pickle.HIGHEST_PROTOCOL )
+    def pickle_load(self, filename):
+        """
+        Load archive from file saved by pickle.
+        filename:
+        """
+        with open(filename, 'rb') as fid:
+            self.clear()
+            self.extend(pickle.load(fid) )
+    ### accesing
+    def get_sachdr_lst(self, sachdr_key_lst):
+        """
+        Return list of two sac header variables, given specified key names.
+        sachdr_key_lst: list of sac header variable names; (eg. ['kstnm', 'id', ...] )
+        """
+        return [it.get_sachdr(sachdr_key_lst) for it in self ]
+    def to_sachdr_dict(self, deepcopy=True ):
         """
         Generate and return an object of `sachdr_dict` for all sac files used.
         """
         tmp = sachdr_dict()
-        for it_pair in self:
-            for it in [it_pair['hdr1'], it_pair['hdr2'] ]:
-                fnm = it['filename']
-                if fnm not in tmp:
-                    tmp[fnm] = it
+        if deepcopy:
+            for it_pair in self:
+                for it in [it_pair['hdr1'], it_pair['hdr2'] ]:
+                    fnm = it['filename']
+                    if fnm not in tmp:
+                        tmp[fnm] = copy.deepcopy(it)
+        else:
+            for it_pair in self:
+                for it in [it_pair['hdr1'], it_pair['hdr2'] ]:
+                    fnm = it['filename']
+                    if fnm not in tmp:
+                        tmp[fnm] = it
         return tmp
-
+    def to_sachdr_list(self, deepcopy=True):
+        """
+        Generate and return an object of `sachdr_list` for all sac files used with duplication removed.
+        """
+        return self.to_sachdr_dict(deepcopy=False).to_sachdr_list(deepcopy=deepcopy)
+    def write_id_pair(self, fid, stack_id = None):
+        """
+        Write two columns of ids into file opened as `fid`.
+        fid: file object
+        stack_id: used for third column. 
+                  If set to None(default), third column will be empty.
+        """
+        if stack_id:
+            print( ''.join(['{:d} {:d} {:d}\n'.format(it['hdr1']['id'], it['hdr2']['id'], stack_id) for it in self] ), file= fid )
+        else:
+            print( ''.join(['{:d} {:d}\n'.format(it['hdr1']['id'], it['hdr2']['id']) for it in self] ), file= fid )
 ###
 #  high-level `sachdr_pair_ev_list` container
 ###
