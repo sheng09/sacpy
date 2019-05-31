@@ -731,6 +731,15 @@ class sachdr_list(list):
                 if fnm not in vol:
                     vol[fnm] = it
         return vol
+    def to_sachdr_pair_ev_list(self):
+        """
+        Generate and return an object of `sachdr_pair_ev_list`,
+        which contain pairs of sachdr for all possible sachdr.
+        """
+        tmp = sachdr_pair_ev_list()
+        for it1 in self:
+            tmp.extend([sachdr_pair_ev(it1, it2) for it2 in self] )
+        return tmp
     def get_key_lst(self, key):
         """
         Get and return a list of sac header key values.
@@ -934,8 +943,7 @@ class sachdr_ev_dict(dict):
         """
         tmp = sachdr_pair_ev_list()
         for v in self.values():
-            for it1 in v:
-                tmp.extend( [sachdr_pair_ev(it1, it2) for it2 in v] )
+            tmp.extend(v.to_sachdr_pair_ev_list() )
         return tmp
     ###
     #def __mk_key(self, evlo, evla, evdp_km, mag, otime):
