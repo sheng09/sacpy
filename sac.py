@@ -84,6 +84,7 @@ import sys
 import glob
 import pickle
 import sacpy.geomath as geomath
+import sacpy.processing as processing
 ###
 #  dependend methods
 ###
@@ -479,33 +480,17 @@ class sactrace:
         """
         Bandpass
         """
-        nyq = 0.5 / self['delta']
-        low = f1 / nyq
-        high = f2 / nyq
-        b, a = signal.butter(order, [low, high], btype='bandpass')
-        methods = [None, signal.lfilter, signal.filtfilt]
-        self.dat = methods[npass](b, a, self.dat)
-        #return self
+        self.dat = processing.filter(self.dat, 1.0/self['delta'], 'bandpass', [f1, f2], order, npass )
     def lowpass(self, f, order= 2, npass= 1):
         """
         Lowpass
         """
-        nyq = 0.5 / self['delta']
-        fc = f/nyq
-        b, a = signal.butter(order, [fc], btype='lowpass')
-        methods = [None, signal.lfilter, signal.filtfilt]
-        self.dat = methods[npass](b, a, self.dat)
-        #return self
+        self.dat = processing.filter(self.dat, 1.0/self['delta'], 'lowpass', [f], order, npass )
     def highpass(self, f, order= 2, npass= 1):
         """
         High pass
         """
-        nyq = 0.5 / self['delta']
-        fc = f/nyq
-        b, a = signal.butter(order, [fc], btype='highpass')
-        methods = [None, signal.lfilter, signal.filtfilt]
-        self.dat = methods[npass](b, a, self.dat)
-        #return self
+        self.dat = processing.filter(self.dat, 1.0/self['delta'], 'highpass', [f], order, npass )
     ### plot
     def plot_ax(self, ax, **kwargs):
         """
