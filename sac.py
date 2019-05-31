@@ -888,7 +888,7 @@ class sachdr_ev_dict(dict):
         id = start_id
         for v in self.values():
             v.set_id(id)
-            id = v.get_key_range('id')[1] + 1
+            id = v[-1]['id'] + 1 # faster, but not good for maintain
     def get_ev_info(self, evkey=None, sachdr_key_lst=['mag']):
         """
         Get event information specified by `sachdr_key_lst` given `evkey`.
