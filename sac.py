@@ -246,7 +246,7 @@ class sachdr:
         hdrvol = f.read(632)
         #print(sachdr.little_endian_format)
         info = struct.unpack(sachdr.little_endian_format, hdrvol)
-        info = info if 1< info[76] < 7 else struct.unpack(sachdr.big_endian_format, hdrvol)
+        info, small_endian_tag = (info, True) if 1< info[76] < 7 else (struct.unpack(sachdr.big_endian_format, hdrvol), False)
         ###
         dict_f = dict()
         dict_i = dict()
@@ -262,7 +262,7 @@ class sachdr:
             dict_s[k] = tmp[idx*8+24: idx*8+32]
         ###
         self.d_arch.update( {**dict_f, **dict_i, **dict_s} )
-        pass
+        return small_endian_tag
     def init(self, delta, npts, b, **kwargs):
         """
         Make a new hdr given delta, npts, b, and other settings.
@@ -362,9 +362,11 @@ class sactrace:
         Read sac data given filename.
         """
         with open(filename, 'rb') as fid:
-            self.hdr.read(fid)
+            small_endian_tag = self.hdr.read(fid)
             self.hdr['filename'] = filename
             self.dat = np.fromfile(fid, dtype=np.float32, count=self.hdr['npts'])
+            if not small_endian_tag:
+                self.dat = self.dat.byteswap() #.newbyteorder()
     def write(self, filename):
         """
         Write data into specified file.
@@ -438,6 +440,11 @@ class sactrace:
         self.dat = dat
         self.hdr.__update_npts__(np.size(dat) )
     ### numerical methods
+    def norm(self):
+        """
+        Norm max amplitude to 1
+        """
+        self.dat *= (1.0/max( self.dat.max(), -1.0*self.dat.min() ) )
     def get_time_axis(self):
         """
         Get time axis.
