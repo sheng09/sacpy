@@ -632,6 +632,22 @@ class sachdr_list(list):
         Empty constructor
         """
         pass
+    def pickle_save(self, filename):
+        """
+        Use pickle package to save this archive.
+        filename:
+        """
+        with open(filename, 'wb') as fid:
+            pickle.dump(self, fid, pickle.HIGHEST_PROTOCOL )
+    def pickle_load(self, filename, extend=False):
+        """
+        Load archive from file saved by pickle.
+        filename:
+        """
+        if not extend:
+            self.clear()
+        with open(filename, 'rb') as fid:
+            self.extend(pickle.load(fid) )
     def deepcopy(self):
         """
         Deepcopy and return a new object.
