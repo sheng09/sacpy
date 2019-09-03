@@ -83,6 +83,7 @@ import struct
 import sys
 import glob
 import pickle
+import h5py
 import sacpy.geomath as geomath
 import sacpy.processing as processing
 ###
@@ -512,6 +513,44 @@ class sactrace:
         plt.show()
         #plt.close()
     ###
+    def rfft(self, zeropad = 0):
+        """
+        condut rfft to sac.
+        zeropad: 0: same length rfft;
+                 1: pad zero to the next power of two ;
+                 2: pad zero to the next next power of two;
+        return (spectrum, df)
+        """
+        if zeropad == 0:
+            return np.fft.rfft(self.dat), 1.0/(self['npts']*self['delta'])
+        else:
+            new_length = int(2**(np.ceil(np.log(self['npts'], 2))))
+            if zeropad == 1:
+                return np.fft.rfft(self.dat, new_length), 1.0/(new_length*self['delta'])
+            elif zeropad == 2:
+                return np.fft.rfft(self.dat, new_length*2), 0.5/(new_length*self['delta'])
+            else:
+                print('Unsupported argv(zeropad) for sactrace.rfft()')
+    ###
+    def fft(self, zeropad = 0):
+        """
+        condut fft to sac.
+        zeropad: 0: same length rfft;
+                 1: pad zero to the next power of two ;
+                 2: pad zero to the next next power of two;
+        return (spectrum, df)
+        """
+        if zeropad == 0:
+            return np.fft.fft(self.dat), 1.0/(self['npts']*self['delta'])
+        else:
+            new_length = int(2**(np.ceil(np.log(self['npts'], 2))))
+            if zeropad == 1:
+                return np.fft.fft(self.dat, new_length), 1.0/(new_length*self['delta'])
+            elif zeropad == 2:
+                return np.fft.fft(self.dat, new_length*2), 0.5/(new_length*self['delta'])
+            else:
+                print('Unsupported argv(zeropad) for sactrace.fft()')
+    ###
     @classmethod
     def benchmark(cls):
         pass
@@ -591,6 +630,11 @@ class sactrace_list(list):
         lst = [self[idx] for idx in  np.argsort([it[sachdr_key] for it in self ] )[::tmp[sequence] ] ]
         self.clear()
         self.extend(lst)
+    ### Into hdf5
+    def tohdf5(self, filename):
+        """
+        """
+        pass
     ### plot
     def plot1(self):
         """
@@ -614,7 +658,22 @@ class sactrace_list(list):
     def normed(trace):
         scale = 1.0 / max(np.max(trace), -np.min(trace) )
         return trace * scale
-
+###
+#  hdf5 containing list of time series in sac format
+###
+class sactrace_list_hdf5():
+    """
+    """
+    def __init__(self):
+        """
+        """
+        pass
+    def from_sactrace_list(self, filename, lst):
+        """
+        """
+        pass
+        #self.h5file = h5py.File(filename, 'w')
+        #self.h5file.cr
 ###
 #  sachdr container
 #  - sachdr_list: list of `sachdr`
