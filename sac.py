@@ -1163,9 +1163,9 @@ class sachdr_pair_ev_list(list):
                   If set to None(default), third column will be empty.
         """
         if stack_id:
-            print( ''.join(['{:d} {:d} {:d}\n'.format(it['hdr1']['id'], it['hdr2']['id'], stack_id) for it in self] ), file= fid )
+            print( '\n'.join(['{:d} {:d} {:d}'.format(it['hdr1']['id'], it['hdr2']['id'], stack_id) for it in self] ), file= fid )
         else:
-            print( ''.join(['{:d} {:d}\n'.format(it['hdr1']['id'], it['hdr2']['id']) for it in self] ), file= fid )
+            print( '\n'.join(['{:d} {:d}'.format(it['hdr1']['id'], it['hdr2']['id']) for it in self] ), file= fid )
 ###
 #  high-level `sachdr_pair_ev_list` container
 ###

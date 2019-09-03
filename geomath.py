@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 """
+This contain sets of geometric methods, especially for spherical coordinates.
 """
 
 import shutil
@@ -121,6 +122,26 @@ def great_circle_plane_center(lon1, lat1, lon2, lat2):
     #print(x3, y3, z3)
     lon, lat = np.rad2deg(lon), np.rad2deg(lat)
     return (lon, lat), antipode(lon, lat)
+
+###
+#  geometry for tranformating spherical points into equator
+###
+
+def trans2equator(d1, d2, az1, az2, inter_station_dist, daz):
+    """
+    For two stations and one event that are nearly on great circle plane, 
+    given two distances, azimuths, and inter station distance,  and maxmium 
+    azimuth difference, transform their geometry into equator.
+    return s1, s2, eqlo on equator
+    """
+    s2 = inter_station_dist*0.5 # make two stations on equator
+    s1 = -s2
+    eqlo = 0.0
+    if (az1 - az2) < daz:
+        eqlo = (s1-d1 if d2 > d1 else s2+d2) 
+    else:
+        eqlo = s2 - d2
+    return s1%360, s2%360, eqlo%360
 
 ###
 #  geometry for same az difference in X-Y plane
