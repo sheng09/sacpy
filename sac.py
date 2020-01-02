@@ -174,12 +174,12 @@ class sachdr:
                 'user5', 'user6', 'user7', 'user8', 'user9', 
                 'dist',  'az',    'baz',   'gcarc', 'internal2',
                 'internal3', 'depmen', 'cmpaz', 'cmpinc', 'xminimum',
-                'xmaximum', 'yminimum', 'ymaximum', 'unused1', 'unused2',
-                'unused3', 'unused4', 'unused5', 'unused6', 'unused7' ]
+                'xmaximum', 'yminimum', 'ymaximum', 'ADJTM', 'unused1',
+                'unused2', 'unused3', 'unused4', 'unused5', 'unused6' ]
     i_keys = [  'nzyear', 'nzjday', 'nzhour', 'nzmin', 'nzsec',
                 'nzmsec', 'nvhdr',  'norid',  'nevid', 'npts', 
-                'internal4', 'nwfid','nxsize', 'nysize', 'unused8',
-                'iftype', 'idep', 'iztype', 'unused9', 'iinst',
+                'internal4', 'nwfid','nxsize', 'nysize', 'unused7',
+                'iftype', 'idep', 'iztype', 'unused8', 'iinst',
                 'istreg', 'ievreg', 'ievtyp', 'iqual', 'isynth',
                 'imagtyp', 'imagsrc', 'unused9', 'unused10', 'unused11',
                 'unused12', 'unused13', 'unused14', 'unused15', 'unused16',
