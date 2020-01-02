@@ -608,6 +608,13 @@ class sactrace_list(list):
     def taper(self, ratio= 0.05):
         for it in self:
             it.taper(ratio= ratio)
+    def rmean(self):
+        for it in self:
+            it.rmean()
+    def detrend(self):
+        for it in self:
+            it.rmean()
+            it.detrend()
     def bandpass(self, f1, f2, order=2, npass= 1):
         for it in self:
             it.bandpass(f1, f2, order= order, npass= npass)
