@@ -5,8 +5,8 @@ This is for data processing.
 """
 
 import scipy.signal as signal
-
-
+import numpy as np
+import pyfftw
 ###
 #  base class
 ###
@@ -100,6 +100,30 @@ def filter(tr, sampling_rate, btype, fs, order, npass= 2):
         __dict_filter_proc__[key_fs] = __atom_filter__(btype, fs, sampling_rate, order)
     return __dict_filter_proc__[key_fs].apply(tr, npass)
 
+###
+#  
+###
+__dict_one_array = dict()
+def temporal_normalization(tr, fs, twin_len, f1, f2, water_level_ratio= 1.0e-6):
+    tmp = np.abs( filter(tr, fs, 'bandpass', [f1, f2], 2, 2) )
+    if twin_len not in __dict_one_array:
+        __dict_one_array[twin_len] = np.ones(twin_len)
+    weight = signal.fftconvolve(tmp, __dict_one_array[twin_len], 'same')
+    c = np.max(weight) * water_level_ratio
+    weight[weight<c] = c
+    return tr/weight
+
+def frequency_whiten(tr, fs, fwin_len, water_level_ratio= 1.0e-6):
+    spec = pyfftw.interfaces.numpy_fft.rfft(tr, tr.size)
+    am = np.abs(spec)
+    #ph = np.angle(spec)
+    if fwin_len not in __dict_one_array:
+        __dict_one_array[fwin_len] = np.ones(fwin_len)
+    weight = signal.fftconvolve(am, __dict_one_array[fwin_len], 'same')
+    c = np.max(weight) * water_level_ratio
+    weight[weight<c] = c
+    spec /= weight
+    return pyfftw.interfaces.numpy_fft.irfft(spec, tr.size)
 
 if __name__ == "__main__":
     import copy
