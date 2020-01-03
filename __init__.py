@@ -8,7 +8,7 @@ __title__ = 'sacpy'
 __version__ = '0.0.2'
 __author__ = 'Sheng Wang'
 
-__all__ = ['sac', 'geomath', 'processing']
+__all__ = ['sac', 'geomath', 'processing', 'sac_hdf5']
 
 
 
