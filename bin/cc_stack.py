@@ -102,10 +102,10 @@ class cc_stack_rcv_pairs:
         ###
         self.comm.Barrier()
         ###
-        self.comm.bcast(self.global_ncc, root= 0)
-        self.comm.bcast(self.global_inter_rcv_distance_deg_min, root= 0)
-        self.comm.bcast(self.global_inter_rcv_distance_deg_max, root= 0)
-        self.comm.bcast(self.global_inter_rcv_distance_step_deg, root= 0)
+        self.global_ncc                         = self.comm.bcast(self.global_ncc                        , root= 0)
+        self.global_inter_rcv_distance_deg_min  = self.comm.bcast(self.global_inter_rcv_distance_deg_min , root= 0)
+        self.global_inter_rcv_distance_deg_max  = self.comm.bcast(self.global_inter_rcv_distance_deg_max , root= 0)
+        self.global_inter_rcv_distance_step_deg = self.comm.bcast(self.global_inter_rcv_distance_step_deg, root= 0)
         ###
         self.comm.Barrier()
         if self.rank != 0:
@@ -138,15 +138,17 @@ class cc_stack_rcv_pairs:
                 self.global_cut_marker, self.global_cut_t1, self.global_cut_t2, self.global_npts, self.global_npts_cc, self.global_nrfft)
             mpi_print_log(msg, 0, self.local_log_fp, flush=True)
         ###
-        self.comm.bcast(self.global_cut_marker, root= 0)
-        self.comm.bcast(self.global_cut_t1, root= 0)
-        self.comm.bcast(self.global_cut_t2, root= 0)
-        self.comm.bcast(self.global_dt, root= 0)
-        self.comm.bcast(self.global_sampling_rate, root= 0)
-        self.comm.bcast(self.global_df, root= 0)
-        self.comm.bcast(self.global_npts, root= 0)
-        self.comm.bcast(self.global_npts_cc, root= 0)
-        self.comm.bcast(self.global_nrfft, root= 0)
+        self.comm.Barrier()
+        ###
+        self.global_cut_marker    = self.comm.bcast(self.global_cut_marker   , root= 0)
+        self.global_cut_t1        = self.comm.bcast(self.global_cut_t1       , root= 0)
+        self.global_cut_t2        = self.comm.bcast(self.global_cut_t2       , root= 0)
+        self.global_dt            = self.comm.bcast(self.global_dt           , root= 0)
+        self.global_sampling_rate = self.comm.bcast(self.global_sampling_rate, root= 0)
+        self.global_df            = self.comm.bcast(self.global_df           , root= 0)
+        self.global_npts          = self.comm.bcast(self.global_npts         , root= 0)
+        self.global_npts_cc       = self.comm.bcast(self.global_npts_cc      , root= 0)
+        self.global_nrfft         = self.comm.bcast(self.global_nrfft        , root= 0)
         ###
         self.comm.Barrier()
         ### msg out on other ranks
@@ -179,12 +181,14 @@ class cc_stack_rcv_pairs:
                     self.global_fwin, self.global_fwin_len)
             mpi_print_log(msg, 0, self.local_log_fp, True)
         ###
-        self.comm.bcast(self.global_twin, root=0 )
-        self.comm.bcast(self.global_twin_len, root=0 )
-        self.comm.bcast(self.global_f1, root=0 )
-        self.comm.bcast(self.global_f2, root=0 )
-        self.comm.bcast(self.global_fwin, root=0 )
-        self.comm.bcast(self.global_fwin_len, root=0 )
+        self.comm.Barrier()
+        ###
+        self.global_twin     = self.comm.bcast(self.global_twin    , root=0 )
+        self.global_twin_len = self.comm.bcast(self.global_twin_len, root=0 )
+        self.global_f1       = self.comm.bcast(self.global_f1      , root=0 )
+        self.global_f2       = self.comm.bcast(self.global_f2      , root=0 )
+        self.global_fwin     = self.comm.bcast(self.global_fwin    , root=0 )
+        self.global_fwin_len = self.comm.bcast(self.global_fwin_len, root=0 )
         ###
         self.comm.Barrier()
         if self.rank != 0:
@@ -200,7 +204,9 @@ class cc_stack_rcv_pairs:
         if self.rank == 0:
             chunksize = (len(self.all_fnm_lst_alignedSac2Hdf5) // self.ncpu) + 1
         ###
-        self.comm.bcast(chunksize, root= 0)
+        self.comm.Barrier()
+        ###
+        chunksize = self.comm.bcast(chunksize, root= 0)
         ###
         self.comm.Barrier()
         ###
