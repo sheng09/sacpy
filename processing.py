@@ -105,7 +105,9 @@ def filter(tr, sampling_rate, btype, fs, order, npass= 2):
 ###
 __dict_one_array = dict()
 def temporal_normalization(tr, fs, twin_len, f1, f2, water_level_ratio= 1.0e-6):
-    tmp = np.abs( filter(tr, fs, 'bandpass', [f1, f2], 2, 2) )
+    tmp = signal.detrend(tr)
+    tmp = signal.detrend(tmp)
+    tmp = np.abs( filter(tmp, fs, 'bandpass', [f1, f2], 2, 2) )
     if twin_len not in __dict_one_array:
         __dict_one_array[twin_len] = np.ones(twin_len)
     weight = signal.fftconvolve(tmp, __dict_one_array[twin_len], 'same')

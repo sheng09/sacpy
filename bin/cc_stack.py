@@ -25,7 +25,7 @@ class cc_stack_rcv_pairs:
         self.rank = self.comm.Get_rank()
         self.ncpu = self.comm.Get_size()
         ### local variables
-        self.local_stacked_cc_spectra_mat = None
+        self.local_stacked_cc_spectra = None
         self.local_stacked_cc_count = None
         self.local_log_fnm = '%s_mpi_log_%03d.txt' % (log_prefnm, self.rank)
         self.local_log_fp = open(self.local_log_fnm, 'w')
@@ -51,13 +51,13 @@ class cc_stack_rcv_pairs:
         self.global_inter_rcv_distance_deg_min = 0.0
         self.global_inter_rcv_distance_deg_max = 180.0
         self.global_inter_rcv_distance_step_deg = 1.0
-        ### variable_at_RANK)
+        ### variable_at_RANK0
         self.rank0_stacked_cc_spectra = None
         self.rank0_stacked_cc_count = None
         self.rank0_stacked_cc_time = None
     def init(self, inter_rcv_distance_range_deg, distance_step_deg, cut_marker, cut_t1, cut_t2, twin, f1, f2, fwin):
         self.set_stack_inter_rcv_distance(inter_rcv_distance_range_deg, distance_step_deg)
-        self.set_local_stacked_cc_spectra_mat(cut_marker, cut_t1, cut_t2)
+        self.set_local_stacked_cc_spectra(cut_marker, cut_t1, cut_t2)
         self.set_whitening_parameter(twin, f1, f2, fwin)
         self.set_local_work_h5_lst()
     def run(self):
@@ -109,12 +109,12 @@ class cc_stack_rcv_pairs:
         ###
         self.comm.Barrier()
         if self.rank != 0:
-            msg = '>>> %d bcast receive from RANK 0 for stack routine: inter_rcv_distance [%d, %d] step(%f)' % (
+            msg = '>>> bcast receive from RANK 0 for stack routine: inter_rcv_distance [%d, %d] step(%f)' % (
                     self.global_inter_rcv_distance_deg_min,
                     self.global_inter_rcv_distance_deg_max,
                     self.global_inter_rcv_distance_step_deg )
             mpi_print_log(msg, 0, self.local_log_fp, True)
-    def set_local_stacked_cc_spectra_mat(self, cut_marker, cut_t1, cut_t2):
+    def set_local_stacked_cc_spectra(self, cut_marker, cut_t1, cut_t2):
         """
         Make local stacked crosscorrelation spectra mat.
         """
@@ -158,8 +158,8 @@ class cc_stack_rcv_pairs:
                 self.global_cut_marker, self.global_cut_t1, self.global_cut_t2, self.global_npts, self.global_npts_cc, self.global_nrfft)
             mpi_print_log(msg, 0, self.local_log_fp, flush=True)
         ### make local stack cc spectra pool
-        self.local_stacked_cc_spectra_mat = np.zeros( (self.global_ncc, self.global_nrfft), dtype=np.complex64 )
-        self.local_stacked_cc_spectra_mat = np.zeros( self.global_ncc, dtype=np.int32 )
+        self.local_stacked_cc_spectra = np.zeros( (self.global_ncc, self.global_nrfft), dtype=np.complex64 )
+        self.local_stacked_cc_count   = np.zeros( self.global_ncc, dtype=np.int32 )
         ### msg out
         msg = '>>> Init spectral pool for stacked crosscorrelations. (%d,%d) by np.complex64' % (self.global_ncc, self.global_nrfft)
         mpi_print_log(msg, 0, self.local_log_fp, True)
@@ -177,7 +177,7 @@ class cc_stack_rcv_pairs:
             self.global_fwin_len = int( np.ceil(fwin/self.global_df) )
             ###
             msg = '>>> Init and bcast whitening parameter sent from RANK0. twin(%f, %d) f1f2(%f,%f) fwin(%f,%d)' % (
-                    self.global_twin, self.global_twin, self.global_f1, self.global_f2,
+                    self.global_twin, self.global_twin_len, self.global_f1, self.global_f2,
                     self.global_fwin, self.global_fwin_len)
             mpi_print_log(msg, 0, self.local_log_fp, True)
         ###
@@ -193,7 +193,7 @@ class cc_stack_rcv_pairs:
         self.comm.Barrier()
         if self.rank != 0:
             msg = '>>> Init and bcast whitening parameter receive from RANK0. twin(%f, %d) f1f2(%f,%f) fwin(%f,%d)' % (
-                    self.global_twin, self.global_twin, self.global_f1, self.global_f2,
+                    self.global_twin, self.global_twin_len, self.global_f1, self.global_f2,
                     self.global_fwin, self.global_fwin_len)
             mpi_print_log(msg, 0, self.local_log_fp, True)
     def set_local_work_h5_lst(self):
@@ -220,7 +220,7 @@ class cc_stack_rcv_pairs:
         mpi_print_log('>>> Run spectral cc and stack...', 0, self.local_log_fp, True)
         worksize= len(self.local_fnm_lst_alignedSac2Hdf5)
         for idx, fnm in enumerate(self.local_fnm_lst_alignedSac2Hdf5):
-            mpi_print_log('%s (%d,%d)'% (fnm, idx+1, worksize), 1, self.local_log_fp, True)
+            mpi_print_log('%s index(%d/%d)'% (fnm, idx+1, worksize), 1, self.local_log_fp, True)
             self.run_all_cc_spectra_from_single_hdf5_file(fnm)
     def run_all_cc_spectra_from_single_hdf5_file(self, fnm_alignedSac2Hdf5):
         app = sac_hdf5.alignedSac2Hdf5(self.username)
@@ -235,34 +235,34 @@ class cc_stack_rcv_pairs:
         spectra = np.zeros((ntr, self.global_nrfft), dtype=np.complex64)
         for idx, row in enumerate(time_series):
             tr = processing.temporal_normalization(row, self.global_sampling_rate, self.global_twin_len, self.global_f1, self.global_f2)
-            spectra[idx] = processing.frequency_whiten_spec(tr, self.global_sampling_rate, self.global_fwin, self.global_nrfft)
+            spectra[idx] = processing.frequency_whiten_spec(tr, self.global_sampling_rate, self.global_fwin_len, self.global_npts_cc)
         ### cross correlation
-        msg_template = 'cc ev (%f %f)' % (evlo, evla)  + 'rcv(%f %f)x(%f %f) dist(%f) %s' 
+        msg_template = 'cc ev (%.2f %.2f)' % (evlo, evla)  + 'rcv(%.2f %.2f)x(%.2f %.2f) dist(%.2f) %s' 
         for idx1 in range(ntr):
             stlo1, stla1 = stlo[idx1], stla[idx1]
-            for idx2 in range(ntr):
+            for idx2 in range(ntr):a
                 stlo2, stla2 = stlo[idx2], stla[idx2]
-                distance = processing.geomath(stlo1, stla1, stlo2, stla2) # return degree
+                distance = geomath.haversine(stlo1, stla1, stlo2, stla2) # return degree
                 if distance > self.global_inter_rcv_distance_deg_max or distance < self.global_inter_rcv_distance_deg_min:
                     mpi_print_log(msg_template % (stlo1, stla1, stlo2, stla2, distance, 'N'), 2, self.local_log_fp, False )
                     continue
                 mpi_print_log(msg_template % (stlo1, stla1, stlo2, stla2, distance, 'Y'), 2, self.local_log_fp, False )
-                idx_cc = int(np.round((distance - self.global_inter_rcv_distance_deg_min)/self.global_inter_rcv_distance_step_deg))
+                idx_cc = int( (distance - self.global_inter_rcv_distance_deg_min)/self.global_inter_rcv_distance_step_deg)
                 ### cc and stack
-                self.local_stacked_cc_spectra_mat[idx_cc] += spectra[idx1] * np.conj(spectra[idx2])
-                self.local_stacked_cc_spectra_mat[idx_cc] += 1
-        app.close()
+                self.local_stacked_cc_spectra[idx_cc, :] += spectra[idx1] * np.conj(spectra[idx2])
+                self.local_stacked_cc_count[idx_cc] += 1
+        app.h5.close()
         del spectra
         del time_series
         del app
     def collect_stack(self):
         if self.rank == 0:
-            self.rank0_stacked_cc_spectra = np.zeros( self.local_stacked_cc_spectra_mat.shape, dtype= np.complex64 )
+            self.rank0_stacked_cc_spectra = np.zeros( self.local_stacked_cc_spectra.shape, dtype= np.complex64 )
             self.rank0_stacked_cc_count = np.zeros(self.local_stacked_cc_count.size, dtype=np.int32)
             self.rank0_stacked_cc_time  = np.zeros((self.global_ncc, self.global_npts_cc), dtype='float32' )
         ### stack cc
         mpi_print_log('>>> Reduce to RANK0 for stacking...', 0, self.local_log_fp, True)
-        self.comm.Reduce([self.local_stacked_cc_spectra_mat, mpi4py.MPI.C_FLOAT_COMPLEX], 
+        self.comm.Reduce([self.local_stacked_cc_spectra, mpi4py.MPI.C_FLOAT_COMPLEX], 
                     [self.rank0_stacked_cc_spectra, mpi4py.MPI.C_FLOAT_COMPLEX], mpi4py.MPI.SUM, root= 0)
         ### ifft and average
         if self.rank == 0:
@@ -310,5 +310,5 @@ if __name__ == "__main__":
     print('>>> cmd: ', ' '.join(sys.argv ) )
     app = cc_stack_rcv_pairs(fnm_lst_alignedSac2Hdf5, log_prefnm=log_prefnm, username= username )
     app.init([d1, d2], dstep, cut_marker, cut_t1, cut_t2, twin, f1, f2, fwin)
-    #app.run()
-    #app.output2hdf5(fnm_hdf5)
+    app.run()
+    app.output2hdf5(fnm_hdf5)
