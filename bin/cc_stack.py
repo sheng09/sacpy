@@ -62,6 +62,7 @@ class cc_stack_rcv_pairs:
         self.set_local_work_h5_lst()
     def run(self):
         self.local_run()
+        self.comm.Barrier()
         self.collect_stack()
     def output2hdf5(self, fnm_hdf5):
         """
@@ -240,7 +241,7 @@ class cc_stack_rcv_pairs:
         msg_template = 'cc ev (%.2f %.2f)' % (evlo, evla)  + 'rcv(%.2f %.2f)x(%.2f %.2f) dist(%.2f) %s' 
         for idx1 in range(ntr):
             stlo1, stla1 = stlo[idx1], stla[idx1]
-            for idx2 in range(ntr):a
+            for idx2 in range(ntr):
                 stlo2, stla2 = stlo[idx2], stla[idx2]
                 distance = geomath.haversine(stlo1, stla1, stlo2, stla2) # return degree
                 if distance > self.global_inter_rcv_distance_deg_max or distance < self.global_inter_rcv_distance_deg_min:
