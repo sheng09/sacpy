@@ -113,8 +113,11 @@ def temporal_normalization(tr, fs, twin_len, f1, f2, water_level_ratio= 1.0e-6):
     weight[weight<c] = c
     return tr/weight
 
-def frequency_whiten(tr, fs, fwin_len, water_level_ratio= 1.0e-6):
-    spec = pyfftw.interfaces.numpy_fft.rfft(tr, tr.size)
+def frequency_whiten_spec(tr, fs, fwin_len, nrfft, water_level_ratio= 1.0e-6):
+    """
+    Return the whitened spectrum other than the time series
+    """
+    spec = pyfftw.interfaces.numpy_fft.rfft(tr, nrfft)
     am = np.abs(spec)
     #ph = np.angle(spec)
     if fwin_len not in __dict_one_array:
@@ -123,7 +126,11 @@ def frequency_whiten(tr, fs, fwin_len, water_level_ratio= 1.0e-6):
     c = np.max(weight) * water_level_ratio
     weight[weight<c] = c
     spec /= weight
-    return pyfftw.interfaces.numpy_fft.irfft(spec, tr.size)
+    return spec
+
+def frequency_whiten(tr, fs, fwin_len, nrfft, water_level_ratio= 1.0e-6):
+    spec = frequency_whiten_spec(tr, fs, fwin_len, nrfft, water_level_ratio= water_level_ratio)
+    return pyfftw.interfaces.numpy_fft.irfft( spec , tr.size)
 
 if __name__ == "__main__":
     import copy
