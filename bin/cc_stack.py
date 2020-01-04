@@ -247,11 +247,13 @@ class cc_stack_rcv_pairs:
                 if distance > self.global_inter_rcv_distance_deg_max or distance < self.global_inter_rcv_distance_deg_min:
                     mpi_print_log(msg_template % (stlo1, stla1, stlo2, stla2, distance, 'N'), 2, self.local_log_fp, False )
                     continue
-                mpi_print_log(msg_template % (stlo1, stla1, stlo2, stla2, distance, 'Y'), 2, self.local_log_fp, False )
-                idx_cc = int( (distance - self.global_inter_rcv_distance_deg_min)/self.global_inter_rcv_distance_step_deg)
                 ### cc and stack
-                self.local_stacked_cc_spectra[idx_cc, :] += spectra[idx1] * np.conj(spectra[idx2])
-                self.local_stacked_cc_count[idx_cc] += 1
+                tmp = spectra[idx1] * np.conj(spectra[idx2])
+                if True not in (np.isnan(tmp) ):
+                    mpi_print_log(msg_template % (stlo1, stla1, stlo2, stla2, distance, 'Y'), 2, self.local_log_fp, False )
+                    idx_cc = int( (distance - self.global_inter_rcv_distance_deg_min)/self.global_inter_rcv_distance_step_deg)
+                    self.local_stacked_cc_spectra[idx_cc, :] += tmp
+                    self.local_stacked_cc_count[idx_cc] += 1
         app.h5.close()
         del spectra
         del time_series
@@ -265,10 +267,12 @@ class cc_stack_rcv_pairs:
         mpi_print_log('>>> Reduce to RANK0 for stacking...', 0, self.local_log_fp, True)
         self.comm.Reduce([self.local_stacked_cc_spectra, mpi4py.MPI.C_FLOAT_COMPLEX], 
                     [self.rank0_stacked_cc_spectra, mpi4py.MPI.C_FLOAT_COMPLEX], mpi4py.MPI.SUM, root= 0)
+        self.comm.Reduce([self.local_stacked_cc_count, mpi4py.MPI.INT32_T,
+                    [self.rank0_stacked_cc_count, mpi4py.MPI.INT32_T]], mpi4py.MPI.SUM, root= 0 )
         ### ifft and average
         if self.rank == 0:
             mpi_print_log('>>> ifft and average...', 0, self.local_log_fp, True)
-            for idx, row, count in enumerate(self.rank0_stacked_cc_spectra, self.rank0_stacked_cc_count):
+            for idx, (row, count) in enumerate(self.rank0_stacked_cc_spectra, self.rank0_stacked_cc_count):
                 self.rank0_stacked_cc_time[idx]  = pyfftw.interfaces.numpy_fft.irfft(row, self.global_npts_cc)
                 self.rank0_stacked_cc_time[idx] *= (1.0/count)
             mpi_print_log('>>> Computation done', 0, self.local_log_fp, True)
