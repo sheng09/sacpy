@@ -9,6 +9,7 @@ import sacpy.geomath as geomath
 import numpy as np
 from time import gmtime, strftime
 import pyfftw
+import sys
 
 class alignedSac2Hdf5:
     """
@@ -31,8 +32,11 @@ class alignedSac2Hdf5:
         self.nsac = len(sac_fnm_lst)
         self.h5 = h5py.File(h5_fnm, 'w')
         self.__make_hdf5__rawsac__(cut_marker, cut_range)
-    def fromH5(self, h5_fnm):
-        pass
+    def fromH5(self, h5_fnm, username, user_message= '', open_mode= 'r'):
+        if open_mode == 'w':
+            print('Err: illegal open mode `w` that would destroy data', file=sys.stderr, flush=True)
+            sys.exit(0)
+        self.h5 = h5py.File(h5_fnm, open_mode)
     def __make_hdf5__rawsac__(self, cut_marker=None, cut_range=None):
         raw = self.h5.create_group('raw_sac')
         raw.attrs['user'] = self.username
@@ -90,7 +94,19 @@ class alignedSac2Hdf5:
                 if True in np.isnan(dset[idx,:]):
                     dset[idx,:] = 0.0
         ###
-    
+    def get_raw_sac(self, cut_marker=None, cut_range=None):
+        """
+        Get a np.ndarray matrix that store the raw sac time-series given cutting parameters.
+        """
+        if cut_marker != None and cut_range != None:
+            t1, t2 = cut_range
+            dt = self.h5['raw_sac/data'].attrs['dt']
+            t_ref = self.h5['raw_sac/hdr/%s' % (cut_marker) ][0]
+            idx1 = int( np.round( (t_ref+t1-self.h5['raw_sac/hdr/b'][0])/dt ) )
+            idx2 = int( np.round( (t_ref+t2-self.h5['raw_sac/hdr/b'][0])/dt ) ) + 1
+            return self.h5['raw_sac/data'][:,idx1:idx2]
+        else:
+            return self.h5['raw_sac/data']
     def make_spec(self, nfft_mode='keep'):
         """
         Make a new dataset to store the spectra.
