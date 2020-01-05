@@ -88,8 +88,8 @@ class cc_stack_rcv_pairs:
             app.attrs['user'] = self.username
             app.attrs['timestamp'] = strftime("%Y-%m-%d %H:%M:%S", gmtime() )
             if self.global_select_stack:
-                az_operater = '<=' if self.global_select_stack_az_reverse else '>'
-                gc_operater = '<=' if self.global_select_stack_gc_reverse else '>'
+                az_operater = '>' if self.global_select_stack_az_reverse else '<='
+                gc_operater = '>' if self.global_select_stack_gc_reverse else '<='
                 app.attrs['info'] = 'selective stacking (az %s %f) (gc %s %f)' % (
                         az_operater, self.global_select_stack_az_diff_deg_max,
                         gc_operater, self.global_select_stack_gc_reverse)
@@ -133,7 +133,7 @@ class cc_stack_rcv_pairs:
         self.global_inter_rcv_distance_deg_min  = self.comm.bcast(self.global_inter_rcv_distance_deg_min , root= 0)
         self.global_inter_rcv_distance_deg_max  = self.comm.bcast(self.global_inter_rcv_distance_deg_max , root= 0)
         self.global_inter_rcv_distance_step_deg = self.comm.bcast(self.global_inter_rcv_distance_step_deg, root= 0)
-        self.global_inter_rcv_distance_deg_lst  = self.comm.bcase(self.global_inter_rcv_distance_deg_lst,  root= 0)
+        self.global_inter_rcv_distance_deg_lst  = self.comm.bcast(self.global_inter_rcv_distance_deg_lst,  root= 0)
         ###
         self.comm.Barrier()
         if self.rank != 0:
@@ -153,8 +153,8 @@ class cc_stack_rcv_pairs:
             self.global_select_stack_dis_to_greate_circle_plane_deg = dis_to_greate_circle_plane_deg
             self.global_select_stack_gc_reverse = gc_reverse
             ###
-            az_operater = '<=' if az_reverse else '>'
-            gc_operater = '<=' if gc_reverse else '>'
+            az_operater = '>' if az_reverse else '<='
+            gc_operater = '>' if gc_reverse else '<='
             msg = '>>> bcast send from RANK 0. Turn on `select` mode in cross-correlation stacking. (az %s %f) (dis %s %f)' % (
                 az_operater, az_diff_max_deg, gc_operater, dis_to_greate_circle_plane_deg)
             mpi_print_log(msg, 0, self.local_log_fp, True)
@@ -170,8 +170,8 @@ class cc_stack_rcv_pairs:
         self.comm.Barrier()
         ###
         if self.rank != 0:
-            az_operater = '<=' if az_reverse else '>'
-            gc_operater = '<=' if gc_reverse else '>'
+            az_operater = '>' if az_reverse else '<='
+            gc_operater = '>' if gc_reverse else '<='
             msg = '>>> bcast receive from RANK 0. Turn on `select` mode in cross-correlation stacking. (az %s %f) (dis %s %f)' % (
                 az_operater, az_diff_max_deg, gc_operater, dis_to_greate_circle_plane_deg)
             mpi_print_log(msg, 0, self.local_log_fp, True)
@@ -289,7 +289,7 @@ class cc_stack_rcv_pairs:
             for idx, fnm in enumerate(self.local_fnm_lst_alignedSac2Hdf5):
                 mpi_print_log('%s index(%d/%d)'% (fnm, idx+1, worksize), 1, self.local_log_fp, True)
                 self.run_select_cc_spectra_from_single_hdf5_file(fnm, 
-                        self.global_select_stack_az_reverse, self.global_select_stack_az_reverse,
+                        self.global_select_stack_az_diff_deg_max, self.global_select_stack_az_reverse,
                         self.global_select_stack_dis_to_greate_circle_plane_deg, self.global_select_stack_gc_reverse)
     def run_all_cc_spectra_from_single_hdf5_file(self, fnm_alignedSac2Hdf5):
         """
@@ -309,21 +309,21 @@ class cc_stack_rcv_pairs:
             tr = processing.temporal_normalization(row, self.global_sampling_rate, self.global_twin_len, self.global_f1, self.global_f2)
             spectra[idx] = processing.frequency_whiten_spec(tr, self.global_sampling_rate, self.global_fwin_len, self.global_npts_cc)
         ### cross correlation
-        msg_template = 'cc ev (%.2f %.2f)' % (evlo, evla)  + 'rcv(%.2f %.2f)x(%.2f %.2f) dist(%.2f) stack_cc(%.2f,%d) %s' 
+        msg_template = 'cc ev (%.2f %.2f)' % (evlo, evla)  + 'rcv(%.2f %.2f)x(%.2f %.2f) dist(%.2f) stack_cc(%d,%.2f) %s' 
         for idx1 in range(ntr):
             stlo1, stla1 = stlo[idx1], stla[idx1]
             for idx2 in range(ntr):
                 stlo2, stla2 = stlo[idx2], stla[idx2]
                 distance = geomath.haversine(stlo1, stla1, stlo2, stla2) # return degree
                 if distance > self.global_inter_rcv_distance_deg_max or distance < self.global_inter_rcv_distance_deg_min:
-                    mpi_print_log(msg_template % (stlo1, stla1, stlo2, stla2, distance, np.nan, np.nan, 'N'), 2, self.local_log_fp, False )
+                    mpi_print_log(msg_template % (stlo1, stla1, stlo2, stla2, distance, -12345, -12345, 'ND'), 2, self.local_log_fp, False )
                     continue
                 ### cc and stack
                 tmp = spectra[idx1] * np.conj(spectra[idx2])
                 if True not in (np.isnan(tmp) ):
                     idx_cc = int( (distance - self.global_inter_rcv_distance_deg_min)/self.global_inter_rcv_distance_step_deg)
                     mpi_print_log(msg_template % (stlo1, stla1, stlo2, stla2, distance, 
-                            self.global_inter_rcv_distance_deg_lst[idx_cc], idx_cc, 'Y'), 2, self.local_log_fp, False )
+                            idx_cc, self.global_inter_rcv_distance_deg_lst[idx_cc], 'Y'), 2, self.local_log_fp, False )
                     self.local_stacked_cc_spectra[idx_cc, :] += tmp
                     self.local_stacked_cc_count[idx_cc] += 1
         app.h5.close()
@@ -344,7 +344,7 @@ class cc_stack_rcv_pairs:
         stla = app.h5['raw_sac/hdr/stla'][:]
         evlo = app.h5['raw_sac/hdr/evlo'][0]
         evla = app.h5['raw_sac/hdr/evla'][0]
-        az   = [geomath(evlo, evla, lo, la) for (lo, la) in zip(stlo, stla) ] # return degree
+        az   = [geomath.azimuth(evlo, evla, lo, la) for (lo, la) in zip(stlo, stla) ] # return degree
         ###
         time_series = app.get_raw_sac(cut_marker= self.global_cut_marker, cut_range= [self.global_cut_t1, self.global_cut_t2] )
         ntr = time_series.shape[0]
@@ -354,7 +354,7 @@ class cc_stack_rcv_pairs:
             tr = processing.temporal_normalization(row, self.global_sampling_rate, self.global_twin_len, self.global_f1, self.global_f2)
             spectra[idx] = processing.frequency_whiten_spec(tr, self.global_sampling_rate, self.global_fwin_len, self.global_npts_cc)
         ### cross correlation
-        msg_template = 'cc ev (%.2f %.2f)' % (evlo, evla)  + 'rcv(%.2f %.2f)x(%.2f %.2f) dist(%.2f) stack_cc(%.2f,%d) %s' 
+        msg_template = 'cc ev (%.2f %.2f)' % (evlo, evla)  + 'rcv(%.2f %.2f)x(%.2f %.2f) dist(%.2f) stack_cc(%.2f,%d)' 
         for idx1 in range(ntr):
             stlo1, stla1 = stlo[idx1], stla[idx1]
             az1 = az[idx1]
@@ -363,22 +363,24 @@ class cc_stack_rcv_pairs:
                 ### select distance
                 distance = geomath.haversine(stlo1, stla1, stlo2, stla2) # return degree
                 if distance > self.global_inter_rcv_distance_deg_max or distance < self.global_inter_rcv_distance_deg_min:
-                    mpi_print_log(msg_template % (stlo1, stla1, stlo2, stla2, distance, np.nan, np.nan, 'N'), 2, self.local_log_fp, False )
+                    mpi_print_log(msg_template % (stlo1, stla1, stlo2, stla2, distance, -12345, -12345)+' N', 2, self.local_log_fp, False )
                     continue
                 ### select max az difference
                 az2 = az[idx2]
                 if (np.abs(az1-az2) <= az_diff_max_deg) == az_reverse:
+                    mpi_print_log(msg_template % (stlo1, stla1, stlo2, stla2, distance, -12345, -12345)+' az(%f %f) daz(%f) NA' % (az1, az2, az1-az2), 2, self.local_log_fp, False )
                     continue
                 ### select max distance from the event to the great circle plane
                 junk = geomath.point_distance_to_great_circle_plane(evlo, evla, stlo1, stla1, stlo2, stla2) # return degree
-                if (junk <= dis_to_greate_circle_plane_deg) == gc_reverse:
+                if (np.abs(junk) <= dis_to_greate_circle_plane_deg) == gc_reverse:
+                    mpi_print_log(msg_template % (stlo1, stla1, stlo2, stla2, distance, -12345, -12345)+' gc(%f) NG' % (junk), 2, self.local_log_fp, False )
                     continue
                 ### cc and stack
                 tmp = spectra[idx1] * np.conj(spectra[idx2])
                 if True not in (np.isnan(tmp) ):
                     idx_cc = int( (distance - self.global_inter_rcv_distance_deg_min)/self.global_inter_rcv_distance_step_deg)
                     mpi_print_log(msg_template % (stlo1, stla1, stlo2, stla2, distance, 
-                            self.global_inter_rcv_distance_deg_lst[idx_cc], idx_cc, 'Y'), 2, self.local_log_fp, False )
+                            self.global_inter_rcv_distance_deg_lst[idx_cc], idx_cc)+' az(%f %f) daz(%f) gc(%f) Y' % (az1, az2, az1-az2, junk), 2, self.local_log_fp, False )
                     self.local_stacked_cc_spectra[idx_cc, :] += tmp
                     self.local_stacked_cc_count[idx_cc] += 1
         app.h5.close()
@@ -429,7 +431,7 @@ if __name__ == "__main__":
     options, remainder = getopt.getopt(sys.argv[1:], 'I:L:T:S:N:W:O:A:G:' )
     for opt, arg in options:
         if opt in ('-I'):
-            fnm_lst_alignedSac2Hdf5 = [line.strip() for line in open(arg, 'r')]
+            fnm_lst_alignedSac2Hdf5 = [line.strip() for line in open(arg, 'r')][:12]
             pass
         elif opt in ('-L'):
             log_prefnm = arg
