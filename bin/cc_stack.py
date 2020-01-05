@@ -64,6 +64,9 @@ class cc_stack_rcv_pairs:
         self.rank0_stacked_cc_spectra = None
         self.rank0_stacked_cc_count = None
         self.rank0_stacked_cc_time = None
+        #
+        self.all_stack_msg_template = '%2s cc ev(%.2f %.2f) rcv(%.2f %.2f)x(%.2f %.2f) dist(%.2f) stack_cc(%d,%.2f)'
+        self.select_stack_msg_template = '%2s cc ev(%.2f %.2f) rcv(%.2f %.2f)x(%.2f %.2f) dist(%.2f) stack_cc(%d,%.2f) az(%f,%f) daz(%f), gc(%f)'
     def init(self, inter_rcv_distance_range_deg, distance_step_deg, cut_marker, cut_t1, cut_t2, twin, f1, f2, fwin,
         az_diff_max_deg= None, az_reverse= None, gc_dis_max_deg= None, gc_reverse= None):
         self.set_stack_inter_rcv_distance(inter_rcv_distance_range_deg, distance_step_deg)
@@ -309,21 +312,22 @@ class cc_stack_rcv_pairs:
             tr = processing.temporal_normalization(row, self.global_sampling_rate, self.global_twin_len, self.global_f1, self.global_f2)
             spectra[idx] = processing.frequency_whiten_spec(tr, self.global_sampling_rate, self.global_fwin_len, self.global_npts_cc)
         ### cross correlation
-        msg_template = 'cc ev (%.2f %.2f)' % (evlo, evla)  + 'rcv(%.2f %.2f)x(%.2f %.2f) dist(%.2f) stack_cc(%d,%.2f) %s' 
         for idx1 in range(ntr):
             stlo1, stla1 = stlo[idx1], stla[idx1]
             for idx2 in range(ntr):
                 stlo2, stla2 = stlo[idx2], stla[idx2]
                 distance = geomath.haversine(stlo1, stla1, stlo2, stla2) # return degree
                 if distance > self.global_inter_rcv_distance_deg_max or distance < self.global_inter_rcv_distance_deg_min:
-                    mpi_print_log(msg_template % (stlo1, stla1, stlo2, stla2, distance, -12345, -12345, 'ND'), 2, self.local_log_fp, False )
+                    msg = self.all_stack_msg_template % ('ND', evlo, evla, stlo1, stla1, stlo1, stlo2, distance, -12345, -12345)
+                    mpi_print_log(msg, 2, self.local_log_fp, False )
                     continue
                 ### cc and stack
                 tmp = spectra[idx1] * np.conj(spectra[idx2])
                 if True not in (np.isnan(tmp) ):
                     idx_cc = int( (distance - self.global_inter_rcv_distance_deg_min)/self.global_inter_rcv_distance_step_deg)
-                    mpi_print_log(msg_template % (stlo1, stla1, stlo2, stla2, distance, 
-                            idx_cc, self.global_inter_rcv_distance_deg_lst[idx_cc], 'Y'), 2, self.local_log_fp, False )
+                    msg = self.all_stack_msg_template % ('Y', evlo, evla, stlo1, stla1, stlo1, stlo2, distance, 
+                            idx_cc, self.global_inter_rcv_distance_deg_lst[idx_cc])
+                    mpi_print_log(msg, 2, self.local_log_fp, False )
                     self.local_stacked_cc_spectra[idx_cc, :] += tmp
                     self.local_stacked_cc_count[idx_cc] += 1
         app.h5.close()
@@ -354,7 +358,6 @@ class cc_stack_rcv_pairs:
             tr = processing.temporal_normalization(row, self.global_sampling_rate, self.global_twin_len, self.global_f1, self.global_f2)
             spectra[idx] = processing.frequency_whiten_spec(tr, self.global_sampling_rate, self.global_fwin_len, self.global_npts_cc)
         ### cross correlation
-        msg_template = 'cc ev (%.2f %.2f)' % (evlo, evla)  + 'rcv(%.2f %.2f)x(%.2f %.2f) dist(%.2f) stack_cc(%.2f,%d)' 
         for idx1 in range(ntr):
             stlo1, stla1 = stlo[idx1], stla[idx1]
             az1 = az[idx1]
@@ -363,24 +366,30 @@ class cc_stack_rcv_pairs:
                 ### select distance
                 distance = geomath.haversine(stlo1, stla1, stlo2, stla2) # return degree
                 if distance > self.global_inter_rcv_distance_deg_max or distance < self.global_inter_rcv_distance_deg_min:
-                    mpi_print_log(msg_template % (stlo1, stla1, stlo2, stla2, distance, -12345, -12345)+' N', 2, self.local_log_fp, False )
+                    msg = self.select_stack_msg_template % ('ND', evlo, evla, stlo1, stla1, stlo2, stla2, distance, -12345, -12345, -12345, -12345, -12345, -12345 )
+                    mpi_print_log(msg, 2, self.local_log_fp, False )
                     continue
                 ### select max az difference
                 az2 = az[idx2]
-                if (np.abs(az1-az2) <= az_diff_max_deg) == az_reverse:
-                    mpi_print_log(msg_template % (stlo1, stla1, stlo2, stla2, distance, -12345, -12345)+' az(%f %f) daz(%f) NA' % (az1, az2, az1-az2), 2, self.local_log_fp, False )
+                daz = az1-az2
+                if (np.abs(daz) <= az_diff_max_deg) == az_reverse:
+                    msg = self.select_stack_msg_template % ('NA', evlo, evla, stlo1, stla1, stlo2, stla2, distance, -12345, -12345, az1, az2, daz, -12345 )
+                    mpi_print_log(msg, 2, self.local_log_fp, False )
                     continue
                 ### select max distance from the event to the great circle plane
                 junk = geomath.point_distance_to_great_circle_plane(evlo, evla, stlo1, stla1, stlo2, stla2) # return degree
                 if (np.abs(junk) <= dis_to_greate_circle_plane_deg) == gc_reverse:
-                    mpi_print_log(msg_template % (stlo1, stla1, stlo2, stla2, distance, -12345, -12345)+' gc(%f) NG' % (junk), 2, self.local_log_fp, False )
+                    msg = self.select_stack_msg_template % ('NG', evlo, evla, stlo1, stla1, stlo2, stla2, distance, -12345, -12345, az1, az2, daz, junk )
+                    mpi_print_log(msg, 2, self.local_log_fp, False )
                     continue
                 ### cc and stack
                 tmp = spectra[idx1] * np.conj(spectra[idx2])
                 if True not in (np.isnan(tmp) ):
                     idx_cc = int( (distance - self.global_inter_rcv_distance_deg_min)/self.global_inter_rcv_distance_step_deg)
-                    mpi_print_log(msg_template % (stlo1, stla1, stlo2, stla2, distance, 
-                            self.global_inter_rcv_distance_deg_lst[idx_cc], idx_cc)+' az(%f %f) daz(%f) gc(%f) Y' % (az1, az2, az1-az2, junk), 2, self.local_log_fp, False )
+                    msg = self.select_stack_msg_template % ('Y', evlo, evla, stlo1, stla1, stlo2, stla2, distance, 
+                            idx_cc, self.global_inter_rcv_distance_deg_lst[idx_cc],
+                            az1, az2, daz, junk )
+                    mpi_print_log(msg, 2, self.local_log_fp, False )
                     self.local_stacked_cc_spectra[idx_cc, :] += tmp
                     self.local_stacked_cc_count[idx_cc] += 1
         app.h5.close()
