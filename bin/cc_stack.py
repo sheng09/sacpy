@@ -398,16 +398,18 @@ class cc_stack_rcv_pairs:
                 ### select max az difference
                 az2 = az[idx2]
                 daz = az1-az2
-                if self.global_select_stack_az_diff and (self.global_select_stack_az_diff_deg_min <= np.abs(daz) <= self.global_select_stack_az_diff_deg_max) == self.global_select_stack_az_reverse:
-                    msg = self.select_stack_msg_template % ('NA', evlo, evla, stlo1, stla1, stlo2, stla2, distance, -12345, -12345, az1, az2, daz, -12345 )
-                    mpi_print_log(msg, 2, self.local_log_fp, False )
-                    continue
+                if self.global_select_stack_az_diff:
+                    if (self.global_select_stack_az_diff_deg_min <= np.abs(daz) <= self.global_select_stack_az_diff_deg_max) == self.global_select_stack_az_reverse:
+                        msg = self.select_stack_msg_template % ('NA', evlo, evla, stlo1, stla1, stlo2, stla2, distance, -12345, -12345, az1, az2, daz, -12345 )
+                        mpi_print_log(msg, 2, self.local_log_fp, False )
+                        continue
                 ### select max distance from the event to the great circle plane
                 junk = geomath.point_distance_to_great_circle_plane(evlo, evla, stlo1, stla1, stlo2, stla2) # return degree
-                if self.global_select_stack_gc and (self.global_select_stack_gc_deg_min <= np.abs(junk) <= self.global_select_stack_gc_deg_max) == self.global_select_stack_gc_deg_reverse:
-                    msg = self.select_stack_msg_template % ('NG', evlo, evla, stlo1, stla1, stlo2, stla2, distance, -12345, -12345, az1, az2, daz, junk )
-                    mpi_print_log(msg, 2, self.local_log_fp, False )
-                    continue
+                if self.global_select_stack_gc:
+                    if (self.global_select_stack_gc_deg_min <= np.abs(junk) <= self.global_select_stack_gc_deg_max) == self.global_select_stack_gc_deg_reverse:
+                        msg = self.select_stack_msg_template % ('NG', evlo, evla, stlo1, stla1, stlo2, stla2, distance, -12345, -12345, az1, az2, daz, junk )
+                        mpi_print_log(msg, 2, self.local_log_fp, False )
+                        continue
                 ### cc and stack
                 tmp = spectra[idx1] * np.conj(spectra[idx2])
                 if True not in (np.isnan(tmp) ):
@@ -457,11 +459,11 @@ if __name__ == "__main__":
     fnm_hdf5 = 'junk.h5'
     #
     az_switch = False
-    az_diff_deg_max = 720.0
-    az_reverse = False
+    az_diff_range_deg = None
+    az_reverse = None
     gc_switch = False
-    gc_dist = 720.0
-    gc_reverse = False
+    gc_range_deg = None
+    gc_reverse = None
     ###
     options, remainder = getopt.getopt(sys.argv[1:], 'I:L:T:S:N:W:O:A:G:' )
     for opt, arg in options:
@@ -482,29 +484,30 @@ if __name__ == "__main__":
             fwin = float(arg)
         elif opt in ('-O'):
             fnm_hdf5 = arg
-        elif opt in ('-A'): ## example: -A10 or -A10r
+        elif opt in ('-A'): ## example: -A10/20 or -A10/20/r
             az_switch = True
-            if arg[-1] == 'r':
+            if arg[-2:] == '/r':
                 az_reverse = True
-                arg = arg[:-1]
-            az_diff_deg_max = float(arg)
-        elif opt in ('-G'): ## exmaple -G10 or -G10r
+                arg = arg[:-2]
+            az_diff_range_deg = [float(it) for it in arg.split('/') ]
+        elif opt in ('-G'): ## exmaple -G10/20 or -G10/20r
             gc_switch = True
-            if arg[-1] == 'r':
+            if arg[-2:] == 'r':
                 gc_reverse = True
-                arg = arg[:-1]
-            gc_dist = float(arg)
+                arg = arg[:-2]
+            gc_range_deg = [float(it) for it in arg.split('/')]
         else:
             print('invalid options: %s' % (opt) )
     ###
-    if az_switch == False and gc_switch == False: # to disable selectived stacking 
+    if az_switch == False: # to disable selectived stacking
         az_diff_deg_max = None
         az_reverse = None
+    if gc_switch == False: # to disable selectived stacking
         gc_dist = None
         gc_reverse = None
     ###
     print('>>> cmd: ', ' '.join(sys.argv ) )
     app = cc_stack_rcv_pairs(fnm_lst_alignedSac2Hdf5, log_prefnm=log_prefnm, username= username )
-    app.init([d1, d2], dstep, cut_marker, cut_t1, cut_t2, twin, f1, f2, fwin, az_diff_deg_max, az_reverse, gc_dist, gc_reverse)
+    app.init([d1, d2], dstep, cut_marker, cut_t1, cut_t2, twin, f1, f2, fwin, az_diff_range_deg, az_reverse, gc_range_deg, gc_reverse)
     app.run()
     app.output2hdf5(fnm_hdf5)
