@@ -108,7 +108,7 @@ class cc_stack_rcv_pairs:
             dset.attrs['df'] = self.global_df
             ### stacked time series
             dset = app.create_dataset('cc_stacked_time', data= self.rank0_stacked_cc_time)
-            dset.attrs['info'] = 'untappered and unrolled cc time-series'
+            dset.attrs['info'] = 'unaveraged, untappered and unrolled cc time-series'
             dset.attrs['dt'] = self.global_dt
             ### number of cc for each stacked bin
             dset = app.create_dataset('cc_stacked_count', data= self.rank0_stacked_cc_count)
@@ -433,14 +433,14 @@ class cc_stack_rcv_pairs:
                     [self.rank0_stacked_cc_spectra, mpi4py.MPI.C_FLOAT_COMPLEX], mpi4py.MPI.SUM, root= 0)
         self.comm.Reduce([self.local_stacked_cc_count, mpi4py.MPI.INT32_T], 
                     [self.rank0_stacked_cc_count, mpi4py.MPI.INT32_T], mpi4py.MPI.SUM, root= 0 )
-        ### ifft and average
+        ### ifft
         if self.rank == 0:
-            mpi_print_log('>>> ifft and average...', 0, self.local_log_fp, True)
+            mpi_print_log('>>> ifft (please note, averge is not conducted) ...', 0, self.local_log_fp, True)
             for idx, (row, count) in enumerate(zip(self.rank0_stacked_cc_spectra, self.rank0_stacked_cc_count) ):
-                if count < 1:
-                    continue
                 self.rank0_stacked_cc_time[idx]  = pyfftw.interfaces.numpy_fft.irfft(row, self.global_npts_cc)
-                self.rank0_stacked_cc_time[idx] *= (1.0/count)
+                #if count < 1:
+                #    continue
+                #self.rank0_stacked_cc_time[idx] *= (1.0/count)
             mpi_print_log('>>> Computation done', 0, self.local_log_fp, True)
             
 
