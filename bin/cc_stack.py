@@ -51,11 +51,11 @@ class cc_stack_rcv_pairs:
         self.global_fwin_len = 0.0
         #
         self.global_select_stack_az_diff = False
-        self.global_select_stack_az_diff_deg_max = 10.0
+        self.global_select_stack_az_diff_deg_max = 999
         self.global_select_stack_az_diff_deg_min = -1.0
         self.global_select_stack_az_reverse = False     # set True to turn include into exclude
         self.global_select_stack_gc = False
-        self.global_select_stack_gc_deg_max = 10.0
+        self.global_select_stack_gc_deg_max = 999
         self.global_select_stack_gc_deg_min = -1.0
         self.global_select_stack_gc_deg_reverse = False # set True to turn include into exclude
         #
@@ -95,14 +95,18 @@ class cc_stack_rcv_pairs:
             app = h5py.File(fnm_hdf5, 'w')
             app.attrs['user'] = self.username
             app.attrs['timestamp'] = strftime("%Y-%m-%d %H:%M:%S", gmtime() )
-            if self.global_select_stack:
-                az_operater = '>' if self.global_select_stack_az_reverse else '<='
-                gc_operater = '>' if self.global_select_stack_gc_reverse else '<='
-                app.attrs['info'] = 'selective stacking (az %s %f) (gc %s %f)' % (
-                        az_operater, self.global_select_stack_az_diff_deg_max,
-                        gc_operater, self.global_select_stack_gc_reverse)
-            else:
+            ####
+            if (not self.global_select_stack_az_diff) and (not self.global_select_stack_gc):
                 app.attrs['info'] = 'stacking using all cross-correlation functions'
+            else:
+                tmp = 'selective stacking '
+                if self.global_select_stack_az_diff:
+                    operator = 'outside' if self.global_select_stack_gc_deg_reverse else 'inside'
+                    tmp += 'az %s (%f %f)' % (operator, self.global_select_stack_az_diff_deg_min, self.global_select_stack_az_diff_deg_max)
+                if self.global_select_stack_gc:
+                    operator = 'outside' if self.global_select_stack_gc_deg_reverse else 'inside'
+                    tmp += 'gc %s (%f %f)' % ( operator, self.global_select_stack_az_diff_deg_min, self.global_select_stack_az_diff_deg_max  )
+                app.attrs['info'] = tmp
             ### stacked spectrum
             dset = app.create_dataset('cc_stacked_spectra', data= self.rank0_stacked_cc_spectra)
             dset.attrs['df'] = self.global_df
@@ -116,6 +120,9 @@ class cc_stack_rcv_pairs:
             dset = app.create_dataset('distance_bin', data= self.global_inter_rcv_distance_deg_lst)
             dset.attrs['info'] = 'inter-receiver distance (degree) at the middle of each stacked bin.  '
             app.close()
+    def release(self):
+        self.comm.Barrier()
+        pass #
     def set_stack_inter_rcv_distance(self, inter_rcv_distance_range_deg= [0.0, 180.0], distance_step_deg= 1.0):
         """
         Set stack parameters
@@ -129,7 +136,7 @@ class cc_stack_rcv_pairs:
             self.global_inter_rcv_distance_step_deg = dd
             self.global_inter_rcv_distance_deg_lst = np.arange(0.0, self.global_ncc, 1.0) * dd + d1 + dd*0.5
             ### msg out
-            msg = '>>> bcast send from RANK 0 for stack routine: inter_rcv_distance [%d, %d] step(%f)' % (
+            msg = '>>> bcast send from RANK 0 for stack routine: inter_rcv_distance [%f, %f] step(%f)' % (
                     self.global_inter_rcv_distance_deg_min,
                     self.global_inter_rcv_distance_deg_max,
                     self.global_inter_rcv_distance_step_deg )
@@ -145,12 +152,12 @@ class cc_stack_rcv_pairs:
         ###
         self.comm.Barrier()
         if self.rank != 0:
-            msg = '>>> bcast receive from RANK 0 for stack routine: inter_rcv_distance [%d, %d] step(%f)' % (
+            msg = '>>> bcast receive from RANK 0 for stack routine: inter_rcv_distance [%f, %f] step(%f)' % (
                     self.global_inter_rcv_distance_deg_min,
                     self.global_inter_rcv_distance_deg_max,
                     self.global_inter_rcv_distance_step_deg )
             mpi_print_log(msg, 0, self.local_log_fp, True)
-    def set_selective_stack_az_range(self, az_diff_range_deg=[-1.0, 10.0], az_reverse=False):
+    def set_selective_stack_az_range(self, az_diff_range_deg, az_reverse):
         """
         Call this function to set `selective` mode in stacking given specific azimuth difference range
         """
@@ -178,7 +185,7 @@ class cc_stack_rcv_pairs:
             msg = '>>> bcast receive from RANK 0. Turn of `az-selective` mode. az %s (%f %f)' % (
                     operator, self.global_select_stack_az_diff_deg_min, self.global_select_stack_az_diff_deg_max)
             mpi_print_log(msg, 0, self.local_log_fp, True)
-    def set_selective_stack_gc_range(self, gc_range_deg= [-1.0, 10.0], gc_reverse=False):
+    def set_selective_stack_gc_range(self, gc_range_deg, gc_reverse):
         """
         Call this function to set `gc select` mode in stacking given specific gc range (in degree)
         """
@@ -189,7 +196,7 @@ class cc_stack_rcv_pairs:
             ###
             operator = 'outside' if self.global_select_stack_gc_deg_reverse else 'inside'
             msg = '>>> bcast send from RANK 0. Turn of `gc-selective` mode. gc %s (%f %f)' % (
-                    operator, self.global_select_stack_az_diff_deg_min, self.global_select_stack_az_diff_deg_max)
+                    operator, self.global_select_stack_gc_deg_min, self.global_select_stack_gc_deg_max)
             mpi_print_log(msg, 0, self.local_log_fp, True) 
         ###
         self.comm.Barrier()
@@ -204,7 +211,7 @@ class cc_stack_rcv_pairs:
         if self.rank != 0:
             operator = 'outside' if self.global_select_stack_gc_deg_reverse else 'inside'
             msg = '>>> bcast receive from RANK 0. Turn of `gc-selective` mode. gc %s (%f %f)' % (
-                    operator, self.global_select_stack_az_diff_deg_min, self.global_select_stack_az_diff_deg_max)
+                    operator, self.global_select_stack_gc_deg_min, self.global_select_stack_gc_deg_max)
             mpi_print_log(msg, 0, self.local_log_fp, True)
     def set_local_stacked_cc_spectra(self, cut_marker, cut_t1, cut_t2):
         """
@@ -460,15 +467,15 @@ if __name__ == "__main__":
     #
     az_switch = False
     az_diff_range_deg = None
-    az_reverse = None
+    az_reverse = False
     gc_switch = False
     gc_range_deg = None
-    gc_reverse = None
+    gc_reverse = False
     ###
     options, remainder = getopt.getopt(sys.argv[1:], 'I:L:T:S:N:W:O:A:G:' )
     for opt, arg in options:
         if opt in ('-I'):
-            fnm_lst_alignedSac2Hdf5 = [line.strip() for line in open(arg, 'r')][:12]
+            fnm_lst_alignedSac2Hdf5 = [line.strip() for line in open(arg, 'r')]
             pass
         elif opt in ('-L'):
             log_prefnm = arg
@@ -492,7 +499,7 @@ if __name__ == "__main__":
             az_diff_range_deg = [float(it) for it in arg.split('/') ]
         elif opt in ('-G'): ## exmaple -G10/20 or -G10/20r
             gc_switch = True
-            if arg[-2:] == 'r':
+            if arg[-2:] == '/r':
                 gc_reverse = True
                 arg = arg[:-2]
             gc_range_deg = [float(it) for it in arg.split('/')]
@@ -511,3 +518,4 @@ if __name__ == "__main__":
     app.init([d1, d2], dstep, cut_marker, cut_t1, cut_t2, twin, f1, f2, fwin, az_diff_range_deg, az_reverse, gc_range_deg, gc_reverse)
     app.run()
     app.output2hdf5(fnm_hdf5)
+    app.release()
