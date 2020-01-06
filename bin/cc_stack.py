@@ -50,11 +50,14 @@ class cc_stack_rcv_pairs:
         self.global_fwin = 0.0
         self.global_fwin_len = 0.0
         #
-        self.global_select_stack = False
-        self.global_select_stack_az_diff_deg_max = 720.0 # that means all cc functions are selected
-        self.global_select_stack_az_reverse = False      # set True to turn include into exclude
-        self.global_select_stack_dis_to_greate_circle_plane_deg = 720.0 # that means all cc functions are selected
-        self.global_select_stack_gc_reverse = False                     # set True to turn include into exclude
+        self.global_select_stack_az_diff = False
+        self.global_select_stack_az_diff_deg_max = 10.0
+        self.global_select_stack_az_diff_deg_min = -1.0
+        self.global_select_stack_az_reverse = False     # set True to turn include into exclude
+        self.global_select_stack_gc = False
+        self.global_select_stack_gc_deg_max = 10.0
+        self.global_select_stack_gc_deg_min = -1.0
+        self.global_select_stack_gc_deg_reverse = False # set True to turn include into exclude
         #
         self.global_inter_rcv_distance_deg_min = 0.0
         self.global_inter_rcv_distance_deg_max = 180.0
@@ -68,10 +71,12 @@ class cc_stack_rcv_pairs:
         self.all_stack_msg_template = '%2s cc ev(%.2f %.2f) rcv(%.2f %.2f)x(%.2f %.2f) dist(%.2f) stack_cc(%d,%.2f)'
         self.select_stack_msg_template = '%2s cc ev(%.2f %.2f) rcv(%.2f %.2f)x(%.2f %.2f) dist(%.2f) stack_cc(%d,%.2f) az(%f,%f) daz(%f), gc(%f)'
     def init(self, inter_rcv_distance_range_deg, distance_step_deg, cut_marker, cut_t1, cut_t2, twin, f1, f2, fwin,
-        az_diff_max_deg= None, az_reverse= None, gc_dis_max_deg= None, gc_reverse= None):
+        az_diff_range_deg= None, az_reverse= None, gc_dis_range_deg= None, gc_reverse= None):
         self.set_stack_inter_rcv_distance(inter_rcv_distance_range_deg, distance_step_deg)
-        if az_diff_max_deg != None and az_reverse != None and gc_dis_max_deg != None and gc_reverse != None:
-            self.set_select_stack(az_diff_deg_max, az_reverse, gc_dis_max_deg, gc_reverse)
+        if az_diff_range_deg != None and az_reverse != None:
+            self.set_selective_stack_az_range(az_diff_range_deg, az_reverse)
+        if gc_dis_range_deg != None and gc_reverse != None:
+            self.set_selective_stack_gc_range(gc_dis_range_deg, gc_reverse)
         self.set_local_stacked_cc_spectra(cut_marker, cut_t1, cut_t2)
         self.set_whitening_parameter(twin, f1, f2, fwin)
         self.set_local_work_h5_lst()
@@ -145,38 +150,61 @@ class cc_stack_rcv_pairs:
                     self.global_inter_rcv_distance_deg_max,
                     self.global_inter_rcv_distance_step_deg )
             mpi_print_log(msg, 0, self.local_log_fp, True)
-    def set_select_stack(self, az_diff_max_deg=10, az_reverse=False, dis_to_greate_circle_plane_deg=10, gc_reverse=False):
+    def set_selective_stack_az_range(self, az_diff_range_deg=[-1.0, 10.0], az_reverse=False):
         """
-        Call this function to set `select` mode in stacking cross-correlation functions
+        Call this function to set `selective` mode in stacking given specific azimuth difference range
         """
         if self.rank == 0:
-            self.global_select_stack = True
-            self.global_select_stack_az_diff_deg_max = az_diff_max_deg
+            self.global_select_stack_az_diff = True
+            self.global_select_stack_az_diff_deg_min, self.global_select_stack_az_diff_deg_max = az_diff_range_deg
             self.global_select_stack_az_reverse = az_reverse
-            self.global_select_stack_dis_to_greate_circle_plane_deg = dis_to_greate_circle_plane_deg
-            self.global_select_stack_gc_reverse = gc_reverse
             ###
-            az_operater = '>' if az_reverse else '<='
-            gc_operater = '>' if gc_reverse else '<='
-            msg = '>>> bcast send from RANK 0. Turn on `select` mode in cross-correlation stacking. (az %s %f) (dis %s %f)' % (
-                az_operater, az_diff_max_deg, gc_operater, dis_to_greate_circle_plane_deg)
+            operator = 'outside' if self.global_select_stack_az_reverse else 'inside'
+            msg = '>>> bcast send from RANK 0. Turn of `az-selective` mode. az %s (%f %f)' % (
+                    operator, self.global_select_stack_az_diff_deg_min, self.global_select_stack_az_diff_deg_max)
             mpi_print_log(msg, 0, self.local_log_fp, True)
         ###
         self.comm.Barrier()
         ###
-        self.global_select_stack = self.comm.bcast(self.global_select_stack, root= 0)
-        self.global_select_stack_az_diff_deg_max                = self.comm.bcast(self.global_select_stack_az_diff_deg_max, 0)
-        self.global_select_stack_az_reverse                     = self.comm.bcast(self.global_select_stack_az_reverse                    , root= 0)
-        self.global_select_stack_dis_to_greate_circle_plane_deg = self.comm.bcast(self.global_select_stack_dis_to_greate_circle_plane_deg, root= 0)
-        self.global_select_stack_gc_reverse                     = self.comm.bcast(self.global_select_stack_gc_reverse                    , root= 0)
+        self.global_select_stack_az_diff         = self.comm.bcast(self.global_select_stack_az_diff        , root= 0)
+        self.global_select_stack_az_diff_deg_min = self.comm.bcast(self.global_select_stack_az_diff_deg_min, root= 0)
+        self.global_select_stack_az_diff_deg_max = self.comm.bcast(self.global_select_stack_az_diff_deg_max, root= 0)
+        self.global_select_stack_az_reverse      = self.comm.bcast(self.global_select_stack_az_reverse     , root= 0)
+        ###
+        self.comm.Barrier()
+        ###
+        if self.rank!=0:
+            operator = 'outside' if self.global_select_stack_az_reverse else 'inside'
+            msg = '>>> bcast receive from RANK 0. Turn of `az-selective` mode. az %s (%f %f)' % (
+                    operator, self.global_select_stack_az_diff_deg_min, self.global_select_stack_az_diff_deg_max)
+            mpi_print_log(msg, 0, self.local_log_fp, True)
+    def set_selective_stack_gc_range(self, gc_range_deg= [-1.0, 10.0], gc_reverse=False):
+        """
+        Call this function to set `gc select` mode in stacking given specific gc range (in degree)
+        """
+        if self.rank == 0:
+            self.global_select_stack_gc = True
+            self.global_select_stack_gc_deg_min, self.global_select_stack_gc_deg_max = gc_range_deg
+            self.global_select_stack_gc_deg_reverse = gc_reverse # set True to turn include into exclude
+            ###
+            operator = 'outside' if self.global_select_stack_gc_deg_reverse else 'inside'
+            msg = '>>> bcast send from RANK 0. Turn of `gc-selective` mode. gc %s (%f %f)' % (
+                    operator, self.global_select_stack_az_diff_deg_min, self.global_select_stack_az_diff_deg_max)
+            mpi_print_log(msg, 0, self.local_log_fp, True) 
+        ###
+        self.comm.Barrier()
+        ###
+        self.global_select_stack_gc             = self.comm.bcast(self.global_select_stack_gc            , root= 0)
+        self.global_select_stack_gc_deg_max     = self.comm.bcast(self.global_select_stack_gc_deg_max    , root= 0)
+        self.global_select_stack_gc_deg_min     = self.comm.bcast(self.global_select_stack_gc_deg_min    , root= 0)
+        self.global_select_stack_gc_deg_reverse = self.comm.bcast(self.global_select_stack_gc_deg_reverse, root= 0)
         ###
         self.comm.Barrier()
         ###
         if self.rank != 0:
-            az_operater = '>' if az_reverse else '<='
-            gc_operater = '>' if gc_reverse else '<='
-            msg = '>>> bcast receive from RANK 0. Turn on `select` mode in cross-correlation stacking. (az %s %f) (dis %s %f)' % (
-                az_operater, az_diff_max_deg, gc_operater, dis_to_greate_circle_plane_deg)
+            operator = 'outside' if self.global_select_stack_gc_deg_reverse else 'inside'
+            msg = '>>> bcast receive from RANK 0. Turn of `gc-selective` mode. gc %s (%f %f)' % (
+                    operator, self.global_select_stack_az_diff_deg_min, self.global_select_stack_az_diff_deg_max)
             mpi_print_log(msg, 0, self.local_log_fp, True)
     def set_local_stacked_cc_spectra(self, cut_marker, cut_t1, cut_t2):
         """
@@ -282,7 +310,7 @@ class cc_stack_rcv_pairs:
         mpi_print_log(msg, 0, self.local_log_fp, True)
     def local_run(self):
         worksize= len(self.local_fnm_lst_alignedSac2Hdf5)
-        if not self.global_select_stack: ### stack all
+        if (not self.global_select_stack_az_diff) and (not self.global_select_stack_gc): ### stack all
             mpi_print_log('>>> Run spectral cc and all stack...', 0, self.local_log_fp, True)
             for idx, fnm in enumerate(self.local_fnm_lst_alignedSac2Hdf5):
                 mpi_print_log('%s index(%d/%d)'% (fnm, idx+1, worksize), 1, self.local_log_fp, True)
@@ -291,9 +319,9 @@ class cc_stack_rcv_pairs:
             mpi_print_log('>>> Run spectral cc and selective stack...', 0, self.local_log_fp, True)
             for idx, fnm in enumerate(self.local_fnm_lst_alignedSac2Hdf5):
                 mpi_print_log('%s index(%d/%d)'% (fnm, idx+1, worksize), 1, self.local_log_fp, True)
-                self.run_select_cc_spectra_from_single_hdf5_file(fnm, 
-                        self.global_select_stack_az_diff_deg_max, self.global_select_stack_az_reverse,
-                        self.global_select_stack_dis_to_greate_circle_plane_deg, self.global_select_stack_gc_reverse)
+                self.run_select_cc_spectra_from_single_hdf5_file(fnm)
+            #            self.global_select_stack_az_diff_deg_max, self.global_select_stack_az_reverse,
+            #            self.global_select_stack_dis_to_greate_circle_plane_deg, self.global_select_stack_gc_reverse)
     def run_all_cc_spectra_from_single_hdf5_file(self, fnm_alignedSac2Hdf5):
         """
         Use all time-series to get stacked cross-correlations with respect to inter-receiver distance
@@ -334,9 +362,7 @@ class cc_stack_rcv_pairs:
         del spectra
         del time_series
         del app
-    def run_select_cc_spectra_from_single_hdf5_file(self, fnm_alignedSac2Hdf5, 
-            az_diff_max_deg=10, az_reverse=False,
-            dis_to_greate_circle_plane_deg=10, gc_reverse=False):
+    def run_select_cc_spectra_from_single_hdf5_file(self, fnm_alignedSac2Hdf5):
         """
         Use selected time-series to get stacked cross-correlations with respect to inter-receiver distance.
         (1) Azimuth difference and (2) distance from event to inter-receiver great-circle-plane are used to 
@@ -372,13 +398,13 @@ class cc_stack_rcv_pairs:
                 ### select max az difference
                 az2 = az[idx2]
                 daz = az1-az2
-                if (np.abs(daz) <= az_diff_max_deg) == az_reverse:
+                if self.global_select_stack_az_diff and (self.global_select_stack_az_diff_deg_min <= np.abs(daz) <= self.global_select_stack_az_diff_deg_max) == self.global_select_stack_az_reverse:
                     msg = self.select_stack_msg_template % ('NA', evlo, evla, stlo1, stla1, stlo2, stla2, distance, -12345, -12345, az1, az2, daz, -12345 )
                     mpi_print_log(msg, 2, self.local_log_fp, False )
                     continue
                 ### select max distance from the event to the great circle plane
                 junk = geomath.point_distance_to_great_circle_plane(evlo, evla, stlo1, stla1, stlo2, stla2) # return degree
-                if (np.abs(junk) <= dis_to_greate_circle_plane_deg) == gc_reverse:
+                if self.global_select_stack_gc and (self.global_select_stack_gc_deg_min <= np.abs(junk) <= self.global_select_stack_gc_deg_max) == self.global_select_stack_gc_deg_reverse:
                     msg = self.select_stack_msg_template % ('NG', evlo, evla, stlo1, stla1, stlo2, stla2, distance, -12345, -12345, az1, az2, daz, junk )
                     mpi_print_log(msg, 2, self.local_log_fp, False )
                     continue
