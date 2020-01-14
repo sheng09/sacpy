@@ -299,6 +299,33 @@ class cc_stack_rcv_pairs:
         """
         set local list of sac_hdf5 files that are used for latter fft, cc, and stacking
         """
+        ### sort to balance load
+        # sort `self.all_fnm_lst_alignedSac2Hdf5` with respect to number of sacs
+        self.comm.Barrier()
+        nsac_lst = [ h5py.File(fnm, 'r')['raw_sac/data'].shape[0] for fnm in self.all_fnm_lst_alignedSac2Hdf5]
+        junk = np.argsort(nsac_lst)[::-1] # decreasing
+        sorted_fnm_lst = [ self.all_fnm_lst_alignedSac2Hdf5[idx] for idx in junk ]
+        halfchunksize = (len(sorted_fnm_lst) // (2*self.ncpu) ) + 1
+        upper_half = sorted_fnm_lst[ :self.ncpu * halfchunksize]
+        lower_half = sorted_fnm_lst[self.ncpu * halfchunksize: ][::-1]
+        new_fnm_lst = []
+        ###
+        for icpu in range(self.ncpu):
+            new_fnm_lst.extend( upper_half[icpu::self.ncpu]  )
+            new_fnm_lst.extend( lower_half[icpu::self.ncpu])
+        #for it in range(max(len(upper_half), len(lower_half)) ):
+        #    try:
+        #        new_fnm_lst.append(upper_half[it] )
+        #    except Exception:
+        #        pass
+        #    try:
+        #        new_fnm_lst.append(lower_half[it])
+        #    except Exception:
+        #        pass
+        self.all_fnm_lst_alignedSac2Hdf5 = new_fnm_lst
+        ###
+        self.comm.Barrier()
+        ######
         chunksize = 0
         if self.rank == 0:
             chunksize = (len(self.all_fnm_lst_alignedSac2Hdf5) // self.ncpu) + 1
@@ -313,7 +340,7 @@ class cc_stack_rcv_pairs:
         i2 = i1 + chunksize
         self.local_fnm_lst_alignedSac2Hdf5 = self.all_fnm_lst_alignedSac2Hdf5[i1:i2]
         msg = '>>> Init sac_hdf5 files to process (%d): [%d,%d) :\n\t' % (len(self.local_fnm_lst_alignedSac2Hdf5), i1, i2)
-        msg += '\n\t'.join(self.local_fnm_lst_alignedSac2Hdf5)
+        msg += '\n\t'.join( ['%s nsac(%d)' % (fnm, h5py.File(fnm, 'r')['raw_sac/data'].shape[0] ) for fnm in self.local_fnm_lst_alignedSac2Hdf5] )
         mpi_print_log(msg, 0, self.local_log_fp, True)
     def local_run(self):
         worksize= len(self.local_fnm_lst_alignedSac2Hdf5)
