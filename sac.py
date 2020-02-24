@@ -372,6 +372,9 @@ class sactrace:
         """
         Write data into specified file.
         """
+        self['depmax'] = np.max(self['dat']) )
+        self['depmin'] = np.max(self['dat']) )
+        self.update_geometry()
         self.hdr.__update_npts__(np.size(self.dat) ) # update npts in case the dat length is revised.
         with open(filename, 'wb') as fid:
             fid.write(self.hdr.pack() )
@@ -391,6 +394,14 @@ class sactrace:
         kwargs: dict of (key: value), eg: {'delta': 0.1, 'kstnm': 'HYD}
         """
         self.hdr.update(**kwargs)
+    def update_geometry(self):
+        """
+        update 'gcarc', 'baz', and 'az' using evlo, evla, stlo, and stla inside the header.
+        """
+        if self['evla'] != -12345.0 and self['evlo'] != -12345.0 and self['stla'] != -12345.0 and self['stlo'] != -12345.0:
+            self['gcarc']= geomath.haversine(self['evlo'], self['evla'], self['stlo'], self['stla']) ) 
+            self['az']   = geomath.azimuth(  self['evlo'], self['evla'], self['stlo'], self['stla']) )
+            self['baz']  = geomath.azimuth(  self['stlo'], self['stla'], self['evlo'], self['evla']) )
     ### internel methods
     def __get_t_idx__(self, tmark, t):
         """
@@ -454,9 +465,14 @@ class sactrace:
     def truncate(self, tmark, t1, t2):
         """
         Truncate given reference tmark, and time window.
-        tmark: 'b', 'e', 'o', 'a', 't0', 't1', ... 't9';
+        tmark: '0', 'b', 'e', 'o', 'a', 't0', 't1', ... 't9';
+            '0' means to use the built-in time axis according to 'b'.
         t1, t2: float;
         """
+        if tmark is '0':
+            tmark = 'b'
+            t1 = t1 - self['b']
+            t2 = t2 - self['b']
         i1 = self.__get_t_idx__(tmark, t1)
         i2 = self.__get_t_idx__(tmark, t2) + 1
         # update data and header info
@@ -499,6 +515,14 @@ class sactrace:
         High pass
         """
         self.dat = processing.filter(self.dat, 1.0/self['delta'], 'highpass', [f], order, npass )
+    def resample(self, delta):
+        """
+        Resample the time-series using Fourier method.
+        """
+        new_npts = int( round(delta/self['delta']* self['npts']) )
+        self['dat'] = signal.resample(self['dat'], new_npts)
+        self['npts'] = new_npts
+        self['delta'] = delta
     ### plot
     def plot_ax(self, ax, **kwargs):
         """
