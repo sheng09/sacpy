@@ -104,16 +104,19 @@ def filter(tr, sampling_rate, btype, fs, order, npass= 2):
 #  whitening
 ###
 __dict_one_array = dict()
-def temporal_normalization(tr, fs, twin_len, f1, f2, water_level_ratio= 1.0e-6):
+def temporal_normalization(tr, fs, twin_len, f1, f2, water_level_ratio= 1.0e-6, taper_length=0):
     tmp = signal.detrend(tr)
-    tmp = signal.detrend(tmp)
-    tmp = np.abs( filter(tmp, fs, 'bandpass', [f1, f2], 2, 2) )
+    #tmp = signal.detrend(tmp)
+    tmp_bp = np.abs( filter(tmp, fs, 'bandpass', [f1, f2], 2, 2) )
     if twin_len not in __dict_one_array:
         __dict_one_array[twin_len] = np.ones(twin_len)
-    weight = signal.fftconvolve(tmp, __dict_one_array[twin_len], 'same')
+    weight = signal.fftconvolve(tmp_bp, __dict_one_array[twin_len], 'same')
     c = np.max(weight) * water_level_ratio
     weight[weight<c] = c
-    return tr/weight
+    tmp /= weight
+    if taper_length > 0:
+        tmp = taper(tmp, taper_length)
+    return tmp
 
 def frequency_whiten_spec(tr, fs, fwin_len, nrfft, water_level_ratio= 1.0e-6):
     """
@@ -130,9 +133,12 @@ def frequency_whiten_spec(tr, fs, fwin_len, nrfft, water_level_ratio= 1.0e-6):
     spec /= weight
     return spec
 
-def frequency_whiten(tr, fs, fwin_len, nrfft, water_level_ratio= 1.0e-6):
-    spec = frequency_whiten_spec(tr, fs, fwin_len, nrfft, water_level_ratio= water_level_ratio)
-    return pyfftw.interfaces.numpy_fft.irfft( spec , tr.size)
+def frequency_whiten(tr, fs, fwin_len, water_level_ratio= 1.0e-6, taper_length=0):
+    spec = frequency_whiten_spec(tr, fs, fwin_len, len(tr), water_level_ratio= water_level_ratio)
+    tmp = pyfftw.interfaces.numpy_fft.irfft( spec , len(tr) )
+    if taper_length > 0:
+        tmp = taper(tmp, taper_length)
+    return tmp
 
 ###
 #  taper
