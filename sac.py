@@ -372,8 +372,10 @@ class sactrace:
         """
         Write data into specified file.
         """
-        self['depmax'] = np.max(self['dat']) )
-        self['depmin'] = np.max(self['dat']) )
+        self['depmax'] = np.max(self['dat'])
+        self['depmin'] = np.max(self['dat'])
+        self['depmen'] = np.average(self['dat'] )
+        self['e'] = self['b'] + (self['npts']-1) * self['delta']
         self.update_geometry()
         self.hdr.__update_npts__(np.size(self.dat) ) # update npts in case the dat length is revised.
         with open(filename, 'wb') as fid:
@@ -399,9 +401,9 @@ class sactrace:
         update 'gcarc', 'baz', and 'az' using evlo, evla, stlo, and stla inside the header.
         """
         if self['evla'] != -12345.0 and self['evlo'] != -12345.0 and self['stla'] != -12345.0 and self['stlo'] != -12345.0:
-            self['gcarc']= geomath.haversine(self['evlo'], self['evla'], self['stlo'], self['stla']) ) 
-            self['az']   = geomath.azimuth(  self['evlo'], self['evla'], self['stlo'], self['stla']) )
-            self['baz']  = geomath.azimuth(  self['stlo'], self['stla'], self['evlo'], self['evla']) )
+            self['gcarc']= geomath.haversine(self['evlo'], self['evla'], self['stlo'], self['stla'])  
+            self['az']   = geomath.azimuth(  self['evlo'], self['evla'], self['stlo'], self['stla']) 
+            self['baz']  = geomath.azimuth(  self['stlo'], self['stla'], self['evlo'], self['evla']) 
     ### internel methods
     def __get_t_idx__(self, tmark, t):
         """
@@ -523,7 +525,14 @@ class sactrace:
         self['dat'] = signal.resample(self['dat'], new_npts)
         self['npts'] = new_npts
         self['delta'] = delta
-    ### plot
+    def decimate(self, factor):
+        """
+        Downsample the time-series using scipy.signal.decimate.
+        """
+        self['dat'] = signal.decimate(self['dat'], factor)
+        self['npts'] = self['dat'].size
+        self['delta'] = self['delta']*factor
+    ### plotf
     def plot_ax(self, ax, **kwargs):
         """
         Plot into specified axis, with **kwargs used by pyplot.plot(...).
