@@ -101,7 +101,7 @@ def filter(tr, sampling_rate, btype, fs, order, npass= 2):
     return __dict_filter_proc__[key_fs].apply(tr, npass)
 
 ###
-#  
+#  whitening
 ###
 __dict_one_array = dict()
 def temporal_normalization(tr, fs, twin_len, f1, f2, water_level_ratio= 1.0e-6):
@@ -133,6 +133,21 @@ def frequency_whiten_spec(tr, fs, fwin_len, nrfft, water_level_ratio= 1.0e-6):
 def frequency_whiten(tr, fs, fwin_len, nrfft, water_level_ratio= 1.0e-6):
     spec = frequency_whiten_spec(tr, fs, fwin_len, nrfft, water_level_ratio= water_level_ratio)
     return pyfftw.interfaces.numpy_fft.irfft( spec , tr.size)
+
+###
+#  taper
+###
+__dict_taper_window_func = dict()
+def taper(tr, n):
+    """
+    Taper a trace `tr`, given the size `n`.
+    0 <= n <= len(tr)/2
+    """
+    npts = len(tr)
+    if (npts, n) not in __dict_taper_window_func:
+        __dict_taper_window_func[(npts, n)] = signal.tukey(npts, float(n)/npts)
+    return __dict_taper_window_func[(npts, n)] * tr
+    pass
 
 if __name__ == "__main__":
     import copy
