@@ -68,12 +68,12 @@ class alignedSac2Hdf5:
             t1, t2 = cut_range
             tr = sac.rd_sac_2(self.sac_fnm_lst[0], cut_marker, t1, t2)
             npts = tr['npts']
-            b = tr['b']
-            e = tr['e']
+            #b = tr['b']
+            #e = tr['e']
             ###
-            g['npts'][:] = npts
-            g['b'   ][:] = b
-            g['e'   ][:] = e
+            #g['npts'][:] = npts
+            #g['b'   ][:] = b
+            #g['e'   ][:] = e
         ###
         #  data
         ###
@@ -83,13 +83,18 @@ class alignedSac2Hdf5:
         if cut_range!=None and cut_marker!=None:
             t1, t2 = cut_range
             for idx, fnm in enumerate(self.sac_fnm_lst):
-                dset[idx,:] = sac.rd_sac_2(fnm, cut_marker, t1, t2)['dat']
+                tmp = sac.rd_sac_2(fnm, cut_marker, t1, t2)
+                dset[idx,:tmp['npts']] = tmp['dat']
+                g['npts'][idx] = tmp['npts']
+                g['b'][idx] = tmp['b']
+                g['e'][idx] = tmp['e']
                 #check nan
                 if True in np.isnan(dset[idx,:]):
                     dset[idx,:] = 0.0
         else:
             for idx, fnm in enumerate(self.sac_fnm_lst):
-                dset[idx,:] = sac.rd_sac(fnm)['dat']
+                tmp = sac.rd_sac(fnm)['dat']
+                dset[idx,:tmp['npts']] = tmp['dat']
                 #check nan
                 if True in np.isnan(dset[idx,:]):
                     dset[idx,:] = 0.0
@@ -155,6 +160,59 @@ class alignedSac2Hdf5:
     #            dset[cc_idx, :] = spectra[idx1, :] * spectra[idx2, :]
     #            cc_idx = cc_idx + 1
     #    pass
+
+class Sac2ResampleHdf5:
+    """
+    Make many sac files into a single hdf5 file.
+    The sac time-series will be resampled to a same length.
+    Also, the program force same length, so that the overal npts will be the smallest npts after resampling.
+    """
+    def __init__(self, h5_fnm, sac_fnm_lst, username):
+        self.username = username
+        self.h5_fnm = h5_fnm
+        self.sac_fnm_lst = sac_fnm_lst
+        #
+        self.h5 = h5py.File(h5_fnm, 'w')
+    def build_raw_sac_dataset(self, delta):
+        raw = self.h5.create_group('raw_sac')
+        raw.attrs['user'] = self.username
+        raw.attrs['timestamp'] = strftime("%Y-%m-%d %H:%M:%S", gmtime() )
+        raw.attrs['message'] = 'Raw sac data'
+        ###
+        #  filenames
+        ###
+        raw.create_dataset('filename', data=np.array(self.sac_fnm_lst, dtype=h5py.string_dtype() ) ) # variable string
+        ###
+        #  hdrs
+        ###
+        hdrs = [sac.rd_sachdr(fnm) for fnm in self.sac_fnm_lst]
+        g = raw.create_group('hdr')
+        for key in sac.sachdr.f_keys:
+            #rint(key)
+            g.create_dataset(key, data=np.array([h[key] for h in hdrs], dtype=np.float32) )
+        for key in sac.sachdr.i_keys:
+            #print(key)
+            g.create_dataset(key, data=np.array([h[key] for h in hdrs], dtype=np.int32) )
+        for key in sac.sachdr.s_keys:
+            #print(key)
+            g.create_dataset(key, data=np.array([h[key] for h in hdrs], dtype='S8') ) # fixed 8 length string
+        ###
+        #  time-series 
+        ###
+        time_range= np.min( [it['npts']*it['delta'] for it in hdrs] )
+        new_npts = int( np.round(time_range / delta) )
+        nsac = len(hdrs)
+        dset = raw.create_dataset('data', (nsac, new_npts), dtype=np.float32 )
+        dset.attrs['info'] = 'Time-series with same sampling rate and npts with zero padding.'
+        for idx, fnm in enumerate(self.sac_fnm_lst):
+            tr = sac.rd_sac(fnm)
+            tr.resample(delta)
+            dset[idx,:] = tr['dat'][:new_npts]
+        #ncol = np.max([it['npts'] for it in hdrs] )
+        #dset = raw.create_dataset('data', (nsac, ncol), dtype=np.float32 )
+        #dset.attrs['info'] = 'Raw time-seires with different sampling rate and npts with zero padding.'
+        #for idx, fnm in enumerate(self.sac_fnm_lst):
+        #    dset[idx,:g['npts'][idx]] = sac.rd_sac(fnm)['dat']
 
 class cc_Hdf5:
     def __init__(self, fnm_alignedSac2Hdf5_lst, fnm_cc_stack, username):
