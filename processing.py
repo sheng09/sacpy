@@ -109,7 +109,7 @@ def temporal_normalization(tr, fs, twin_len, f1, f2, water_level_ratio= 1.0e-6, 
     #tmp = signal.detrend(tmp)
     tmp_bp = np.abs( filter(tmp, fs, 'bandpass', [f1, f2], 2, 2) )
     if twin_len not in __dict_one_array:
-        __dict_one_array[twin_len] = np.ones(twin_len)
+        __dict_one_array[twin_len] = np.ones(twin_len) * (1.0/twin_len)
     weight = signal.fftconvolve(tmp_bp, __dict_one_array[twin_len], 'same')
     c = np.max(weight) * water_level_ratio
     weight[weight<c] = c
@@ -126,7 +126,7 @@ def frequency_whiten_spec(tr, fs, fwin_len, nrfft, water_level_ratio= 1.0e-6):
     am = np.abs(spec)
     #ph = np.angle(spec)
     if fwin_len not in __dict_one_array:
-        __dict_one_array[fwin_len] = np.ones(fwin_len)
+        __dict_one_array[fwin_len] = np.ones(fwin_len)* (1.0/fwin_len)
     weight = signal.fftconvolve(am, __dict_one_array[fwin_len], 'same')
     c = np.max(weight) * water_level_ratio
     weight[weight<c] = c
