@@ -499,6 +499,10 @@ if __name__ == "__main__":
     gc_range_deg = None
     gc_reverse = False
     ###
+    HMSG = '%s -I fnm_lst_alignedSac2Hdf5.txt -L log.txt -T o/10800/32400 -S 0/30/1 -N 128.0/0.02/0.0666666 -W 0.02 -O out.h5' % (sys.argv[0] )
+    if len(sys.argv) < 2:
+        print(HMSG)
+        sys.exit(0)
     options, remainder = getopt.getopt(sys.argv[1:], 'I:L:T:S:N:W:O:A:G:' )
     for opt, arg in options:
         if opt in ('-I'):
@@ -532,6 +536,8 @@ if __name__ == "__main__":
             gc_range_deg = [float(it) for it in arg.split('/')]
         else:
             print('invalid options: %s' % (opt) )
+            print(HMSG)
+            sys.exit(0)
     ###
     if az_switch == False: # to disable selectived stacking
         az_diff_deg_max = None

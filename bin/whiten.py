@@ -55,6 +55,7 @@ def whiten_run(inh5_fnm, cut_marker, cut_t1, cut_t2, twin, f1, f2, fwin, taper_r
         i1 = int(np.round( (cut_t1 + t_ref[isac]-b[isac])/dt  ) )
         i2 = i1+new_npts
         new_b[isac] = b[isac] + i1*dt
+        #print(isac, i1, i2, cut_t1, t_ref[isac], b[isac])
         tmp = processing.temporal_normalization(mat[isac, i1:i2], sampling_rate, twin_len, f1, f2, taper_length = taper_length)
         tmp = processing.frequency_whiten(tmp, sampling_rate, fwin_len, taper_length = taper_length)
         new_mat[isac, :tmp.size] = tmp
