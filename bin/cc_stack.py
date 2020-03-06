@@ -23,7 +23,10 @@ class cc_stack_rcv_pairs:
         self.all_fnm_lst_alignedSac2Hdf5 = sorted( list(fnm_lst_alignedSac2Hdf5 ) )
         self.username = username
         ### MPI settings
-        self.comm = mpi4py.MPI.COMM_WORLD
+        self.comm = mpi4py.MPI.COMM_WORLD.Dup()
+        if len(fnm_lst_alignedSac2Hdf5) < 2:
+            rank = self.comm.Get_rank()
+            self.comm = mpi4py.MPI.COMM_WORLD.Split(rank, 0)
         self.rank = self.comm.Get_rank()
         self.ncpu = self.comm.Get_size()
         ### local variables
