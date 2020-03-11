@@ -25,8 +25,9 @@ class cc_stack_rcv_pairs:
         ### MPI settings
         self.comm = mpi4py.MPI.COMM_WORLD.Dup()
         if len(fnm_lst_alignedSac2Hdf5) < 2:
-            rank = self.comm.Get_rank()
-            self.comm = mpi4py.MPI.COMM_WORLD.Split(rank, 0)
+            self.comm = MPI.COMM_SELF
+            #rank = self.comm.Get_rank()
+            #self.comm = mpi4py.MPI.COMM_WORLD.Split(rank, 0)
         self.rank = self.comm.Get_rank()
         self.ncpu = self.comm.Get_size()
         ### local variables
@@ -342,6 +343,8 @@ class cc_stack_rcv_pairs:
         i1 = chunksize * self.rank
         i2 = i1 + chunksize
         self.local_fnm_lst_alignedSac2Hdf5 = self.all_fnm_lst_alignedSac2Hdf5[i1:i2]
+        if len(self.all_fnm_lst_alignedSac2Hdf5) < 2:
+            self.local_fnm_lst_alignedSac2Hdf5 = self.all_fnm_lst_alignedSac2Hdf5
         msg = '>>> Init sac_hdf5 files to process (%d): [%d,%d) :\n\t' % (len(self.local_fnm_lst_alignedSac2Hdf5), i1, i2)
         msg += '\n\t'.join( ['%s nsac(%d)' % (fnm, h5py.File(fnm, 'r')['raw_sac/data'].shape[0] ) for fnm in self.local_fnm_lst_alignedSac2Hdf5] )
         mpi_print_log(msg, 0, self.local_log_fp, True)
