@@ -23,19 +23,24 @@ class cc_stack_rcv_pairs:
         self.all_fnm_lst_alignedSac2Hdf5 = sorted( list(fnm_lst_alignedSac2Hdf5 ) )
         self.username = username
         ### MPI settings
-        self.comm = mpi4py.MPI.COMM_WORLD.Dup()
         if len(fnm_lst_alignedSac2Hdf5) < 2:
-            self.comm = MPI.COMM_SELF
+            self.comm = mpi4py.MPI.COMM_SELF
+            self.rank = self.comm.Get_rank()
+            self.ncpu = self.comm.Get_size()
+            self.local_log_fnm = log_prefnm
             #rank = self.comm.Get_rank()
             #self.comm = mpi4py.MPI.COMM_WORLD.Split(rank, 0)
-        self.rank = self.comm.Get_rank()
-        self.ncpu = self.comm.Get_size()
+        else:
+            self.comm = mpi4py.MPI.COMM_WORLD.Dup()
+            self.rank = self.comm.Get_rank()
+            self.ncpu = self.comm.Get_size()
+            self.local_log_fnm = '%s_mpi_log_%03d.txt' % (log_prefnm, self.rank)
         ### local variables
-        self.local_stacked_cc_spectra = None
-        self.local_stacked_cc_count = None
-        self.local_log_fnm = '%s_mpi_log_%03d.txt' % (log_prefnm, self.rank)
         self.local_log_fp = open(self.local_log_fnm, 'w')
         self.local_fnm_lst_alignedSac2Hdf5 = []
+        mpi_print_log('Alloc step 1', 0, self.local_log_fp, True)
+        self.local_stacked_cc_spectra = None
+        self.local_stacked_cc_count = None
         ### global variables that should be same
         self.global_cut_marker = 'o'
         self.global_cut_t1 = 0.0
@@ -126,6 +131,8 @@ class cc_stack_rcv_pairs:
             app.close()
     def release(self):
         self.comm.Barrier()
+        self.local_log_fp.close()
+        del self.comm
         pass #
     def set_stack_inter_rcv_distance(self, inter_rcv_distance_range_deg= [0.0, 180.0], distance_step_deg= 1.0):
         """
