@@ -102,7 +102,7 @@ class cc_stcc:
         ###
         self.global_lst_cross_term = lst_cross_term
         self.global_all_seismic_phases = set([it1 for (it1, it2) in lst_cross_term] )
-        self.global_all_seismic_phases.update( set( [it1 for (it1, it2) in lst_cross_term] ) )
+        self.global_all_seismic_phases.update( set( [it2 for (it1, it2) in lst_cross_term] ) )
         self.global_all_seismic_phases = sorted(list(self.global_all_seismic_phases) )
         self.global_seismic_phase_time_window_sec = seismic_phase_time_window_sec         
         ###
@@ -117,9 +117,9 @@ class cc_stcc:
             self.single_file_run(fnm, outfnm)
     def release(self):
         mpi_print_log('>>> Releasing resources ...', 0, self.local_log_fid, True )
+        mpi_print_log('>>> Safe exit!', 0, self.local_log_fid, True )
         self.local_log_fid.close()
         del self.comm
-        mpi_print_log('>>> Safe exit!', 0, self.local_log_fid, True )
     def single_file_run(self, h5_fnm, out_fnm):
         """
         Run for a single h5_fnm
@@ -139,16 +139,16 @@ class cc_stcc:
         stlo = fid_h5['raw_sac/hdr/stlo'][:]
         stla = fid_h5['raw_sac/hdr/stla'][:]
         az   = fid_h5['raw_sac/hdr/az'][:]
-        stnm = [it.decode('utf8') for it in fid_h5.h5['raw_sac/hdr/kstnm' ] ]
-        netwk= [it.decode('utf8') for it in fid_h5.h5['raw_sac/hdr/knetwk'] ]
+        stnm = [it.decode('utf8').strip() for it in fid_h5['raw_sac/hdr/kstnm' ] ]
+        netwk= [it.decode('utf8').strip() for it in fid_h5['raw_sac/hdr/knetwk'] ]
         ### much more useful values
         full_stnm = [ '.'.join(it) for it in zip (netwk, stnm) ]
-        nsac = len(evlo)
+        nsac = len(stlo)
         ### construct station pairs
         mpi_print_log('Constructing station pairs...', 2, self.local_log_fid, True )
         vol_sta_pairs = [[None for j in range(nsac)] for i in range(nsac)]
-        for isac1, (stlo1, stla1, az1, gcarc1, stnm1, netwk1) in enumerate( zip( [stlo, stla, az, gcarc, stnm, netwk] )  ):
-            for isac2, (stlo2, stla2, az2, gcarc2, stnm2, netwk2) in enumerate(zip( [stlo, stla, az, gcarc, stnm, netwk] ) ):
+        for isac1, (stlo1, stla1, az1, gcarc1, stnm1, netwk1) in enumerate( zip( stlo, stla, az, gcarc, stnm, netwk )  ):
+            for isac2, (stlo2, stla2, az2, gcarc2, stnm2, netwk2) in enumerate(zip( stlo, stla, az, gcarc, stnm, netwk ) ):
                 inter_dist = geomath.haversine(stlo1, stla1, stlo2, stla2) # return degree
                 if inter_dist < d1 or inter_dist > d2: # skip
                     continue 
@@ -157,20 +157,29 @@ class cc_stcc:
                                         'stlo1': stlo1, 'stla1': stla1, 'netwk1': netwk1, 'stnm1': stnm1, 'az1': az1, 'gcarc1': gcarc1, 
                                         'stlo2': stlo2, 'stla2': stla2, 'netwk2': netwk2, 'stnm2': stnm2, 'az2': az2, 'gcarc2': gcarc2, 
                                         'inter_rcv_distance': inter_dist,  'az_difference': az_difference }
+                msg = '%s.%s x %s.%s;\tinter-dist: %.2f; daz %.2f;' % (netwk1, stnm1, netwk2, stnm2, inter_dist, az_difference)
+                mpi_print_log(msg, 3, self.local_log_fid, False)
         ### obtain several short time-series
         mpi_print_log('Getting short time-series...', 2, self.local_log_fid, True )
+        ###
+        msg = 'phase list: %s' % ( ', '.join(self.global_all_seismic_phases) )
+        mpi_print_log(msg, 3, self.local_log_fid, True)
+        ###
         mat = fid_h5['raw_sac/data'][:]
         t1, t2 = self.global_seismic_phase_time_window_sec
         cut_size = int( (t2-t1)/dt)+1
         vol_short_time_series = [dict() for it in range(nsac)]
-        for seismic_phase in self.global_all_seismic_phases:
-            for isac, single_gcarc, single_b in enumerate( zip(gcarc, b) ):
+        for idx_phase, seismic_phase in enumerate(self.global_all_seismic_phases):
+            for isac, (single_gcarc, single_b) in enumerate( zip(gcarc, b) ):
                 synthetic_travel_time, slowness = get_synthetic_travel_time_and_slowness(seismic_phase, evdp, single_gcarc) # always choose the one of the smallest slowness
+                ###
+                msg = 'idx_phase(%02d) %s; idx (%03d); gcarc(%6.2f) synthetic_time(%8.2f) rp(%f)' % (idx_phase, seismic_phase, isac, single_gcarc, synthetic_travel_time, slowness)
+                mpi_print_log(msg, 3, self.local_log_fid, False)
+                ###
                 if synthetic_travel_time is not None: # some seismic phases do not exist given certain distance
                     vol_short_time_series[isac][seismic_phase] = {  'start': synthetic_travel_time+t1,
                                                                     'time-series': cut_short_timeseries(mat[isac,:], dt, single_b, synthetic_travel_time+t1, cut_size),
                                                                     'slowness': slowness}
-                    
         ### cross-correlation
         mpi_print_log('Conducting STCC...', 2, self.local_log_fid, True )
         for isac1 in range(nsac):
@@ -189,6 +198,8 @@ class cc_stcc:
                                         'stcc' : scipy.signal.correlate(tmp1[phase1]['time-series'], tmp2[phase2]['time-series'], 'full', 'auto') 
                                         # FFT mode may not be efficient here for short time-series. 
                                     }
+                    msg = '(%d)%s x (%d)%s' % (isac1, phase1, isac2, phase2) 
+                    mpi_print_log(msg, 3, self.local_log_fid, False)
                     ###
         ### save to file. save 1) cutted time-series, 2) stcc,
         mpi_print_log('Outputing ...', 2, self.local_log_fid, True )
@@ -248,7 +259,8 @@ if __name__ == "__main__":
     ###
     print('>>> cmd: ', ' '.join(sys.argv ) )
     ###
-    if (not fnm_lst_alignedSac2Hdf5) or (not wave_pairs) or (not log_prenm):
+    if (not fnm_lst_alignedSac2Hdf5) or (not wave_pairs) or (not log_prefnm):
+        #print(fnm_lst_alignedSac2Hdf5, wave_pairs, log_prefnm)
         print(HMSG)
         sys.exit(-1)
     app = cc_stcc(fnm_lst_alignedSac2Hdf5, output_prenm, log_prefnm, username)
