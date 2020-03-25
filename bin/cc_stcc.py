@@ -86,7 +86,8 @@ class cc_stcc:
         ###
     def init(self,  lst_cross_term= [ ('PKIKP'*4, 'PKIKP'*2), ('PKIKP'*5, 'PKIKP'*4) ], 
                     seismic_phase_time_window_sec = (-50, 50),
-                    inter_rcv_distance_range_deg=(-1, 181) ):
+                    inter_rcv_distance_range_deg=(-1, 181),
+                    h5_group='raw_sac' ):
         """
         Use `lst_cross_term` to tell the program the cross-terms.
             The program will jump over the cross-terms that do not exist.
@@ -100,6 +101,7 @@ class cc_stcc:
         ###
         self.global_inter_rcv_distance_range_deg = inter_rcv_distance_range_deg
         ###
+        self.global_h5_group = h5_group
         self.global_lst_cross_term = lst_cross_term
         self.global_all_seismic_phases = set([it1 for (it1, it2) in lst_cross_term] )
         self.global_all_seismic_phases.update( set( [it2 for (it1, it2) in lst_cross_term] ) )
@@ -129,18 +131,19 @@ class cc_stcc:
         d1, d2 = self.global_inter_rcv_distance_range_deg
         ###
         fid_h5 = h5py.File(h5_fnm, 'r')
+        grp = fid_h5[self.global_h5_group ]
         ### obtain station info
-        evlo = fid_h5['raw_sac/hdr/evlo'][0]
-        evla = fid_h5['raw_sac/hdr/evla'][0]
-        evdp = fid_h5['raw_sac/hdr/evdp'][0]
-        dt   = fid_h5['raw_sac/hdr/delta'][0] # dt is the same for all time series
-        gcarc= fid_h5['raw_sac/hdr/gcarc'][:] 
-        b    = fid_h5['raw_sac/hdr/b'   ][:] # b can be different
-        stlo = fid_h5['raw_sac/hdr/stlo'][:]
-        stla = fid_h5['raw_sac/hdr/stla'][:]
-        az   = fid_h5['raw_sac/hdr/az'][:]
-        stnm = [it.decode('utf8').strip() for it in fid_h5['raw_sac/hdr/kstnm' ] ]
-        netwk= [it.decode('utf8').strip() for it in fid_h5['raw_sac/hdr/knetwk'] ]
+        evlo = grp['hdr/evlo'][0]
+        evla = grp['hdr/evla'][0]
+        evdp = grp['hdr/evdp'][0]
+        dt   = grp['hdr/delta'][0] # dt is the same for all time series
+        gcarc= grp['hdr/gcarc'][:] 
+        b    = grp['hdr/b'   ][:] # b can be different
+        stlo = grp['hdr/stlo'][:]
+        stla = grp['hdr/stla'][:]
+        az   = grp['hdr/az'][:]
+        stnm = [it.decode('utf8').strip() for it in grp['hdr/kstnm' ] ]
+        netwk= [it.decode('utf8').strip() for it in grp['hdr/knetwk'] ]
         ### much more useful values
         full_stnm = [ '.'.join(it) for it in zip (netwk, stnm) ]
         nsac = len(stlo)
@@ -168,7 +171,7 @@ class cc_stcc:
         msg = 'phase list: %s' % ( ', '.join(self.global_all_seismic_phases) )
         mpi_print_log(msg, 3, self.local_log_fid, True)
         ###
-        mat = fid_h5['raw_sac/data'][:]
+        mat = grp['data'][:]
         t1, t2 = self.global_seismic_phase_time_window_sec
         cut_size = int(np.round( (t2-t1)/dt) ) + 1
         vol_short_time_series = [dict() for it in range(nsac)] # an archive to store short time series for all recordings
@@ -250,11 +253,12 @@ if __name__ == "__main__":
     t1, t2 = -50, 50
     d1, d2 = -1, 30
     log_prenm = None
-    HMSG = '%s -I fnm_lst_alignedSac2Hdf5.txt -O output_prenm -P wave_pairs.txt -W -50/50 -D 0/30  -L log_prenm  ' % (sys.argv[0] )
+    h5_grp = 'raw_sac'
+    HMSG = '%s -I fnm_lst_alignedSac2Hdf5.txt -O output_prenm -P wave_pairs.txt -W -50/50 -D 0/30  -L log_prenm -G raw_sac  ' % (sys.argv[0] )
     if len(sys.argv) < 2:
         print(HMSG)
         sys.exit(0)
-    options, remainder = getopt.getopt(sys.argv[1:], 'I:O:P:W:D:L:H' )
+    options, remainder = getopt.getopt(sys.argv[1:], 'I:O:P:W:D:L:G:H' )
     for opt, arg in options:
         if opt in ('-I'):
             fnm_lst_alignedSac2Hdf5 = [line.strip() for line in open(arg, 'r')]
@@ -268,6 +272,8 @@ if __name__ == "__main__":
             d1, d2 = [float(it) for it in arg.split('/')]
         elif opt in ('-L'):
             log_prefnm = arg
+        elif opt in ('-G'):
+            h5_grp = arg
         else:
             print('invalid options: %s' % (opt) )
             print(HMSG)
@@ -280,7 +286,7 @@ if __name__ == "__main__":
         print(HMSG)
         sys.exit(-1)
     app = cc_stcc(fnm_lst_alignedSac2Hdf5, output_prenm, log_prefnm, username)
-    app.init(wave_pairs, (t1, t2), (d1, d2) )
+    app.init(wave_pairs, (t1, t2), (d1, d2), h5_group=h5_grp )
     app.run()
     app.release()
     del app
