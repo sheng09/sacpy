@@ -63,7 +63,7 @@ class cc_stcc:
             self.comm = mpi4py.MPI.COMM_SELF
             self.rank = self.comm.Get_rank()
             self.ncpu = self.comm.Get_size()
-            self.local_log_fnm = log_prefnm
+            self.local_log_fnm = '%s_serial_log.txt' % (log_prefnm)
         else:
             self.comm = mpi4py.MPI.COMM_WORLD.Dup()
             self.rank = self.comm.Get_rank()
@@ -146,18 +146,21 @@ class cc_stcc:
         nsac = len(stlo)
         ### construct station pairs
         mpi_print_log('Constructing station pairs...', 2, self.local_log_fid, True )
-        vol_sta_pairs = [[None for j in range(nsac)] for i in range(nsac)]
-        for isac1, (stlo1, stla1, az1, gcarc1, stnm1, netwk1) in enumerate( zip( stlo, stla, az, gcarc, stnm, netwk )  ):
-            for isac2, (stlo2, stla2, az2, gcarc2, stnm2, netwk2) in enumerate(zip( stlo, stla, az, gcarc, stnm, netwk ) ):
+        mat_sta_pairs = [[None for j in range(nsac)] for i in range(nsac)] # meaningless station pairs will be None
+        for isac1, (stlo1, stla1, az1, gcarc1, full_nm1) in enumerate( zip( stlo, stla, az, gcarc, full_stnm )  ):
+            for isac2, (stlo2, stla2, az2, gcarc2, full_nm2) in enumerate(zip( stlo, stla, az, gcarc, full_stnm ) ):
                 inter_dist = geomath.haversine(stlo1, stla1, stlo2, stla2) # return degree
-                if inter_dist < d1 or inter_dist > d2: # skip
+                if inter_dist < d1 or inter_dist > d2: # skip for meaningless station pairs
                     continue 
                 az_difference = az1 - az2 # degree
-                vol_sta_pairs[isac1][isac2] = {   'evlo': evlo, 'evla': evla, 'evdp': evdp,
-                                        'stlo1': stlo1, 'stla1': stla1, 'netwk1': netwk1, 'stnm1': stnm1, 'az1': az1, 'gcarc1': gcarc1, 
-                                        'stlo2': stlo2, 'stla2': stla2, 'netwk2': netwk2, 'stnm2': stnm2, 'az2': az2, 'gcarc2': gcarc2, 
-                                        'inter_rcv_distance': inter_dist,  'az_difference': az_difference }
-                msg = '%s.%s x %s.%s;\tinter-dist: %.2f; daz %.2f;' % (netwk1, stnm1, netwk2, stnm2, inter_dist, az_difference)
+                #mat_sta_pairs[isac1][isac2] = {   'evlo': evlo, 'evla': evla, 'evdp': evdp,
+                #                        'stlo1': stlo1, 'stla1': stla1, 'netwk1': netwk1, 'stnm1': stnm1, 'az1': az1, 'gcarc1': gcarc1, 
+                #                        'stlo2': stlo2, 'stla2': stla2, 'netwk2': netwk2, 'stnm2': stnm2, 'az2': az2, 'gcarc2': gcarc2, 
+                #                        'inter_rcv_distance': inter_dist,  'az_difference': az_difference }
+                # most of informations were redundant
+                mat_sta_pairs[isac1][isac2] = {'inter_rcv_distance': inter_dist,  'az_difference': az_difference }
+                flag = 'auto' if isac1==isac2 else 'cros'
+                msg = '(%s)%17s x %17s; inter-dist: %.2f; daz %.2f;' % (flag, full_nm1, full_nm2, inter_dist, az_difference)
                 mpi_print_log(msg, 3, self.local_log_fid, False)
         ### obtain several short time-series
         mpi_print_log('Getting short time-series...', 2, self.local_log_fid, True )
@@ -168,18 +171,19 @@ class cc_stcc:
         mat = fid_h5['raw_sac/data'][:]
         t1, t2 = self.global_seismic_phase_time_window_sec
         cut_size = int( (t2-t1)/dt)+1
-        vol_short_time_series = [dict() for it in range(nsac)]
-        for idx_phase, seismic_phase in enumerate(self.global_all_seismic_phases):
-            for isac, (single_gcarc, single_b) in enumerate( zip(gcarc, b) ):
+        vol_short_time_series = [dict() for it in range(nsac)] # an archive to store short time series for all recordings
+        for isac, (single_gcarc, single_b) in enumerate( zip(gcarc, b) ):
+            for idx_phase, seismic_phase in enumerate(self.global_all_seismic_phases):
                 synthetic_travel_time, slowness = get_synthetic_travel_time_and_slowness(seismic_phase, evdp, single_gcarc) # always choose the one of the smallest slowness
                 ###
-                msg = 'idx_phase(%02d) %s; idx (%03d); gcarc(%6.2f) synthetic_time(%8.2f) rp(%f)' % (idx_phase, seismic_phase, isac, single_gcarc, synthetic_travel_time, slowness)
+                msg = 'idx_sac (%03d); idx_phase(%02d); gcarc(%6.2f) synthetic_time(%8.2f) rp(%f) %s' % (isac, idx_phase, single_gcarc, synthetic_travel_time, slowness, seismic_phase)
                 mpi_print_log(msg, 3, self.local_log_fid, False)
                 ###
                 if synthetic_travel_time is not None: # some seismic phases do not exist given certain distance
                     vol_short_time_series[isac][seismic_phase] = {  'start': synthetic_travel_time+t1,
                                                                     'time-series': cut_short_timeseries(mat[isac,:], dt, single_b, synthetic_travel_time+t1, cut_size),
-                                                                    'slowness': slowness}
+                                                                    'slowness': slowness,
+                                                                    'traveltime': synthetic_travel_time }
         ### cross-correlation
         mpi_print_log('Conducting STCC...', 2, self.local_log_fid, True )
         for isac1 in range(nsac):
@@ -187,26 +191,37 @@ class cc_stcc:
                 tmp1 = vol_short_time_series[isac1]
                 tmp2 = vol_short_time_series[isac2]
                 for phase1, phase2 in self.global_lst_cross_term:
-                    if (phase1 not in tmp1) or (phase2 not in tmp2):
+                    if mat_sta_pairs[isac1][isac2] == None: # skip becuase being out of ranges of (inter-distance,  ,,,)
                         continue
-                    if vol_sta_pairs[isac1][isac2] == None: # skip becuase being out of ranges of (inter-distance,  ,,,)
+                    if (phase1 not in tmp1) or (phase2 not in tmp2): # skip becuase the phase does not exist
                         continue
-                    vol_sta_pairs[isac1][isac2][(phase1, phase2)] = {
+                    mat_sta_pairs[isac1][isac2][(phase1, phase2)] = {
                                         '%s@rcv1' % phase1 : tmp1[phase1],
                                         '%s@rcv2' % phase2 : tmp2[phase2],
                                         'cc_start': tmp1[phase1]['start'] - tmp2[phase2]['start'], # should this be inverted?
                                         'stcc' : scipy.signal.correlate(tmp1[phase1]['time-series'], tmp2[phase2]['time-series'], 'full', 'auto') 
                                         # FFT mode may not be efficient here for short time-series. 
                                     }
-                    msg = '(%d)%s x (%d)%s' % (isac1, phase1, isac2, phase2) 
+                    flag = 'auto' if isac1==isac2 else 'cros'
+                    msg = '(%s) (%d)%s x (%d)%s' % (flag, isac1, phase1, isac2, phase2) 
                     mpi_print_log(msg, 3, self.local_log_fid, False)
                     ###
         ### save to file. save 1) cutted time-series, 2) stcc,
-        mpi_print_log('Outputing ...', 2, self.local_log_fid, True )
+        mpi_print_log('Outputing ... (%s)' % (out_fnm), 2, self.local_log_fid, True )
         all_vol = dict()
+        # sta info
         all_vol['full_stnm'] = full_stnm
+        all_vol['stlo'] = stlo
+        all_vol['stla'] = stla
+        all_vol['az'] = az
+        all_vol['gcarc'] = gcarc
+        # ev info
+        all_vol['evlo'] = evlo
+        all_vol['evla'] = evla
+        all_vol['dt']   = dt
+        # time series
         all_vol['short_timeseries'] = vol_short_time_series
-        all_vol['stcc'] = vol_sta_pairs
+        all_vol['stcc'] = mat_sta_pairs
         with open(out_fnm, 'wb') as fid_out:
             pickle.dump(all_vol, fid_out)
         ###
@@ -220,7 +235,7 @@ class cc_stcc:
         del stnm 
         del netwk
         ###
-        mpi_print_log('Succeed', 2, self.local_log_fid, True )
+        mpi_print_log('Done', 2, self.local_log_fid, True )
 
 
 
