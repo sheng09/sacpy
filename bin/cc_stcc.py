@@ -7,7 +7,7 @@ import time
 import sacpy.processing as processing
 import sacpy.sac_hdf5 as sac_hdf5
 import sacpy.geomath as geomath
-import mpi4py
+import mpi4py.MPI
 import h5py
 import pyfftw
 import numpy as np 
@@ -35,7 +35,7 @@ def get_synthetic_travel_time_and_slowness(seismic_phase, evdp, gcarc_deg):
 
 def cut_short_timeseries(tr, dt, b, cut_start, cut_size):
     idx1 = int(np.floor((cut_start-b)/dt) )
-    return tr[idx1:idx1+cut_size ]
+    return b+idx1*dt, tr[idx1:idx1+cut_size ]
 
 class cc_stcc:
     """
@@ -170,7 +170,7 @@ class cc_stcc:
         ###
         mat = fid_h5['raw_sac/data'][:]
         t1, t2 = self.global_seismic_phase_time_window_sec
-        cut_size = int( (t2-t1)/dt)+1
+        cut_size = int(np.round( (t2-t1)/dt) ) + 1
         vol_short_time_series = [dict() for it in range(nsac)] # an archive to store short time series for all recordings
         for isac, (single_gcarc, single_b) in enumerate( zip(gcarc, b) ):
             for idx_phase, seismic_phase in enumerate(self.global_all_seismic_phases):
@@ -180,8 +180,9 @@ class cc_stcc:
                 mpi_print_log(msg, 3, self.local_log_fid, False)
                 ###
                 if synthetic_travel_time is not None: # some seismic phases do not exist given certain distance
-                    vol_short_time_series[isac][seismic_phase] = {  'start': synthetic_travel_time+t1,
-                                                                    'time-series': cut_short_timeseries(mat[isac,:], dt, single_b, synthetic_travel_time+t1, cut_size),
+                    start, xs= cut_short_timeseries(mat[isac,:], dt, single_b, synthetic_travel_time+t1, cut_size)
+                    vol_short_time_series[isac][seismic_phase] = {  'start': start,
+                                                                    'time-series': xs, 
                                                                     'slowness': slowness,
                                                                     'traveltime': synthetic_travel_time }
         ### cross-correlation
@@ -198,7 +199,7 @@ class cc_stcc:
                     mat_sta_pairs[isac1][isac2][(phase1, phase2)] = {
                                         '%s@rcv1' % phase1 : tmp1[phase1],
                                         '%s@rcv2' % phase2 : tmp2[phase2],
-                                        'cc_start': tmp1[phase1]['start'] - tmp2[phase2]['start'], # should this be inverted?
+                                        'cc_start': tmp1[phase1]['start'] - tmp2[phase2]['start']-tmp1[phase1]['time-series'].size*dt, # should this be inverted?
                                         'stcc' : scipy.signal.correlate(tmp1[phase1]['time-series'], tmp2[phase2]['time-series'], 'full', 'auto') 
                                         # FFT mode may not be efficient here for short time-series. 
                                     }
