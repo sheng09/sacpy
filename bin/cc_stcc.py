@@ -35,7 +35,8 @@ def get_synthetic_travel_time_and_slowness(seismic_phase, evdp, gcarc_deg):
 
 def cut_short_timeseries(tr, dt, b, cut_start, cut_size):
     idx1 = int(np.floor((cut_start-b)/dt) )
-    return b+idx1*dt, tr[idx1:idx1+cut_size ]
+    idx2 = idx1+cut_size
+    return (idx1, idx2), b+idx1*dt, tr[idx1:idx2 ]
 
 class cc_stcc:
     """
@@ -84,9 +85,10 @@ class cc_stcc:
                     len(self.global_fnm_lst_alignedSac2Hdf5) ), 
                     0, self.local_log_fid, True )
         ###
-    def init(self,  lst_cross_term= [ ('PKIKP'*4, 'PKIKP'*2), ('PKIKP'*5, 'PKIKP'*4) ], 
+    def init(self,  lst_cross_term= [ ('PKIKP'*4, 'PKIKP'*2), ('PKIKP'*5, 'PKIKP'*3) ], 
                     seismic_phase_time_window_sec = (-50, 50),
                     inter_rcv_distance_range_deg=(-1, 181),
+                    bandpass_hz = None,
                     h5_group='raw_sac' ):
         """
         Use `lst_cross_term` to tell the program the cross-terms.
@@ -99,14 +101,16 @@ class cc_stcc:
         Use `inter_rcv_distance_range_deg` to limit inter-receiver distance to get rid of some station pairs.
         """
         ###
-        self.global_inter_rcv_distance_range_deg = inter_rcv_distance_range_deg
-        ###
-        self.global_h5_group = h5_group
         self.global_lst_cross_term = lst_cross_term
         self.global_all_seismic_phases = set([it1 for (it1, it2) in lst_cross_term] )
         self.global_all_seismic_phases.update( set( [it2 for (it1, it2) in lst_cross_term] ) )
         self.global_all_seismic_phases = sorted(list(self.global_all_seismic_phases) )
+        ###
         self.global_seismic_phase_time_window_sec = seismic_phase_time_window_sec         
+        ###
+        self.global_inter_rcv_distance_range_deg = inter_rcv_distance_range_deg
+        self.global_bandpass_hz = bandpass_hz
+        self.global_h5_group = h5_group
         ###
         mpi_print_log('>>> Initialized', 0, self.local_log_fid, False)
         mpi_print_log('inter-rcv-dist(%f, %f)'% (self.global_inter_rcv_distance_range_deg[0], self.global_inter_rcv_distance_range_deg[1]), 1, self.local_log_fid, False)
@@ -119,7 +123,7 @@ class cc_stcc:
             self.single_file_run(fnm, outfnm)
     def release(self):
         mpi_print_log('>>> Releasing resources ...', 0, self.local_log_fid, True )
-        mpi_print_log('>>> Safe exit!', 0, self.local_log_fid, True )
+        mpi_print_log('>>> Stop mpi logging and safe exit!', 0, self.local_log_fid, True )
         self.local_log_fid.close()
         del self.comm
     def single_file_run(self, h5_fnm, out_fnm):
@@ -144,7 +148,7 @@ class cc_stcc:
         az   = grp['hdr/az'][:]
         stnm = [it.decode('utf8').strip() for it in grp['hdr/kstnm' ] ]
         netwk= [it.decode('utf8').strip() for it in grp['hdr/knetwk'] ]
-        ### much more useful values
+        ### much more useful values for network and station names
         full_stnm = [ '.'.join(it) for it in zip (netwk, stnm) ]
         nsac = len(stlo)
         ### construct station pairs
@@ -156,22 +160,33 @@ class cc_stcc:
                 if inter_dist < d1 or inter_dist > d2: # skip for meaningless station pairs
                     continue 
                 az_difference = az1 - az2 # degree
+                gcarc_difference = gcarc1 - gcarc2 # degree
                 #mat_sta_pairs[isac1][isac2] = {   'evlo': evlo, 'evla': evla, 'evdp': evdp,
                 #                        'stlo1': stlo1, 'stla1': stla1, 'netwk1': netwk1, 'stnm1': stnm1, 'az1': az1, 'gcarc1': gcarc1, 
                 #                        'stlo2': stlo2, 'stla2': stla2, 'netwk2': netwk2, 'stnm2': stnm2, 'az2': az2, 'gcarc2': gcarc2, 
                 #                        'inter_rcv_distance': inter_dist,  'az_difference': az_difference }
                 # most of informations were redundant
-                mat_sta_pairs[isac1][isac2] = {'inter_rcv_distance': inter_dist,  'az_difference': az_difference }
+                mat_sta_pairs[isac1][isac2] = {'inter_rcv_distance': inter_dist,  
+                                                'az_difference': az_difference, 
+                                                'gcarc_difference': gcarc_difference }
                 flag = 'auto' if isac1==isac2 else 'cros'
                 msg = '(%s)%17s x %17s; inter-dist: %.2f; daz %.2f;' % (flag, full_nm1, full_nm2, inter_dist, az_difference)
                 mpi_print_log(msg, 3, self.local_log_fid, False)
+        ### data and bandpass filter
+        mat = grp['data'][:]
+        if self.global_bandpass_hz != None: # 
+            mpi_print_log('bandpass filtering....', 2, self.local_log_fid, True )
+            sampling_rate = 1.0/dt
+            tmp_win = scipy.signal.tukey(mat[0,:].size, 0.05) # hardcoded 0.05 at each end of the time-series
+            for isac in range(nsac):
+                mat[isac,:] = scipy.signal.detrend( mat[isac,:] ) * tmp_win
+                mat[isac,:] = processing.filter(mat[isac,:], sampling_rate, 'bandpass', self.global_bandpass_hz, 2, 2)
         ### obtain several short time-series
         mpi_print_log('Getting short time-series...', 2, self.local_log_fid, True )
         ###
         msg = 'phase list: %s' % ( ', '.join(self.global_all_seismic_phases) )
         mpi_print_log(msg, 3, self.local_log_fid, True)
         ###
-        mat = grp['data'][:]
         t1, t2 = self.global_seismic_phase_time_window_sec
         cut_size = int(np.round( (t2-t1)/dt) ) + 1
         vol_short_time_series = [dict() for it in range(nsac)] # an archive to store short time series for all recordings
@@ -183,8 +198,9 @@ class cc_stcc:
                 mpi_print_log(msg, 3, self.local_log_fid, False)
                 ###
                 if synthetic_travel_time is not None: # some seismic phases do not exist given certain distance
-                    start, xs= cut_short_timeseries(mat[isac,:], dt, single_b, synthetic_travel_time+t1, cut_size)
-                    vol_short_time_series[isac][seismic_phase] = {  'start': start,
+                    (idx1, idx2), start, xs= cut_short_timeseries(mat[isac,:], dt, single_b, synthetic_travel_time+t1, cut_size)
+                    vol_short_time_series[isac][seismic_phase] = {  'idx1': idx1, 'idx2': idx2,
+                                                                    'start': start,
                                                                     'time-series': xs, 
                                                                     'slowness': slowness,
                                                                     'traveltime': synthetic_travel_time }
@@ -192,20 +208,43 @@ class cc_stcc:
         mpi_print_log('Conducting STCC...', 2, self.local_log_fid, True )
         for isac1 in range(nsac):
             for isac2 in range(nsac):
+                if mat_sta_pairs[isac1][isac2] == None: # skip becuase being out of ranges of (inter-distance,  ,,,)
+                    continue
+                # ftcc
+                ftcc = scipy.signal.correlate( mat[isac1,:], mat[isac2,:], 'full', 'fft' )
+                ftcc_start = (1-mat[isac1,:].size)*dt
+                mat_sta_pairs[isac1][isac2]['ftcc'] = ftcc
+                mat_sta_pairs[isac1][isac2]['ftcc_start'] = ftcc_start
+                # stcc
+                mat_sta_pairs[isac1][isac2]['stcc'] = dict()
                 tmp1 = vol_short_time_series[isac1]
                 tmp2 = vol_short_time_series[isac2]
                 for phase1, phase2 in self.global_lst_cross_term:
-                    if mat_sta_pairs[isac1][isac2] == None: # skip becuase being out of ranges of (inter-distance,  ,,,)
-                        continue
                     if (phase1 not in tmp1) or (phase2 not in tmp2): # skip becuase the phase does not exist
                         continue
-                    mat_sta_pairs[isac1][isac2][(phase1, phase2)] = {
-                                        '%s@rcv1' % phase1 : tmp1[phase1],
-                                        '%s@rcv2' % phase2 : tmp2[phase2],
-                                        'cc_start': tmp1[phase1]['start'] - tmp2[phase2]['start']-tmp1[phase1]['time-series'].size*dt, # should this be inverted?
-                                        'stcc' : scipy.signal.correlate(tmp1[phase1]['time-series'], tmp2[phase2]['time-series'], 'full', 'auto') 
-                                        # FFT mode may not be efficient here for short time-series. 
-                                    }
+                    ### two types of STCC
+                    # 1. cc between two short time-series
+                    # 2. cc between a short time-series and a full time-series
+                    # The first can result in decreasing amplitude when approaching two ends of the cross-correlation functions.
+                    #
+                    ### e.g. phase1 and phase2 can be I6 and I4 respectively. That means I6 in tmp1, and I4 in tmp2
+                    seismic_wave1 = tmp1[phase1]
+                    seismic_wave2 = tmp2[phase2]
+                    #
+                    stcc_start = seismic_wave1['start']-seismic_wave2['start']-seismic_wave1['time-series'].size*dt
+                    #
+                    stcc1 = scipy.signal.correlate(seismic_wave1['time-series'], seismic_wave2['time-series'], 'full', 'auto')
+                    #
+                    stcc2  = scipy.signal.correlate(mat[isac1,:], seismic_wave2['time-series'], 'full', 'auto')
+                    idx1, idx2 = seismic_wave1['idx1'], seismic_wave1['idx2']
+                    stcc2 = stcc2[idx1, idx2+cut_size-1]
+                    #
+                    mat_sta_pairs[isac1][isac2]['stcc'][(phase1, phase2)] = {
+                                        'seismic_wave1': seismic_wave1,
+                                        'seismic_wave2': seismic_wave2,
+                                        'stcc_start': stcc_start, 
+                                        'stcc1' : stcc1,
+                                        'stcc2': stcc2   }
                     flag = 'auto' if isac1==isac2 else 'cros'
                     msg = '(%s) (%d)%s x (%d)%s' % (flag, isac1, phase1, isac2, phase2) 
                     mpi_print_log(msg, 3, self.local_log_fid, False)
@@ -225,11 +264,14 @@ class cc_stcc:
         all_vol['dt']   = dt
         # time series
         all_vol['short_timeseries'] = vol_short_time_series
-        all_vol['stcc'] = mat_sta_pairs
+        all_vol['stcc_vol'] = mat_sta_pairs
         with open(out_fnm, 'wb') as fid_out:
             pickle.dump(all_vol, fid_out)
         ###
         fid_h5.close()
+        del ftcc
+        del stcc1
+        del stcc2
         del mat
         del gcarc
         del b    
@@ -253,15 +295,18 @@ if __name__ == "__main__":
     t1, t2 = -50, 50
     d1, d2 = -1, 30
     log_prenm = None
+    bandpass_hz = None
     h5_grp = 'raw_sac'
-    HMSG = '%s -I fnm_lst_alignedSac2Hdf5.txt -O output_prenm -P wave_pairs.txt -W -50/50 -D 0/30  -L log_prenm -G raw_sac  ' % (sys.argv[0] )
+    HMSG = '%s -I fnm_lst_alignedSac2Hdf5.txt -B 0.02/0.0666 -O output_prenm -P wave_pairs.txt -W -50/50 -D 0/30  -L log_prenm -G raw_sac  ' % (sys.argv[0] )
     if len(sys.argv) < 2:
         print(HMSG)
         sys.exit(0)
-    options, remainder = getopt.getopt(sys.argv[1:], 'I:O:P:W:D:L:G:H' )
+    options, remainder = getopt.getopt(sys.argv[1:], 'I:B:O:P:W:D:L:G:H' )
     for opt, arg in options:
         if opt in ('-I'):
             fnm_lst_alignedSac2Hdf5 = [line.strip() for line in open(arg, 'r')]
+        elif opt in ('-B'):
+            bandpass_hz = [float(it) for it in arg.split('/')]
         elif opt in ('-O'):
             output_prenm = arg
         elif opt in ('-P'):
@@ -286,7 +331,11 @@ if __name__ == "__main__":
         print(HMSG)
         sys.exit(-1)
     app = cc_stcc(fnm_lst_alignedSac2Hdf5, output_prenm, log_prefnm, username)
-    app.init(wave_pairs, (t1, t2), (d1, d2), h5_group=h5_grp )
+    app.init(   lst_cross_term= wave_pairs, 
+                seismic_phase_time_window_sec= (t1, t2), 
+                inter_rcv_distance_range_deg= (d1, d2), 
+                bandpass_hz= bandpass_hz,
+                h5_group=h5_grp )
     app.run()
     app.release()
     del app
