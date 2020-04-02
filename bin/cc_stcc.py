@@ -89,7 +89,8 @@ class cc_stcc:
                     seismic_phase_time_window_sec = (-50, 50),
                     inter_rcv_distance_range_deg=(-1, 181),
                     bandpass_hz = None,
-                    h5_group='raw_sac' ):
+                    h5_group='raw_sac',
+                    ftcc_time_window=[2300, 2600] ):
         """
         Use `lst_cross_term` to tell the program the cross-terms.
             The program will jump over the cross-terms that do not exist.
@@ -111,6 +112,8 @@ class cc_stcc:
         self.global_inter_rcv_distance_range_deg = inter_rcv_distance_range_deg
         self.global_bandpass_hz = bandpass_hz
         self.global_h5_group = h5_group
+        ###
+        self.global_ftcc_time_window = ftcc_time_window
         ###
         mpi_print_log('>>> Initialized', 0, self.local_log_fid, False)
         mpi_print_log('inter-rcv-dist(%f, %f)'% (self.global_inter_rcv_distance_range_deg[0], self.global_inter_rcv_distance_range_deg[1]), 1, self.local_log_fid, False)
@@ -175,7 +178,9 @@ class cc_stcc:
         ### data and bandpass filter
         mat = grp['data'][:]
         if self.global_bandpass_hz != None: # 
-            mpi_print_log('bandpass filtering....', 2, self.local_log_fid, True )
+            msg = 'Filtering... bp(%f,%f)HZ, taper(0.05x2)' % ( self.global_bandpass_hz[0], 
+                                                                        self.global_bandpass_hz[1] )
+            mpi_print_log(msg , 2, self.local_log_fid, True )
             sampling_rate = 1.0/dt
             tmp_win = scipy.signal.tukey(mat[0,:].size, 0.05) # hardcoded 0.05 at each end of the time-series
             for isac in range(nsac):
@@ -206,6 +211,8 @@ class cc_stcc:
                                                                     'traveltime': synthetic_travel_time }
         ### cross-correlation
         mpi_print_log('Conducting STCC...', 2, self.local_log_fid, True )
+        ftcc_cut_t1, ftcc_cut_t2 = self.global_ftcc_time_window
+        ftcc_cutsize = int(np.round( (ftcc_cut_t2-ftcc_cut_t1)/dt) ) + 1
         for isac1 in range(nsac):
             for isac2 in range(nsac):
                 if mat_sta_pairs[isac1][isac2] == None: # skip becuase being out of ranges of (inter-distance,  ,,,)
@@ -213,6 +220,8 @@ class cc_stcc:
                 # ftcc
                 ftcc = scipy.signal.correlate( mat[isac1,:], mat[isac2,:], 'full', 'fft' )
                 ftcc_start = (1-mat[isac1,:].size)*dt
+                # cut ftcc to reduce storage
+                (junk, junk), ftcc_start, ftcc = cut_short_timeseries(ftcc, dt, ftcc_start, ftcc_cut_t1, ftcc_cutsize)
                 mat_sta_pairs[isac1][isac2]['ftcc'] = ftcc
                 mat_sta_pairs[isac1][isac2]['ftcc_start'] = ftcc_start
                 # stcc
@@ -237,7 +246,7 @@ class cc_stcc:
                     #
                     stcc2  = scipy.signal.correlate(mat[isac1,:], seismic_wave2['time-series'], 'full', 'auto')
                     idx1, idx2 = seismic_wave1['idx1'], seismic_wave1['idx2']
-                    stcc2 = stcc2[idx1, idx2+cut_size-1]
+                    stcc2 = stcc2[idx1: idx2+cut_size-1]
                     #
                     mat_sta_pairs[isac1][isac2]['stcc'][(phase1, phase2)] = {
                                         'seismic_wave1': seismic_wave1,
