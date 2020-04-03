@@ -139,7 +139,7 @@ class cc_stcc:
         ###
         fid_h5 = h5py.File(h5_fnm, 'r')
         grp = fid_h5[self.global_h5_group ]
-        ### obtain station info
+        ### obtain event and station info. All recording are for the same event in a single H5 file.
         evlo = grp['hdr/evlo'][0]
         evla = grp['hdr/evla'][0]
         evdp = grp['hdr/evdp'][0]
@@ -149,8 +149,10 @@ class cc_stcc:
         stlo = grp['hdr/stlo'][:]
         stla = grp['hdr/stla'][:]
         az   = grp['hdr/az'][:]
-        stnm = [it.decode('utf8').strip() for it in grp['hdr/kstnm' ] ]
-        netwk= [it.decode('utf8').strip() for it in grp['hdr/knetwk'] ]
+        stnm = [it.decode('utf8').strip() for it in grp['hdr/kstnm' ][:] ]
+        netwk= [it.decode('utf8').strip() for it in grp['hdr/knetwk'][:] ]
+        mat = grp['data'][:]
+        fid_h5.close()
         ### much more useful values for network and station names
         full_stnm = [ '.'.join(it) for it in zip (netwk, stnm) ]
         nsac = len(stlo)
@@ -176,7 +178,6 @@ class cc_stcc:
                 msg = '(%s)%17s x %17s; inter-dist: %.2f; daz %.2f;' % (flag, full_nm1, full_nm2, inter_dist, az_difference)
                 mpi_print_log(msg, 3, self.local_log_fid, False)
         ### data and bandpass filter
-        mat = grp['data'][:]
         if self.global_bandpass_hz != None: # 
             msg = 'Filtering... bp(%f,%f)HZ, taper(0.05x2)' % ( self.global_bandpass_hz[0], 
                                                                         self.global_bandpass_hz[1] )
@@ -277,7 +278,6 @@ class cc_stcc:
         with open(out_fnm, 'wb') as fid_out:
             pickle.dump(all_vol, fid_out)
         ###
-        fid_h5.close()
         del ftcc
         del stcc1
         del stcc2
