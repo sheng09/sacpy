@@ -23,6 +23,13 @@ def make_h5_from_sac(sac_fnm_template, h5_fnm, cut_marker=None, cut_range=None, 
     app.fromSac(sorted( glob(sac_fnm_template) ), h5_fnm, cut_marker= cut_marker, cut_range=cut_range, h5_grp_name=h5_grp_name )
     return app
 
+def get_sactrace_from_H5(h5_fnm, h5_grp_name = 'raw_sac'):
+    """
+    """
+    app = alignedSac2Hdf5(getpass.getuser() )
+    app.fromH5(h5_fnm, getpass.getuser(), open_mode='r')
+    return app.get_sactrace(h5_grp_name= h5_grp_name)
+
 class alignedSac2Hdf5:
     """
     Make many aligned sac files into a single hdf5 file.
@@ -113,6 +120,35 @@ class alignedSac2Hdf5:
                     dset[idx,:] = 0.0
         ###
     ### Functions to process h5 file and return values.
+    def get_sactrace(self, h5_grp_name = 'raw_sac'):
+        """
+        Return a list of SACTRACE objects.
+        """
+        
+        ###
+        grp_hdr = self.h5[h5_grp_name]['hdr']
+        grp_mat = self.h5[h5_grp_name]['data'][:]
+        dts = grp_hdr['delta'][:]
+        bs  = grp_hdr['b'][:]
+        nsac = len(grp_hdr['b'] )
+        ###
+        return_value = [None for it in range(nsac) ]
+        ###
+        for isac in range(nsac):
+            return_value[isac] = sac.make_sactrace_v(grp_mat[isac,:], dts[isac],  bs[isac] )
+        for key in sac.sachdr.f_keys:
+            values = grp_hdr[key][:]
+            for v, st in zip(values, return_value):
+                st[key] = v
+        for key in sac.sachdr.i_keys:
+            values = grp_hdr[key][:]
+            for v, st in zip(values, return_value):
+                st[key] = v
+        for key in sac.sachdr.s_keys:
+            values = grp_hdr[key][:]
+            for v, st in zip(values, return_value):
+                st[key] = v.decode('utf8')
+        return return_value
     def get_raw_sac(self, cut_marker=None, cut_range=None, h5_grp_name = 'raw_sac'):
         """
         Useless functions
@@ -341,9 +377,15 @@ if __name__ == "__main__":
     ###
     #
     ###
-    sac_template = '/home/catfly/00-LARGE-IMPORTANT-PERMANENT-DATA/AU_dowload/01_resampled_bhz_to_h5/03_workspace_bhz_dt_0.1/2000_008_16_47_20_+0000/*resampled'
-    make_h5_from_sac(sac_template, 'junk.h5', h5_grp_name='raw_sac', user_message='test raw_sac')
-    make_h5_from_sac(sac_template, 'junk2.h5', h5_grp_name='sheng', user_message='test sheng')
+    #sac_template = '/home/catfly/00-LARGE-IMPORTANT-PERMANENT-DATA/AU_dowload/01_resampled_bhz_to_h5/03_workspace_bhz_dt_0.1/2000_008_16_47_20_+0000/*resampled'
+    #make_h5_from_sac(sac_template, 'junk.h5', h5_grp_name='raw_sac', user_message='test raw_sac')
+    #make_h5_from_sac(sac_template, 'junk2.h5', h5_grp_name='sheng', user_message='test sheng')
+    ###
+    st = get_sactrace_from_H5('junk.h5', h5_grp_name='raw_sac')
+    print(len(st), st[0] )
+    for it in [0, 1, 2]:
+        st[it].write('%s.%s.sac' % (st[it]['knetwk'].strip(), st[it]['kstnm'].strip() ) )
+
     #import glob
     #fnm_lst = sorted( glob.glob('/home/catfly/workspace/correlation_physics/10_real_data/04_analysis/desample_data/2015_208_21_41_21_+0000/*BHZ*SAC') )
     #app = alignedSac2Hdf5(username= 'Sheng', user_message='')
