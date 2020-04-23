@@ -86,6 +86,7 @@ import pickle
 import h5py
 import sacpy.geomath as geomath
 import sacpy.processing as processing
+import copy
 ###
 #  dependend methods
 ###
@@ -154,7 +155,33 @@ def wrt_sac_2(filename, dat, delta, b, **kwargs):
     tmp = sactrace()
     tmp.init(dat, make_sachdr(delta, np.size(dat), b, **kwargs), False)
     tmp.write(filename)
+def truncate_sac(sac_trace, tmark, t1, t2):
+    """
+    Generate a new SAC_TRACE object from an existed SAC_TRACE 
+    given reference tmark, and time window.
+    tmark: '0', 'b', 'e', 'o', 'a', 't0', 't1', ... 't9';
+        '0' means to use the built-in time axis according to 'b'.
+    t1, t2: float;
 
+    Return: a new SAC_TRACE object.
+    """
+    tmp = copy.deepcopy(sac_trace)
+    tmp.truncate(tmark, t1, t2)
+    return tmp
+def correlation_sac(sac_trace1, sac_trace2):
+    """
+    Compute the cross-correlation between two SAC_TRACE objects, and
+    return a new SAC_TRACE object.
+    The definition of cross-correlation is:
+    
+        cc(t) = \int st1(t+\tau) st2(\tau) d\tau
+    
+    Please note cc{st1, st2} = reversed cc{st2, st1}
+
+    """
+    cc = signal.correlate(sac_trace1['dat'], sac_trace2['dat'], 'full', 'fft')
+    cc_start = sac_trace1['b'] - sac_trace2['e']
+    return make_sactrace_v(cc, sac_trace1['delta'], cc_start)
 ###
 #  classes
 ###
@@ -478,7 +505,7 @@ class sactrace:
         i1 = self.__get_t_idx__(tmark, t1)
         i2 = self.__get_t_idx__(tmark, t2) + 1
         # update data and header info
-        self.dat= self.dat[i1:i2]
+        self.dat= self.dat[i1:i2][:]
         self['npts'] = i2-i1
         self['b'] = self['b'] + i1*self['delta']
         self['e'] = self['b'] + (self['npts']-1)*self['delta']
@@ -525,6 +552,7 @@ class sactrace:
         self['dat'] = signal.resample(self['dat'], new_npts)
         self['npts'] = new_npts
         self['delta'] = delta
+        self['e'] = self['b'] + (new_npts-1)*delta
     def decimate(self, factor):
         """
         Downsample the time-series using scipy.signal.decimate.
@@ -532,6 +560,7 @@ class sactrace:
         self['dat'] = signal.decimate(self['dat'], factor)
         self['npts'] = self['dat'].size
         self['delta'] = self['delta']*factor
+        self['e'] = self['b'] + (self['npts']-1)*self['delta']
     ### plotf
     def plot_ax(self, ax, **kwargs):
         """
