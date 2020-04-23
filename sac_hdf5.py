@@ -10,6 +10,18 @@ import numpy as np
 from time import gmtime, strftime
 import pyfftw
 import sys
+import getpass
+from glob import glob
+
+def make_h5_from_sac(sac_fnm_template, h5_fnm, cut_marker=None, cut_range=None, h5_grp_name='raw_sac', user_message=''):
+    """
+    Generate an HDF5 file from many sac files.
+    
+    Return an object of `alignedSac2Hdf5`.
+    """
+    app = alignedSac2Hdf5(getpass.getuser(), user_message)
+    app.fromSac(sorted( glob(sac_fnm_template) ), h5_fnm, cut_marker= cut_marker, cut_range=cut_range, h5_grp_name=h5_grp_name )
+    return app
 
 class alignedSac2Hdf5:
     """
@@ -23,22 +35,23 @@ class alignedSac2Hdf5:
         self.username = username
         self.user_message = user_message
         self.__idx_spectra = 0
-    def fromSac(self, sac_fnm_lst, h5_fnm, cut_marker=None, cut_range=None):
+    ### Functions to generate h5 file from different sources.
+    def fromSac(self, sac_fnm_lst, h5_fnm, cut_marker=None, cut_range=None, h5_grp_name = 'raw_sac'):
         """
         sac_fnm_lst: a list of sac filenames.
         h5_fnm: the filename for generated hdf5 file.
         """
         self.sac_fnm_lst = sac_fnm_lst
         self.nsac = len(sac_fnm_lst)
-        self.h5 = h5py.File(h5_fnm, 'w')
-        self.__make_hdf5__rawsac__(cut_marker, cut_range)
+        self.h5 = h5py.File(h5_fnm, 'w' )
+        self.__make_hdf5__rawsac__(cut_marker, cut_range, h5_grp_name = h5_grp_name)
     def fromH5(self, h5_fnm, username, user_message= '', open_mode= 'r'):
         if open_mode == 'w':
             print('Err: illegal open mode `w` that would destroy data', file=sys.stderr, flush=True)
             sys.exit(0)
         self.h5 = h5py.File(h5_fnm, open_mode)
-    def __make_hdf5__rawsac__(self, cut_marker=None, cut_range=None):
-        raw = self.h5.create_group('raw_sac')
+    def __make_hdf5__rawsac__(self, cut_marker=None, cut_range=None, h5_grp_name = 'raw_sac'):
+        raw = self.h5.create_group(h5_grp_name)
         raw.attrs['user'] = self.username
         raw.attrs['timestamp'] = strftime("%Y-%m-%d %H:%M:%S", gmtime() )
         raw.attrs['message'] = self.user_message
@@ -93,27 +106,33 @@ class alignedSac2Hdf5:
                     dset[idx,:] = 0.0
         else:
             for idx, fnm in enumerate(self.sac_fnm_lst):
-                tmp = sac.rd_sac(fnm)['dat']
+                tmp = sac.rd_sac(fnm)
                 dset[idx,:tmp['npts']] = tmp['dat']
                 #check nan
                 if True in np.isnan(dset[idx,:]):
                     dset[idx,:] = 0.0
         ###
-    def get_raw_sac(self, cut_marker=None, cut_range=None):
+    ### Functions to process h5 file and return values.
+    def get_raw_sac(self, cut_marker=None, cut_range=None, h5_grp_name = 'raw_sac'):
         """
+        Useless functions
+
         Get a np.ndarray matrix that store the raw sac time-series given cutting parameters.
         """
+        grp = self.h5[h5_grp_name]
         if cut_marker != None and cut_range != None:
             t1, t2 = cut_range
-            dt = self.h5['raw_sac/data'].attrs['dt']
-            t_ref = self.h5['raw_sac/hdr/%s' % (cut_marker) ][0]
-            idx1 = int( np.round( (t_ref+t1-self.h5['raw_sac/hdr/b'][0])/dt ) )
-            idx2 = int( np.round( (t_ref+t2-self.h5['raw_sac/hdr/b'][0])/dt ) ) + 1
-            return self.h5['raw_sac/data'][:,idx1:idx2]
+            dt = grp['data'].attrs['dt']
+            t_ref = grp['hdr/%s' % (cut_marker) ][0]
+            idx1 = int( np.round( (t_ref+t1-grp['hdr/b'][0])/dt ) )
+            idx2 = int( np.round( (t_ref+t2-grp['hdr/b'][0])/dt ) ) + 1
+            return grp['data'][:,idx1:idx2]
         else:
-            return self.h5['raw_sac/data']
-    def make_spec(self, nfft_mode='keep'):
+            return grp['data']
+    def make_spec(self, nfft_mode='keep', h5_grp_name = 'raw_sac'):
         """
+        Useless functions.
+
         Make a new dataset to store the spectra.
         nfft_mode: 
             1) 'keep': use npts as nfft;
@@ -123,7 +142,8 @@ class alignedSac2Hdf5:
         ###
         self.__idx_spectra = self.__idx_spectra + 1
         ###
-        nsac, npts = self.h5['raw_sac/data'].shape
+        grp = self.h5[h5_grp_name]
+        nsac, npts = grp['data'].shape
         nfft = npts
         if nfft_mode == 'keep':
             nfft = npts
@@ -140,9 +160,9 @@ class alignedSac2Hdf5:
         dset.attrs['nfft_mode'] = nfft_mode
         dset.attrs['nfft'] = nfft
         #print(self.h5['raw_sac/data'].attrs['dt'] )
-        dset.attrs['df'] = 1.0/ (self.h5['raw_sac/data'].attrs['dt'] * nfft)
+        dset.attrs['df'] = 1.0/ (grp['data'].attrs['dt'] * nfft)
         ###
-        for idx, row in enumerate(self.h5['raw_sac/data']):
+        for idx, row in enumerate(grp['data']):
             dset[idx,:] = pyfftw.interfaces.numpy_fft.fft(row, nfft)
         return fft_dname 
     #def make_cc_spec(self, fft_dataset_name):
@@ -163,6 +183,7 @@ class alignedSac2Hdf5:
 
 class Sac2ResampleHdf5:
     """
+    Useless codes
     Make many sac files into a single hdf5 file.
     The sac time-series will be resampled to a same length.
     Also, the program force same length, so that the overal npts will be the smallest npts after resampling.
@@ -215,6 +236,9 @@ class Sac2ResampleHdf5:
         #    dset[idx,:g['npts'][idx]] = sac.rd_sac(fnm)['dat']
 
 class cc_Hdf5:
+    """
+    Useless codes
+    """
     def __init__(self, fnm_alignedSac2Hdf5_lst, fnm_cc_stack, username):
         """
         fnm_alignedSac2Hdf5_lst: list of filenames that correspond to `alignedSac2Hdf5`
@@ -317,6 +341,9 @@ if __name__ == "__main__":
     ###
     #
     ###
+    sac_template = '/home/catfly/00-LARGE-IMPORTANT-PERMANENT-DATA/AU_dowload/01_resampled_bhz_to_h5/03_workspace_bhz_dt_0.1/2000_008_16_47_20_+0000/*resampled'
+    make_h5_from_sac(sac_template, 'junk.h5', h5_grp_name='raw_sac', user_message='test raw_sac')
+    make_h5_from_sac(sac_template, 'junk2.h5', h5_grp_name='sheng', user_message='test sheng')
     #import glob
     #fnm_lst = sorted( glob.glob('/home/catfly/workspace/correlation_physics/10_real_data/04_analysis/desample_data/2015_208_21_41_21_+0000/*BHZ*SAC') )
     #app = alignedSac2Hdf5(username= 'Sheng', user_message='')
@@ -325,10 +352,10 @@ if __name__ == "__main__":
     ###
     #
     ###
-    app = cc_Hdf5(['test.h5'], 'cc.h5', 'Sheng')
-    app.cc__stack_inter_rcv_distance_all()
-    app.cc__stack_inter_rcv_distance_azimuth_diff(azimuth_diff_max=10, reverse=False)
-    app.cc__stack_inter_rcv_distance_azimuth_diff(azimuth_diff_max=10, reverse=True)
+    #app = cc_Hdf5(['test.h5'], 'cc.h5', 'Sheng')
+    #app.cc__stack_inter_rcv_distance_all()
+    #app.cc__stack_inter_rcv_distance_azimuth_diff(azimuth_diff_max=10, reverse=False)
+    #app.cc__stack_inter_rcv_distance_azimuth_diff(azimuth_diff_max=10, reverse=True)
 
 
 
