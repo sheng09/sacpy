@@ -164,6 +164,9 @@ class cc_stcc:
         ### output
         self.__output_pkl__(out_pkl_fnm, st, vol_seismic_waves, vol_correlations)
         ###
+        del vol_seismic_waves
+        del vol_correlations
+        del st
     def __cut_seismic_waves__(self, st):
         """
         Internal functions
