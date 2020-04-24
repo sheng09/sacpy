@@ -6,6 +6,7 @@ from time import gmtime, strftime
 import time
 import sacpy.processing as processing
 import sacpy.sac_hdf5 as sac_hdf5
+import sacpy.sac as sac
 import sacpy.geomath as geomath
 import mpi4py.MPI
 import h5py
@@ -17,6 +18,8 @@ import getopt
 import scipy.signal
 import pickle
 import obspy.taup as taup
+import getpass
+import os, os.path
 
 def mpi_print_log(msg, n_pre, file=sys.stdout, flush=False):
     print('%s%s' % ('\t'*n_pre, msg), file= file, flush= flush )
@@ -56,7 +59,7 @@ class cc_stcc:
 
     We do not do any stacking here, instead we reserve the cross-term between two body waves.
     """
-    def __init__(self, fnm_lst_alignedSac2Hdf5, out_put_prenm, log_prefnm = '', username= ''):
+    def __init__(self, fnm_lst_alignedSac2Hdf5, out_put_prenm, log_prefnm = '' ):
         """
         """
         ###
@@ -71,6 +74,7 @@ class cc_stcc:
             self.ncpu = self.comm.Get_size()
             self.local_log_fnm = '%s_mpi_log_%03d.txt' % (log_prefnm, self.rank)
         ### global variables
+        self.global_username = getpass.getuser()
         self.global_fnm_lst_alignedSac2Hdf5 = sorted(list(fnm_lst_alignedSac2Hdf5) )
         self.global_out_put_prenm  = out_put_prenm
         ### local variables
@@ -85,12 +89,14 @@ class cc_stcc:
                     len(self.global_fnm_lst_alignedSac2Hdf5) ), 
                     0, self.local_log_fid, True )
         ###
-    def init(self,  lst_cross_term= [ ('PKIKP'*4, 'PKIKP'*2), ('PKIKP'*5, 'PKIKP'*3) ], 
+    def init(self,  lst_cross_term= [ ('I4', 'I2', 'PKIKP'*4, 'PKIKP'*2), ], 
                     seismic_phase_time_window_sec = (-50, 50),
                     inter_rcv_distance_range_deg=(-1, 181),
+                    az_diff_range_deg = (-10, 10),
                     bandpass_hz = None,
                     h5_group='raw_sac',
-                    ftcc_time_window=[2300, 2600] ):
+                    ftcc_time_window=[2300, 2600], 
+                    flag_output_sac= False ):
         """
         Use `lst_cross_term` to tell the program the cross-terms.
             The program will jump over the cross-terms that do not exist.
@@ -103,33 +109,258 @@ class cc_stcc:
         """
         ###
         self.global_lst_cross_term = lst_cross_term
-        self.global_all_seismic_phases = set([it1 for (it1, it2) in lst_cross_term] )
-        self.global_all_seismic_phases.update( set( [it2 for (it1, it2) in lst_cross_term] ) )
-        self.global_all_seismic_phases = sorted(list(self.global_all_seismic_phases) )
+        # 'I4', 'I2', 'PKIKP'*4, 'PKIKP'*2
+        self.global_all_seismic_phases_dict = dict()
+        for ph1_user, ph2_user, ph1, ph2 in lst_cross_term:
+            self.global_all_seismic_phases_dict[ph1] = ph1_user
+            self.global_all_seismic_phases_dict[ph2] = ph2_user
+        self.global_all_seismic_phases = sorted( list(self.global_all_seismic_phases_dict.keys() ) )
         ###
         self.global_seismic_phase_time_window_sec = seismic_phase_time_window_sec         
         ###
         self.global_inter_rcv_distance_range_deg = inter_rcv_distance_range_deg
+        self.global_az_diff_range_deg = az_diff_range_deg
         self.global_bandpass_hz = bandpass_hz
         self.global_h5_group = h5_group
         ###
         self.global_ftcc_time_window = ftcc_time_window
+        ###
+        self.global_flag_output_sac = flag_output_sac
         ###
         mpi_print_log('>>> Initialized', 0, self.local_log_fid, False)
         mpi_print_log('inter-rcv-dist(%f, %f)'% (self.global_inter_rcv_distance_range_deg[0], self.global_inter_rcv_distance_range_deg[1]), 1, self.local_log_fid, False)
         mpi_print_log('time-window (%f, %f)' % (self.global_seismic_phase_time_window_sec[0], self.global_seismic_phase_time_window_sec[1]) , 1, self.local_log_fid, False)
         mpi_print_log('cross-terms: %s' % (',  '.join(['.'.join(it) for it in self.global_lst_cross_term]) ), 1, self.local_log_fid, True )
     def run(self):
-        mpi_print_log('>>> Running...', 0, self.local_log_fid, True)
-        for fnm in self.local_fnm_lst_alignedSac2Hdf5:
+        mpi_print_log('>>> Running... [%d] ' % (len(self.local_fnm_lst_alignedSac2Hdf5) ) , 0, self.local_log_fid, True)
+        for idx, fnm in enumerate(self.local_fnm_lst_alignedSac2Hdf5):
             outfnm = '%s_%s.pkl' % (self.global_out_put_prenm, fnm.split('/')[-1].replace('.h5', '') )
+            ###
+            mpi_print_log('[%d] %s ==> %s' % (idx, fnm, outfnm) , 1, self.local_log_fid, True)
+            ###
             self.single_file_run(fnm, outfnm)
     def release(self):
         mpi_print_log('>>> Releasing resources ...', 0, self.local_log_fid, True )
         mpi_print_log('>>> Stop mpi logging and safe exit!', 0, self.local_log_fid, True )
         self.local_log_fid.close()
         del self.comm
-    def single_file_run(self, h5_fnm, out_fnm):
+    def single_file_run(self, h5_fnm, out_pkl_fnm):
+        """
+        Run for a single h5_fnm, the output is performed by pickle.dump(...)
+        """
+        ### obtain sactrace
+        st = sac_hdf5.get_sactrace_from_H5(h5_fnm, h5_grp_name= self.global_h5_group )
+        if self.global_bandpass_hz != None:
+            f1, f2 = self.global_bandpass_hz 
+            for it in st:
+                it.rmean()
+                it.detrend()
+                it.taper(ratio= 0.01) # 
+                it.bandpass(f1, f2, 2, 2) # order=2, npass=2
+        ### cut seismic waves from sactrace
+        vol_seismic_waves = self.__cut_seismic_waves__(st)
+        ### compute stcc
+        vol_correlations = self.__run_correlations__(st, vol_seismic_waves) # check `__run_stcc__(...)`for the data structure
+        ### output
+        self.__output_pkl__(out_pkl_fnm, st, vol_seismic_waves, vol_correlations)
+        ###
+    def __cut_seismic_waves__(self, st):
+        """
+        Internal functions
+        ### structure of `vol_seismic_waves`. It is a list of dict()
+            #  +--------------------------+---------+---------+--------------+
+            #  | #idx=0#                  | #idx=1# | #idx=2# | ... ... ...  |
+            #  | wave_name1 --> SACTRACE1 | ... ... | ... ... |              |
+            #  | wave_name2 --> SACTRACE2 | ... ... | ... ... |              |
+            #  | ... ... ...              | ... ... | ... ... |              |
+            #  |                          | ... ... | ... ... |              |
+            #  +--------------------------+---------+---------+--------------+
+        """
+        dt1, dt2 = self.global_seismic_phase_time_window_sec
+        gcarc= [it['gcarc'] for it in st] 
+        evdp = [it['evdp']*0.001 for it in st] 
+        nsac = len(st)
+        ###
+        mpi_print_log('cutting seismic waves... nsac(%d)' % (nsac) , 2, self.local_log_fid, True )
+        ###
+        vol_seismic_waves = [dict() for it in range(nsac) ]
+        for isac, tr in enumerate(st):
+            for wave_name in self.global_all_seismic_phases:
+                traveltime, slowness = get_synthetic_travel_time_and_slowness(wave_name, evdp[isac], gcarc[isac] )
+                if traveltime == None or slowness == None: # the wave does not exist for that evdp and gcarc
+                    continue
+                ###
+                msg = '[%d/%d] %s %f %f' % (isac+1, nsac, self.global_all_seismic_phases_dict[wave_name], traveltime, slowness)
+                mpi_print_log(msg , 3, self.local_log_fid, True )
+                ###
+                seismic_wave = sac.truncate_sac(tr, 'o', traveltime+dt1, traveltime+dt2)
+                seismic_wave['slowness'] = slowness
+                seismic_wave['traveltime']  = traveltime 
+                seismic_wave['phase'] = self.global_all_seismic_phases_dict[wave_name]  
+                seismic_wave['t8' ]  = traveltime  # use t8 to allow sachdr info
+                seismic_wave['kt8'] = self.global_all_seismic_phases_dict[wave_name]  
+                vol_seismic_waves[isac][wave_name] = seismic_wave
+        return vol_seismic_waves
+    def __run_correlations__(self, st, vol_seismic_waves):
+        """
+        Internal functions
+        ### structure of `vol_correlations`
+               *******************************************************************
+               * #LEVEL 0#                                                       *
+               * (0, 0) --> +-------------------------------------------------+  *
+               *            | #LEVEL 1#                                       |  *
+               *            | 'ftcc' --> SACTRACE(ST)                         |  *
+               *            |                                                 |  *
+               *            | 'stcc' --> +---------------------------------+  |  *
+               *            |            | #LEVEL 2#                       |  |  *
+               *            |            | 'PKIKPPKIKP-PKIKP' --> (ST1,ST2)|  |  *
+               *            |            | 'PKIKPP****-P****' --> (ST1,ST2)|  |  *
+               *            |            | 'PKIKPP****-P****' --> (ST1,ST2)|  |  *
+               *            |            | ... ... ...                     |  |  *
+               *            |            | ... ... ...                     |  |  *
+               *            |            |                                 |  |  *
+               *            |            +---------------------------------+  |  *
+               *            +-------------------------------------------------+  *
+               *                                                                 *
+               * (0, 1) --> +-------------------------------------------------+  *
+               *            | #LEVEL 1#                                       |  *
+               *            | ... ... ...                                     |  *
+               *            |                                                 |  *
+               *            +-------------------------------------------------+  *
+               *  ... ...                                                        *
+               *  ... ...                                                        *
+               *                                                                 *
+               *******************************************************************
+            
+        """
+        ###
+        stlo = [it['stlo'] for it in st]
+        stla = [it['stla'] for it in st]
+        az   = [it['az'] for it in st]
+        gcarc= [it['gcarc'] for it in st]
+        kstnm   = [it['kstnm'] for it in st]
+        knetwk  = [it['knetwk'] for it in st]
+        full_stnm = ['%s.%s' % (it1, it2) for it1, it2 in zip(knetwk, kstnm) ]
+        ###
+        d1, d2 = self.global_inter_rcv_distance_range_deg
+        a1, a2 = self.global_az_diff_range_deg
+        cc_t1, cc_t2 = self.global_ftcc_time_window
+        nsac = len(st)
+        ###
+        mpi_print_log('generating correlations... (%dx%d)' % (nsac, nsac), 2, self.local_log_fid, True )
+        ###
+        ###
+        vol_correlations = dict()
+        for isac1 in range(nsac):
+            for isac2 in range(nsac):
+                inter_dist = geomath.haversine(stlo[isac1], stla[isac1], stlo[isac2], stla[isac2]) # return degree
+                if inter_dist < d1 or inter_dist > d2: # skip for meaningless station pairs
+                    continue 
+                az_diff = az[isac1]-az[isac2] # degree
+                if az_diff < a1 or az_diff > a2:
+                    continue
+                gcarc_diff = gcarc[isac1]-gcarc[isac2] # degree
+                ###
+                vol_correlations[(isac1, isac2)] = dict()
+                ### tags
+                tag = 'auto' if isac1 == isac2 else 'cros'
+                ###
+                msg = '[%dx%d] %s, %sx%s, inter-dist(%.2f), az_diff(%.2f) gcarc_diff(%.2f)' % (isac1+1, isac2+1, tag, full_stnm[isac1], full_stnm[isac2], 
+                                                                                        inter_dist, az_diff, gcarc_diff)
+                mpi_print_log(msg, 3, self.local_log_fid, True )
+                ### ftcc
+                mpi_print_log('ftcc...', 4, self.local_log_fid, True )
+                ftcc = sac.correlation_sac(st[isac1], st[isac2])
+                ftcc.truncate('0', cc_t1, cc_t2)
+                ftcc['tag']        = tag
+                ftcc['type']       = 'ftcc'
+                ftcc['stnm1']      = full_stnm[isac1]
+                ftcc['stnm2']      = full_stnm[isac2]
+                ftcc['inter-dist'] = inter_dist
+                ftcc['az-diff']    = az_diff
+                ftcc['gcarc-diff'] = gcarc_diff
+                ftcc['gcarc1']     = gcarc[isac1]
+                ftcc['gcarc2']     = gcarc[isac2]
+                vol_correlations[(isac1, isac2)]['ftcc'] = ftcc
+                ### stcc
+                vol_correlations[(isac1, isac2)]['stcc'] = dict()
+                for junk1, junk2, wave1, wave2 in self.global_lst_cross_term:
+                    if (wave1 not in vol_seismic_waves[isac1]) or (wave2 not in vol_seismic_waves[isac2]):
+                        continue
+                    mpi_print_log('stcc... %sx%s' % (wave1, wave2) , 4, self.local_log_fid, True )
+                    seismic_wave1, seismic_wave2 = vol_seismic_waves[isac1][wave1], vol_seismic_waves[isac2][wave2]
+                    reference_time = seismic_wave1['traveltime'] - seismic_wave2['traveltime']
+                    stcc1 = sac.correlation_sac(seismic_wave1, seismic_wave2)
+                    stcc2 = sac.correlation_sac(st[isac1], seismic_wave2)
+                    stcc1.truncate('0', cc_t1, cc_t2)
+                    stcc2.truncate('0', cc_t1, cc_t2)
+                    stcc1['flag'] = 'zero padding'
+                    stcc2['flag'] = 'values padding'
+                    stcc1['kevnm'] = 'zero padding'
+                    stcc2['kevnm'] = 'values padding'
+                    #
+                    for stcc in [stcc1, stcc2]:
+                        stcc['reference-time'] = reference_time
+                        stcc['t9'] = reference_time
+                        stcc['tag']        = tag
+                        stcc['type']       = 'stcc'
+                        stcc['stnm1']      = full_stnm[isac1]
+                        stcc['stnm2']      = full_stnm[isac2]
+                        stcc['inter-dist'] = inter_dist
+                        stcc['az-diff']    = az_diff
+                        stcc['gcarc-diff'] = gcarc_diff
+                        stcc['gcarc1']     = gcarc[isac1]
+                        stcc['gcarc2']     = gcarc[isac2]
+                        stcc['cross_term'] =  '%s-%s' % (self.global_all_seismic_phases_dict[wave1], self.global_all_seismic_phases_dict[wave2])
+                    cross_term         = stcc1['cross_term']
+                    vol_correlations[(isac1, isac2)]['stcc'][cross_term] = (stcc1, stcc2)
+        return vol_correlations
+    def __output_pkl__(self, out_pkl_fnm, st, vol_seismic_waves, vol_correlations):
+        """
+        Internal functions
+        """
+        all_vol = dict()
+        # sta info
+        kstnm   = [it['kstnm'] for it in st]
+        knetwk  = [it['knetwk'] for it in st]
+        all_vol['full_stnm'] = ['%s.%s' % (it1, it2) for it1, it2 in zip( knetwk, kstnm) ]
+        for key in ['stlo', 'stla', 'evlo', 'evla', 'evdp', 'az', 'gcarc', 'kstnm', 'knetwk']:
+            all_vol[key] = [it[key] for it in st]
+        # time series
+        all_vol['seismic-waves'] = vol_seismic_waves
+        all_vol['correlations']  = vol_correlations
+        #
+        msg = 'outputing... %s' % (out_pkl_fnm)
+        mpi_print_log(msg, 2, self.local_log_fid, True )
+        #
+        with open(out_pkl_fnm, 'wb') as fid_out:
+            pickle.dump(all_vol, fid_out)
+        ### out to sac
+        if self.global_flag_output_sac:
+            dir_nm = out_pkl_fnm.replace('.pkl', '_sacvol')
+            if not os.path.exists(dir_nm):
+                os.mkdir(dir_nm)
+            ### seismic waves
+            mpi_print_log('outputing seismic waves... to sac files', 2, self.local_log_fid, True )
+            for it in vol_seismic_waves:
+                for wave_name, st in it.items():
+                    sacfnm = '%s/seismic-wave_%s.%s_%s.sac' % (dir_nm, st['knetwk'], st['kstnm'], self.global_all_seismic_phases_dict[wave_name])
+                    st.write(sacfnm)
+            ### correlations
+            mpi_print_log('outputing correlations... to sac files', 2, self.local_log_fid, True )
+            for (isac1, isac2), content in vol_correlations.items():
+                ftcc = content['ftcc']
+                ftcc_fnm = '%s/%sx%s_ftcc.sac' % (dir_nm, all_vol['full_stnm'][isac1], all_vol['full_stnm'][isac2] )
+                ftcc.write(ftcc_fnm)
+                for nm, (stcc1, stcc2) in content['stcc'].items():
+                    st1_fnm = '%s/%sx%s_stcc1_%s.sac' % (dir_nm, all_vol['full_stnm'][isac1], all_vol['full_stnm'][isac2], nm )
+                    stcc1.write(st1_fnm)
+                    st2_fnm = '%s/%sx%s_stcc2_%s.sac' % (dir_nm, all_vol['full_stnm'][isac1], all_vol['full_stnm'][isac2], nm )
+                    stcc2.write(st2_fnm)
+            ###
+        
+
+    def single_file_run_old(self, h5_fnm, out_fnm):
         """
         Run for a single h5_fnm
         """
@@ -298,7 +529,6 @@ if __name__ == "__main__":
     ###
     fnm_lst_alignedSac2Hdf5 = None
     log_prefnm = ''
-    username = getpass.getuser()
     output_prenm = ''
     wave_pairs = None
     t1, t2 = -50, 50
@@ -306,11 +536,28 @@ if __name__ == "__main__":
     log_prenm = None
     bandpass_hz = None
     h5_grp = 'raw_sac'
-    HMSG = '%s -I fnm_lst_alignedSac2Hdf5.txt -B 0.02/0.0666 -O output_prenm -P wave_pairs.txt -W -50/50 -D 0/30  -L log_prenm -G raw_sac  ' % (sys.argv[0] )
+    ftcc_time_window= [2300, 2600]
+    flag_output_sac = False
+    HMSG = '%s -I fnm_lst_alignedSac2Hdf5.txt  -O output_prenm -P wave_pairs.txt -C 2300/2600 -W -50/50 -D 0/30  -L log_prenm -G raw_sac [-B 0.02/0.0666] [-S]  ' % (sys.argv[0] )
+    HMSG2 = """
+    -I fnm_lst_alignedSac2Hdf5.txt : a text file that list all HDF5 files.
+    -O output_prenm : the pre-name for output files.
+    -P wave_pairs.txt : a text file that each line is : 
+           `user-defined-phase-name1  user-defined-phase-name2  phase-name1  phase-name2`
+
+    -C ct1/ct2 : the time window [ct1, ct2] to cut cross-correlation functions.
+    -W t1/t2 : the time window [t1, t2] with respect to synthetic traveltime of a seismic phases will used to cut out the seismic wave.
+    -D d1/d2 : inter-receiver distance range to jump over some receiver pairs.
+    -L log_prenm : pre-name for log files in mpi-parallel mode, or the log filename in serial mode.
+    -G raw_sac : the group name in the HDF5 files.
+    -B f1/f2   : bandpass filter cutoff frequency in Hz.
+    -S : use `-S` to turn on outputing sac files.
+    """
+    HMSG = HMSG + HMSG2
     if len(sys.argv) < 2:
         print(HMSG)
         sys.exit(0)
-    options, remainder = getopt.getopt(sys.argv[1:], 'I:B:O:P:W:D:L:G:H' )
+    options, remainder = getopt.getopt(sys.argv[1:], 'I:B:O:P:C:W:D:L:G:SH' )
     for opt, arg in options:
         if opt in ('-I'):
             fnm_lst_alignedSac2Hdf5 = [line.strip() for line in open(arg, 'r')]
@@ -320,6 +567,8 @@ if __name__ == "__main__":
             output_prenm = arg
         elif opt in ('-P'):
             wave_pairs = [line.strip().split() for line in open(arg, 'r') ]
+        elif opt in ('-C'):
+            ftcc_time_window = [float(it) for it in arg.split('/')]
         elif opt in ('-W'):
             t1, t2 = [float(it) for it in arg.split('/')]
         elif opt in ('-D'):
@@ -328,6 +577,8 @@ if __name__ == "__main__":
             log_prefnm = arg
         elif opt in ('-G'):
             h5_grp = arg
+        elif opt in ('-S'):
+            flag_output_sac = True
         else:
             print('invalid options: %s' % (opt) )
             print(HMSG)
@@ -339,12 +590,14 @@ if __name__ == "__main__":
         #print(fnm_lst_alignedSac2Hdf5, wave_pairs, log_prefnm)
         print(HMSG)
         sys.exit(-1)
-    app = cc_stcc(fnm_lst_alignedSac2Hdf5, output_prenm, log_prefnm, username)
+    app = cc_stcc(fnm_lst_alignedSac2Hdf5, output_prenm, log_prefnm)
     app.init(   lst_cross_term= wave_pairs, 
                 seismic_phase_time_window_sec= (t1, t2), 
                 inter_rcv_distance_range_deg= (d1, d2), 
                 bandpass_hz= bandpass_hz,
-                h5_group=h5_grp )
+                h5_group=h5_grp,
+                ftcc_time_window= ftcc_time_window, 
+                flag_output_sac= flag_output_sac )
     app.run()
     app.release()
     del app
