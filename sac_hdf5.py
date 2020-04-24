@@ -147,7 +147,7 @@ class alignedSac2Hdf5:
         for key in sac.sachdr.s_keys:
             values = grp_hdr[key][:]
             for v, st in zip(values, return_value):
-                st[key] = v.decode('utf8')
+                st[key] = v.decode('utf8').strip()
         return return_value
     def get_raw_sac(self, cut_marker=None, cut_range=None, h5_grp_name = 'raw_sac'):
         """
