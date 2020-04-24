@@ -130,7 +130,7 @@ class cc_stcc:
         mpi_print_log('>>> Initialized', 0, self.local_log_fid, False)
         mpi_print_log('inter-rcv-dist(%f, %f)'% (self.global_inter_rcv_distance_range_deg[0], self.global_inter_rcv_distance_range_deg[1]), 1, self.local_log_fid, False)
         mpi_print_log('time-window (%f, %f)' % (self.global_seismic_phase_time_window_sec[0], self.global_seismic_phase_time_window_sec[1]) , 1, self.local_log_fid, False)
-        mpi_print_log('cross-terms: %s' % (',  '.join(['.'.join(it) for it in self.global_lst_cross_term]) ), 1, self.local_log_fid, True )
+        mpi_print_log('cross-terms: %s' % (',  '.join(['-'.join(it[:2]) for it in self.global_lst_cross_term]) ), 1, self.local_log_fid, True )
     def run(self):
         mpi_print_log('>>> Running... [%d] ' % (len(self.local_fnm_lst_alignedSac2Hdf5) ) , 0, self.local_log_fid, True)
         for idx, fnm in enumerate(self.local_fnm_lst_alignedSac2Hdf5):
@@ -287,7 +287,7 @@ class cc_stcc:
                 for junk1, junk2, wave1, wave2 in self.global_lst_cross_term:
                     if (wave1 not in vol_seismic_waves[isac1]) or (wave2 not in vol_seismic_waves[isac2]):
                         continue
-                    mpi_print_log('stcc... %sx%s' % (wave1, wave2) , 4, self.local_log_fid, True )
+                    mpi_print_log('stcc... %sx%s' % (self.global_all_seismic_phases_dict[wave1], self.global_all_seismic_phases_dict[wave2]) , 4, self.local_log_fid, True )
                     seismic_wave1, seismic_wave2 = vol_seismic_waves[isac1][wave1], vol_seismic_waves[isac2][wave2]
                     reference_time = seismic_wave1['traveltime'] - seismic_wave2['traveltime']
                     stcc1 = sac.correlation_sac(seismic_wave1, seismic_wave2)
