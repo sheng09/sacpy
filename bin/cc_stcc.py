@@ -96,7 +96,8 @@ class cc_stcc:
                     bandpass_hz = None,
                     h5_group='raw_sac',
                     ftcc_time_window=[2300, 2600], 
-                    flag_output_sac= False ):
+                    flag_output_sac= False,
+                    flag_stcc_stack= False ):
         """
         Use `lst_cross_term` to tell the program the cross-terms.
             The program will jump over the cross-terms that do not exist.
@@ -126,6 +127,7 @@ class cc_stcc:
         self.global_ftcc_time_window = ftcc_time_window
         ###
         self.global_flag_output_sac = flag_output_sac
+        self.global_flag_stcc_stack = flag_stcc_stack
         ###
         mpi_print_log('>>> Initialized', 0, self.local_log_fid, False)
         mpi_print_log('inter-rcv-dist(%f, %f)'% (self.global_inter_rcv_distance_range_deg[0], self.global_inter_rcv_distance_range_deg[1]), 1, self.local_log_fid, False)
@@ -317,6 +319,15 @@ class cc_stcc:
                         stcc['cross_term'] =  '%s-%s' % (self.global_all_seismic_phases_dict[wave1], self.global_all_seismic_phases_dict[wave2])
                     cross_term         = stcc1['cross_term']
                     vol_correlations[(isac1, isac2)]['stcc'][cross_term] = (stcc1, stcc2)
+                ### stcc stack
+                if self.global_flag_stcc_stack:
+                    stcc1_stack = sac.stack_sac( it[0] for it in  vol_correlations[(isac1, isac2)]['stcc'].values() )
+                    stcc2_stack = sac.stack_sac( it[1] for it in  vol_correlations[(isac1, isac2)]['stcc'].values() )
+                    stcc1_stack['flag'] = 'zero padding'
+                    stcc1_stack['kevnm'] = 'zero padding'
+                    stcc2_stack['flag'] = 'values padding'
+                    stcc2_stack['kevnm'] = 'values padding'
+                    vol_correlations[(isac1, isac2)]['stccstack'] = (stcc1_stack, stcc2_stack)
         return vol_correlations
     def __output_pkl__(self, out_pkl_fnm, st, vol_seismic_waves, vol_correlations):
         """
@@ -541,6 +552,7 @@ if __name__ == "__main__":
     h5_grp = 'raw_sac'
     ftcc_time_window= [2300, 2600]
     flag_output_sac = False
+    flag_stcc_stack = False
     HMSG = '%s -I fnm_lst_alignedSac2Hdf5.txt  -O output_prenm -P wave_pairs.txt -C 2300/2600 -W -50/50 -D 0/30  -L log_prenm -G raw_sac [-B 0.02/0.0666] [-S]  ' % (sys.argv[0] )
     HMSG2 = """
     -I fnm_lst_alignedSac2Hdf5.txt : a text file that list all HDF5 files.
@@ -560,7 +572,7 @@ if __name__ == "__main__":
     if len(sys.argv) < 2:
         print(HMSG)
         sys.exit(0)
-    options, remainder = getopt.getopt(sys.argv[1:], 'I:B:O:P:C:W:D:L:G:SH' )
+    options, remainder = getopt.getopt(sys.argv[1:].split(), 'I:B:O:P:C:W:D:L:G:SH', ['stccstack'] )
     for opt, arg in options:
         if opt in ('-I'):
             fnm_lst_alignedSac2Hdf5 = [line.strip() for line in open(arg, 'r')]
@@ -582,6 +594,8 @@ if __name__ == "__main__":
             h5_grp = arg
         elif opt in ('-S'):
             flag_output_sac = True
+        elif opt in ('staccstack'):
+            flag_stcc_stack = True
         else:
             print('invalid options: %s' % (opt) )
             print(HMSG)
@@ -600,7 +614,8 @@ if __name__ == "__main__":
                 bandpass_hz= bandpass_hz,
                 h5_group=h5_grp,
                 ftcc_time_window= ftcc_time_window, 
-                flag_output_sac= flag_output_sac )
+                flag_output_sac= flag_output_sac,
+                flag_stcc_stack= flag_stcc_stack )
     app.run()
     app.release()
     del app

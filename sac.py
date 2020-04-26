@@ -155,18 +155,20 @@ def wrt_sac_2(filename, dat, delta, b, **kwargs):
     tmp = sactrace()
     tmp.init(dat, make_sachdr(delta, np.size(dat), b, **kwargs), False)
     tmp.write(filename)
-def truncate_sac(sac_trace, tmark, t1, t2):
+def truncate_sac(sac_trace, tmark, t1, t2, clean_sachdr=False):
     """
     Generate a new SAC_TRACE object from an existed SAC_TRACE 
     given reference tmark, and time window.
     tmark: '0', 'b', 'e', 'o', 'a', 't0', 't1', ... 't9';
         '0' means to use the built-in time axis according to 'b'.
     t1, t2: float;
-
+    clean_sachdr: set -12345 for sachdr elements that exclude `b`, `e`, `delta`
     Return: a new SAC_TRACE object.
     """
     tmp = copy.deepcopy(sac_trace)
     tmp.truncate(tmark, t1, t2)
+    if clean_sachdr:
+        return make_sactrace_v(tmp['dat'], tmp['delta'], tmp['b'])
     return tmp
 def correlation_sac(sac_trace1, sac_trace2):
     """
@@ -182,6 +184,28 @@ def correlation_sac(sac_trace1, sac_trace2):
     cc = signal.correlate(sac_trace1['dat'], sac_trace2['dat'], 'full', 'fft')
     cc_start = sac_trace1['b'] - sac_trace2['e']
     return make_sactrace_v(cc, sac_trace1['delta'], cc_start)
+def stack_sac(sac_trace_lst):
+    """
+    Stack a list of `sactrace` and return an object of `sactrace`.
+    The stacking use the maximal `b` and the minimal `e` in sachdr.
+    """
+    b = np.max([it['b'] for it in sac_trace_lst] )
+    e = np.min([it['e'] for it in sac_trace_lst] )
+    if b >= e:
+        print('Err in `stack_sac(...)`. The maximal `b` is larger than the minimal `e`.' )
+    st = truncate_sac(sac_trace_lst, '0', b, e, clean_sachdr=True)
+    st['nstack'] = len(sac_trace_lst)
+    st['user0']  = len(sac_trace_lst)
+    npts = st['npts']
+    for st in sac_trace_lst[1:]:
+        tmp_sac = truncate_sac(st, '0', b, e)
+        tmp_npts = tmp_sac['npts']
+        if npts != tmp_npts:
+            sz = min(tmp_npts, npts)
+            st['dat'][:sz] += tmp_sac[:sz]
+        else:
+            st['dat'] += tmp_sac
+    return st
 ###
 #  classes
 ###
