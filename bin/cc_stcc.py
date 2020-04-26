@@ -97,7 +97,7 @@ class cc_stcc:
                     h5_group='raw_sac',
                     ftcc_time_window=[2300, 2600], 
                     flag_output_sac= False,
-                    flag_stcc_stack= False ):
+                    flag_stcc_stack= 'off' ):
         """
         Use `lst_cross_term` to tell the program the cross-terms.
             The program will jump over the cross-terms that do not exist.
@@ -320,14 +320,22 @@ class cc_stcc:
                     cross_term         = stcc1['cross_term']
                     vol_correlations[(isac1, isac2)]['stcc'][cross_term] = (stcc1, stcc2)
                 ### stcc stack
-                if self.global_flag_stcc_stack:
-                    stcc1_stack = sac.stack_sac( it[0] for it in  vol_correlations[(isac1, isac2)]['stcc'].values() )
-                    stcc2_stack = sac.stack_sac( it[1] for it in  vol_correlations[(isac1, isac2)]['stcc'].values() )
+                if self.global_flag_stcc_stack == 'norm' or self.global_flag_stcc_stack == 'all':
+                    stcc1_stack = sac.stack_sac( [it[0] for it in  vol_correlations[(isac1, isac2)]['stcc'].values() ], amp_norm=True  )
+                    stcc2_stack = sac.stack_sac( [it[1] for it in  vol_correlations[(isac1, isac2)]['stcc'].values() ], amp_norm=True  )
                     stcc1_stack['flag'] = 'zero padding'
                     stcc1_stack['kevnm'] = 'zero padding'
                     stcc2_stack['flag'] = 'values padding'
                     stcc2_stack['kevnm'] = 'values padding'
-                    vol_correlations[(isac1, isac2)]['stccstack'] = (stcc1_stack, stcc2_stack)
+                    vol_correlations[(isac1, isac2)]['stcc-normstack'] = (stcc1_stack, stcc2_stack)
+                if self.global_flag_stcc_stack == 'plain' or self.global_flag_stcc_stack == 'all':
+                    stcc1_stack = sac.stack_sac( [it[0] for it in  vol_correlations[(isac1, isac2)]['stcc'].values() ], amp_norm=False  )
+                    stcc2_stack = sac.stack_sac( [it[1] for it in  vol_correlations[(isac1, isac2)]['stcc'].values() ], amp_norm=False  )
+                    stcc1_stack['flag'] = 'zero padding'
+                    stcc1_stack['kevnm'] = 'zero padding'
+                    stcc2_stack['flag'] = 'values padding'
+                    stcc2_stack['kevnm'] = 'values padding'
+                    vol_correlations[(isac1, isac2)]['stcc-plainstack'] = (stcc1_stack, stcc2_stack)
         return vol_correlations
     def __output_pkl__(self, out_pkl_fnm, st, vol_seismic_waves, vol_correlations):
         """
@@ -371,6 +379,18 @@ class cc_stcc:
                     stcc1.write(st1_fnm)
                     st2_fnm = '%s/%sx%s_stcc2_%s.sac' % (dir_nm, all_vol['full_stnm'][isac1], all_vol['full_stnm'][isac2], nm )
                     stcc2.write(st2_fnm)
+                if self.global_flag_stcc_stack == 'norm' or self.global_flag_stcc_stack == 'all':
+                    stcc1_stack, stcc2_stack = content['stcc-normstack']
+                    fnm1 = '%s/%sx%s_stcc1-normstack.sac' % (dir_nm, all_vol['full_stnm'][isac1], all_vol['full_stnm'][isac2] )
+                    fnm2 = '%s/%sx%s_stcc2-normstack.sac' % (dir_nm, all_vol['full_stnm'][isac1], all_vol['full_stnm'][isac2] )
+                    stcc1_stack.write(fnm1)
+                    stcc2_stack.write(fnm2)
+                if self.global_flag_stcc_stack == 'plain' or self.global_flag_stcc_stack == 'all':
+                    stcc1_stack, stcc2_stack = content['stcc-plainstack']
+                    fnm1 = '%s/%sx%s_stcc1-plainstack.sac' % (dir_nm, all_vol['full_stnm'][isac1], all_vol['full_stnm'][isac2] )
+                    fnm2 = '%s/%sx%s_stcc2-plainstack.sac' % (dir_nm, all_vol['full_stnm'][isac1], all_vol['full_stnm'][isac2] )
+                    stcc1_stack.write(fnm1)
+                    stcc2_stack.write(fnm2)
             ###
         
 
@@ -552,8 +572,8 @@ if __name__ == "__main__":
     h5_grp = 'raw_sac'
     ftcc_time_window= [2300, 2600]
     flag_output_sac = False
-    flag_stcc_stack = False
-    HMSG = '%s -I fnm_lst_alignedSac2Hdf5.txt  -O output_prenm -P wave_pairs.txt -C 2300/2600 -W -50/50 -D 0/30  -L log_prenm -G raw_sac [-B 0.02/0.0666] [-S]  ' % (sys.argv[0] )
+    flag_stcc_stack = 0
+    HMSG = '%s -I fnm_lst_alignedSac2Hdf5.txt  -O output_prenm -P wave_pairs.txt -C 2300/2600 -W -50/50 -D 0/30  -L log_prenm -G raw_sac [-B 0.02/0.0666] [-S] [--stccstack]  ' % (sys.argv[0] )
     HMSG2 = """
     -I fnm_lst_alignedSac2Hdf5.txt : a text file that list all HDF5 files.
     -O output_prenm : the pre-name for output files.
@@ -567,12 +587,16 @@ if __name__ == "__main__":
     -G raw_sac : the group name in the HDF5 files.
     -B f1/f2   : bandpass filter cutoff frequency in Hz.
     -S : use `-S` to turn on outputing sac files.
+    --stccstack:   off    turn off stcc stacking (default).
+                   norm   turn on stcc norm stacking.
+                   plain  turn on stcc plain stacking.
+                   all    turn on both norm and plain stacking.
     """
     HMSG = HMSG + HMSG2
     if len(sys.argv) < 2:
         print(HMSG)
         sys.exit(0)
-    options, remainder = getopt.getopt(sys.argv[1:].split(), 'I:B:O:P:C:W:D:L:G:SH', ['stccstack'] )
+    options, remainder = getopt.getopt(sys.argv[1:], 'I:B:O:P:C:W:D:L:G:SH', ['stccstack='] )
     for opt, arg in options:
         if opt in ('-I'):
             fnm_lst_alignedSac2Hdf5 = [line.strip() for line in open(arg, 'r')]
@@ -594,8 +618,8 @@ if __name__ == "__main__":
             h5_grp = arg
         elif opt in ('-S'):
             flag_output_sac = True
-        elif opt in ('staccstack'):
-            flag_stcc_stack = True
+        elif opt in ('--stccstack'):
+            flag_stcc_stack = arg
         else:
             print('invalid options: %s' % (opt) )
             print(HMSG)

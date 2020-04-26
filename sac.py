@@ -184,27 +184,41 @@ def correlation_sac(sac_trace1, sac_trace2):
     cc = signal.correlate(sac_trace1['dat'], sac_trace2['dat'], 'full', 'fft')
     cc_start = sac_trace1['b'] - sac_trace2['e']
     return make_sactrace_v(cc, sac_trace1['delta'], cc_start)
-def stack_sac(sac_trace_lst):
+def stack_sac(sac_trace_lst, amp_norm=False):
     """
     Stack a list of `sactrace` and return an object of `sactrace`.
     The stacking use the maximal `b` and the minimal `e` in sachdr.
+
+    amp_norm: True to apply amplitude normalizatin before stacking.
     """
+    ### one sac
+    if len(sac_trace_lst) == 1:
+        st = make_sactrace_v(sac_trace_lst[0]['dat'], sac_trace_lst[0]['delta'], sac_trace_lst[0]['b'], nstack= 1, user0 = 1)
+        return st
+    ### many sac
     b = np.max([it['b'] for it in sac_trace_lst] )
     e = np.min([it['e'] for it in sac_trace_lst] )
     if b >= e:
         print('Err in `stack_sac(...)`. The maximal `b` is larger than the minimal `e`.' )
-    st = truncate_sac(sac_trace_lst, '0', b, e, clean_sachdr=True)
+        sys.exit(-1)
+    ### the basic sac trace
+    st = truncate_sac(sac_trace_lst[0], '0', b, e, clean_sachdr=True)
+    if amp_norm:
+        st.norm()
     st['nstack'] = len(sac_trace_lst)
     st['user0']  = len(sac_trace_lst)
+    ### stack
     npts = st['npts']
-    for st in sac_trace_lst[1:]:
-        tmp_sac = truncate_sac(st, '0', b, e)
+    for it in sac_trace_lst[1:]:
+        tmp_sac = truncate_sac(it, '0', b, e)
+        if amp_norm:
+            tmp_sac.norm()
         tmp_npts = tmp_sac['npts']
         if npts != tmp_npts:
             sz = min(tmp_npts, npts)
             st['dat'][:sz] += tmp_sac[:sz]
         else:
-            st['dat'] += tmp_sac
+            st['dat'] += tmp_sac['dat']
     return st
 ###
 #  classes
