@@ -599,6 +599,25 @@ class sactrace:
         self['npts'] = self['dat'].size
         self['delta'] = self['delta']*factor
         self['e'] = self['b'] + (self['npts']-1)*self['delta']
+    def shift_time_all(self, tshift_sec):
+        """
+        Shift the time axis of the whole time-series. 
+        This function changes all time related sachdr elements, that includes 'b, e, o, a, f, t0, t1,...,t9'
+
+        shift_sec: t_shift in seconds.
+        """
+        self['b'] = self['b'] + tshift_sec
+        self['e'] = self['e'] + tshift_sec
+        for key in ['o', 'a', 'f', 't0', 't1', 't2', 't3', 't4', 't5', 't6', 't7', 't8', 't9']:
+            if self[key] != -12345.0:
+                self[key] = self[key] + tshift_sec 
+    def shift_time_b_e(self, tshift_sec):
+        """
+        Shift the 'b' and 'e' of within the sachdr. All other time picks would not be changed.
+        shift_sec: t_shift in seconds.
+        """
+        self['b'] = self['b'] + tshift_sec
+        self['e'] = self['e'] + tshift_sec
     ### plotf
     def plot_ax(self, ax, **kwargs):
         """
