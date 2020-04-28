@@ -92,7 +92,7 @@ class cc_stcc:
     def init(self,  lst_cross_term= [ ('I4', 'I2', 'PKIKP'*4, 'PKIKP'*2), ], 
                     seismic_phase_time_window_sec = (-50, 50),
                     inter_rcv_distance_range_deg=(-1, 181),
-                    az_diff_range_deg = (-10, 10),
+                    az_diff_range_deg = (-190, 190),
                     bandpass_hz = None,
                     h5_group='raw_sac',
                     ftcc_time_window=[2300, 2600], 
@@ -131,6 +131,7 @@ class cc_stcc:
         ###
         mpi_print_log('>>> Initialized', 0, self.local_log_fid, False)
         mpi_print_log('inter-rcv-dist(%f, %f)'% (self.global_inter_rcv_distance_range_deg[0], self.global_inter_rcv_distance_range_deg[1]), 1, self.local_log_fid, False)
+        mpi_print_log('daz(%f, %f)'% (self.global_az_diff_range_deg[0], self.global_az_diff_range_deg[1]), 1, self.local_log_fid, False)
         mpi_print_log('time-window (%f, %f)' % (self.global_seismic_phase_time_window_sec[0], self.global_seismic_phase_time_window_sec[1]) , 1, self.local_log_fid, False)
         mpi_print_log('cross-terms: %s' % (',  '.join(['-'.join(it[:2]) for it in self.global_lst_cross_term]) ), 1, self.local_log_fid, True )
     def run(self):
@@ -573,7 +574,7 @@ if __name__ == "__main__":
     ftcc_time_window= [2300, 2600]
     flag_output_sac = False
     flag_stcc_stack = 0
-    HMSG = '%s -I fnm_lst_alignedSac2Hdf5.txt  -O output_prenm -P wave_pairs.txt -C 2300/2600 -W -50/50 -D 0/30  -L log_prenm -G raw_sac [-B 0.02/0.0666] [-S] [--stccstack]  ' % (sys.argv[0] )
+    HMSG = '%s -I fnm_lst_alignedSac2Hdf5.txt  -O output_prenm -P wave_pairs.txt -C 2300/2600 -W -50/50 -D 0/30 -A -10/10  -L log_prenm -G raw_sac [-B 0.02/0.0666] [-S] [--stccstack]  ' % (sys.argv[0] )
     HMSG2 = """
     -I fnm_lst_alignedSac2Hdf5.txt : a text file that list all HDF5 files.
     -O output_prenm : the pre-name for output files.
@@ -583,6 +584,7 @@ if __name__ == "__main__":
     -C ct1/ct2 : the time window [ct1, ct2] to cut cross-correlation functions.
     -W t1/t2 : the time window [t1, t2] with respect to synthetic traveltime of a seismic phases will used to cut out the seismic wave.
     -D d1/d2 : inter-receiver distance range to jump over some receiver pairs.
+    -A daz1/daz2 : azimuth difference range to select receiver pairs given an event.
     -L log_prenm : pre-name for log files in mpi-parallel mode, or the log filename in serial mode.
     -G raw_sac : the group name in the HDF5 files.
     -B f1/f2   : bandpass filter cutoff frequency in Hz.
@@ -596,7 +598,7 @@ if __name__ == "__main__":
     if len(sys.argv) < 2:
         print(HMSG)
         sys.exit(0)
-    options, remainder = getopt.getopt(sys.argv[1:], 'I:B:O:P:C:W:D:L:G:SH', ['stccstack='] )
+    options, remainder = getopt.getopt(sys.argv[1:], 'I:B:O:P:C:W:D:A:L:G:SH', ['stccstack='] )
     for opt, arg in options:
         if opt in ('-I'):
             fnm_lst_alignedSac2Hdf5 = [line.strip() for line in open(arg, 'r')]
@@ -612,6 +614,8 @@ if __name__ == "__main__":
             t1, t2 = [float(it) for it in arg.split('/')]
         elif opt in ('-D'):
             d1, d2 = [float(it) for it in arg.split('/')]
+        elif opt in ('-A'):
+            a1, a2 = [float(it) for it in arg.split('/')]
         elif opt in ('-L'):
             log_prefnm = arg
         elif opt in ('-G'):
@@ -635,6 +639,7 @@ if __name__ == "__main__":
     app.init(   lst_cross_term= wave_pairs, 
                 seismic_phase_time_window_sec= (t1, t2), 
                 inter_rcv_distance_range_deg= (d1, d2), 
+                az_diff_range_deg = (a1, a2),
                 bandpass_hz= bandpass_hz,
                 h5_group=h5_grp,
                 ftcc_time_window= ftcc_time_window, 
