@@ -216,9 +216,13 @@ def stack_sac(sac_trace_lst, amp_norm=False):
         tmp_npts = tmp_sac['npts']
         if npts != tmp_npts:
             sz = min(tmp_npts, npts)
-            st['dat'][:sz] += tmp_sac[:sz]
+            st['dat'][:sz] += tmp_sac['dat'][:sz]
         else:
             st['dat'] += tmp_sac['dat']
+    return st
+def time_shift_all_sac(sac_trace, t_shift_sec):
+    st = copy.deepcopy(sac_trace)
+    st.shift_time_all(t_shift_sec)
     return st
 ###
 #  classes
