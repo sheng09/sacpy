@@ -200,7 +200,7 @@ def stack_sac(sac_trace_lst, amp_norm=False):
     e = np.min([it['e'] for it in sac_trace_lst] )
     if b >= e:
         print('Err in `stack_sac(...)`. The maximal `b` is larger than the minimal `e`.' )
-        sys.exit(-1)
+        raise Exception
     ### the basic sac trace
     st = truncate_sac(sac_trace_lst[0], '0', b, e, clean_sachdr=True)
     if amp_norm:
@@ -224,6 +224,18 @@ def time_shift_all_sac(sac_trace, t_shift_sec):
     st = copy.deepcopy(sac_trace)
     st.shift_time_all(t_shift_sec)
     return st
+def optimal_timeshift_cc_sac(st1, st2, min_timeshift=-1.e12, max_timeshift=1.e12, cc_amp= 'pos'):
+    """
+    Use cross-correlation method to search the optimal 
+    time shift between sac traces. 
+    Return (t, coef, cc) where `t` is the optimal time 
+    shift, `coef` the correlation coefficient, and `cc`
+    the cross-correlation traces in SACTRACE.
+    """
+    cc = correlation_sac(st1, st2)
+    cc.truncate('0', min_timeshift, max_timeshift)
+    t, coef = cc.max_amplitude_time(cc_amp )
+    return t, coef, cc
 ###
 #  classes
 ###
@@ -622,6 +634,24 @@ class sactrace:
         """
         self['b'] = self['b'] + tshift_sec
         self['e'] = self['e'] + tshift_sec
+    def max_amplitude_time(self, amp= 'abs'):
+        """
+        Obtain the (time, amplitude) for the max amplitude point. 
+        amp:'abs' to search for the max absolute amplitude point.
+            'pos' to search for the max positive amplitude point.
+            'neg' to search for the max negative amplitude point.
+            'neg' cannot problematic if the whole time series is positive.
+        Return: (time, amplitude)
+        """
+        imax = np.argmax(self['dat'])
+        imin = np.argmin(self['dat'])
+        if amp == 'pos':
+            return imax*self['delta']+self['b'], self['dat'][imax]
+        elif amp == 'neg':
+            return imin*self['delta']+self['b'], self['dat'][imin]
+        else:
+            iabs = imax if self['dat'][imax] > -self['dat'][imin] else imin
+            return iabs*self['delta']+self['b'], self['dat'][iabs]
     ### plotf
     def plot_ax(self, ax, **kwargs):
         """

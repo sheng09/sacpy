@@ -133,7 +133,7 @@ class cc_stcc:
         mpi_print_log('inter-rcv-dist(%f, %f)'% (self.global_inter_rcv_distance_range_deg[0], self.global_inter_rcv_distance_range_deg[1]), 1, self.local_log_fid, False)
         mpi_print_log('daz(%f, %f)'% (self.global_az_diff_range_deg[0], self.global_az_diff_range_deg[1]), 1, self.local_log_fid, False)
         mpi_print_log('time-window (%f, %f)' % (self.global_seismic_phase_time_window_sec[0], self.global_seismic_phase_time_window_sec[1]) , 1, self.local_log_fid, False)
-        mpi_print_log('cross-terms: %s' % (',  '.join(['-'.join(it[:2]) for it in self.global_lst_cross_term]) ), 1, self.local_log_fid, True )
+        mpi_print_log('cross-terms: %s' % (', '.join(['-'.join(it[:2]) for it in self.global_lst_cross_term]) ), 1, self.local_log_fid, True )
     def run(self):
         mpi_print_log('>>> Running... [%d] ' % (len(self.local_fnm_lst_alignedSac2Hdf5) ) , 0, self.local_log_fid, True)
         for idx, fnm in enumerate(self.local_fnm_lst_alignedSac2Hdf5):
