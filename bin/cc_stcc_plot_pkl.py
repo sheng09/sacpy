@@ -63,7 +63,8 @@ class cc_stcc_pkl2sac:
         del self.comm
     def init(self,  cc_time_range = [2300, 2600], cc_reference_time_for_shift_sec = 2425,
                 exclude_rcv_lst=None, include_rcv_lst=None, 
-                exclude_cross_term_lst=None, include_cross_term_lst=None
+                exclude_cross_term_lst=None, include_cross_term_lst=None,
+                optimal_time_shift_correlation_time_range = [2375, 2475]
             ):
         """
         ##################  
@@ -94,6 +95,7 @@ class cc_stcc_pkl2sac:
         self.global_include_rcv_lst             = sorted( include_rcv_lst        ) if include_rcv_lst         != None else None
         self.global_exclude_cross_term_lst      = sorted( exclude_cross_term_lst ) if exclude_cross_term_lst  != None else None
         self.global_include_cross_term_lst      = sorted( include_cross_term_lst ) if include_cross_term_lst  != None else None
+        self.global_optimal_time_shift_correlation_time_range = optimal_time_shift_correlation_time_range
         ####
         mpi_print_log('>>> Initialized', 0, self.local_log_fid, False)
         ###
@@ -118,7 +120,7 @@ class cc_stcc_pkl2sac:
         """
         """
         ###
-        dir_nm = self.global_output_prenm + '/' + pkl_fnm.split('/')[-1].replace('.pkl', '_imgs/')
+        dir_nm = self.global_output_prenm + '_' + pkl_fnm.split('/')[-1].replace('.pkl', '_imgs/')
         if not os.path.exists(dir_nm):
             os.mkdir(dir_nm)
         ###
@@ -156,11 +158,23 @@ class cc_stcc_pkl2sac:
         stcc_lst = [stcc_dict[cross_term] for cross_term in cross_term_lst]
         ### stack
         stack_p, stack_n, stack_sp, stack_sn, (shifted_stcc1_lst, shifted_stcc2_lst) = self.__run_stack(stcc_dict, cross_term_lst) # plain, norm, shift-plain, shift-norm
+        ### search for the optimal time shift and stack
+        optimal_dt, optimal_shifted_stcc_lst, optimal_stcc_stack = self.__search_for_time_shift(
+                        stcc_dict, cross_term_lst, 
+                        self.global_optimal_time_shift_correlation_time_range,
+                        search_range_ratio=0.4, 
+                        n_iter = 1
+        )
+        optimal_time_shift_dict = { 'dt': optimal_dt, 'st': optimal_shifted_stcc_lst, 'stack': optimal_stcc_stack }
         ### plot
         figname = '%s/%sx%s.png' % (dir_nm, stnm1, stnm2 )
         mpi_print_log('[%d/%d] %s' % (idx+1, n_total, figname), 2, self.local_log_fid, True )
         ###
-        self.__atom_plot(figname, stcc_lst, shifted_stcc1_lst, shifted_stcc2_lst, ftcc, stack_p, stack_n, stack_sp, stack_sn, cross_term_lst)
+        self.__atom_plot(figname,   stcc_lst, shifted_stcc1_lst, shifted_stcc2_lst, 
+                                    ftcc, stack_p, stack_n, 
+                                    stack_sp, stack_sn, 
+                                    cross_term_lst, 
+                                    optimal_time_shift_dict)
     def __run_stack(self, stcc_dict, cross_term_lst):
         cc_t1, cc_t2 = self.global_cc_time_range
         return_values = {   'noshift-plain': [None, None],
@@ -186,11 +200,12 @@ class cc_stcc_pkl2sac:
     def __atom_plot(self, figname, stcc_lst, shifted_stcc1_lst, shifted_stcc2_lst, 
                 ftcc, stack_p, stack_n, 
                 stack_sp, stack_sn,
-                cross_term_lst):
+                cross_term_lst,
+                optimal_time_shift_dict):
         ####
         cc_t1, cc_t2 = self.global_cc_time_range
         ####
-        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(10, 12) )
+        fig, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(15, 12) )
         scale = 0.4
         #################################################################################################
         # ax1 is for not shifted 
@@ -241,14 +256,39 @@ class cc_stcc_pkl2sac:
         ts, ys = st_tmp.get_time_axis(), st_tmp['dat']*scale-3
         ax2.plot(ts, ys, color='b', linewidth= 0.9 )
         #################################################################################################
+        #  ax3 is for optimal time shift
+        #################################################################################################
+        for isac, v in enumerate(zip(optimal_time_shift_dict['st'][0], optimal_time_shift_dict['st'][1]) ): 
+            for stcc, color, alpha, linestyle in zip(v, ['k', 'gray'], [0.9, 0.8], ['-', '--'] ):
+                st_tmp = sac.truncate_sac(stcc, '0', cc_t1, cc_t2)
+                st_tmp.norm()
+                ts, ys = st_tmp.get_time_axis(), st_tmp['dat']*scale + isac
+                ax3.plot(ts, ys, color=color, alpha=alpha, linestyle=linestyle, linewidth= 0.8 )
+            reference_t_cross_term = v[0]['t9']
+            ax3.plot([reference_t_cross_term, reference_t_cross_term], [isac-0.4, isac+0.4], 'C3', linewidth= 2, alpha= 0.6)
+            reference_t_cross_term = v[1]['t9']
+            ax3.plot([reference_t_cross_term, reference_t_cross_term], [isac-0.4, isac+0.4], 'C3', linewidth= 2, alpha= 0.6, linestyle='--')
+        # norm stack
+        for st, color, alpha, linestyle in zip(optimal_time_shift_dict['stack'], ['r', 'r'], [0.9, 0.8], ['-', '--'] ):
+            st_tmp = sac.truncate_sac(st, '0', cc_t1, cc_t2)
+            st_tmp.norm()
+            ts, ys = st_tmp.get_time_axis(), st_tmp['dat']*scale + zshift
+            ax3.plot(ts, ys, color=color, alpha=alpha, linestyle=linestyle, linewidth= 0.9 )
+            ax2.plot(ts, ys, color=color, alpha=alpha, linestyle=linestyle, linewidth= 0.9 )
+        # ftcc
+        st_tmp = sac.truncate_sac(ftcc, '0', cc_t1, cc_t2)
+        st_tmp.norm()
+        ts, ys = st_tmp.get_time_axis(), st_tmp['dat']*scale-3
+        ax3.plot(ts, ys, color='b', linewidth= 0.9 )
+        #################################################################################################
         #  adjust basemap for ax1 and ax2
         #################################################################################################
         ticklabels = ['ftcc', 'norm-stack', 'plain-stack']
         ticklabels.extend(cross_term_lst)
         stnm1, stnm2 = ftcc['stnm1'], ftcc['stnm2']
         gcarc1, gcarc2 = ftcc['gcarc1'], ftcc['gcarc2']
-        for ax in [ax1, ax2]:
-            ax.plot([self.global_cc_reference_time_for_shift_sec, self.global_cc_reference_time_for_shift_sec], [-3.5, len(cross_term_lst)-0.5], 'r--', alpha= 0.5, linewidth= 2)
+        for ax in [ax1, ax2, ax3]:
+            ax.plot([self.global_cc_reference_time_for_shift_sec, self.global_cc_reference_time_for_shift_sec], [-3.5, len(cross_term_lst)-0.5], 'k', alpha= 0.3, linewidth= 2)
             ax.set_xlim([cc_t1, cc_t2])
             ax.set_xlabel('Time (s)')
             ax.set_yticks(np.arange(-3, len(cross_term_lst) ) )
@@ -261,7 +301,51 @@ class cc_stcc_pkl2sac:
         plt.tight_layout()
         plt.savefig(figname, bbox_inches = 'tight', pad_inches = 0.5)
         plt.close()
-    
+    def __search_for_time_shift(self, stcc_dict, cross_term_lst, correlation_time_range=[2375, 2475], search_range_ratio=0.4, n_iter= 15, norm=True):
+        """
+        """
+        cc_feature_t_ref = self.global_cc_reference_time_for_shift_sec
+        dt = [None, None]
+        shifted_stcc_lst = [None, None]
+        stack = [None, None]
+        for idx in [0, 1]:
+            stcc_lst = [stcc_dict[cross_term][idx] for cross_term in cross_term_lst]
+            t_shift_ak135 =[ cc_feature_t_ref - tr['reference-time'] for tr in stcc_lst]
+            #t_shift_range = [(it-search_range_ratio*abs(it), it+search_range_ratio*abs(it)   )   for it in t_shift_ak135 ]
+            t_shift_range = [(it-15, it+15   )   for it in t_shift_ak135 ]
+            #print( t_shift_ak135 )
+            #print( t_shift_range )
+            #print()
+            dt[idx], shifted_stcc_lst[idx], stack[idx] = self.search_for_time_shift_from_saclst(stcc_lst, t_shift_range, correlation_time_range, n_iter=n_iter, norm=norm )
+        return dt, shifted_stcc_lst, stack
+    @staticmethod
+    def search_for_time_shift_from_saclst(sactrace_lst, timeshift_range_lst, correlation_time_range, n_iter= 15, norm=True):
+        """
+        """
+        st_lst = deepcopy(sactrace_lst )
+        if norm:
+            for it in st_lst:
+                it.norm()
+        cc_t1, cc_t2 = correlation_time_range
+        dt = np.zeros(len(st_lst), dtype=np.float32 )
+        ### stack
+        stack = sac.stack_sac(st_lst, amp_norm=False ) # amplitude normalization is not conducted in this function
+        stack.truncate('0', cc_t1, cc_t2)
+        for istep in range(n_iter):
+            ### unshift
+            for isac, tr in enumerate(st_lst):
+                tr.shift_time_all( -dt[isac] )
+            ### search 
+            for isac, (tr, (wmin, wmax)) in enumerate(zip(st_lst, timeshift_range_lst) ):
+                dt[isac], coef, junk_cc = sac.optimal_timeshift_cc_sac(stack, tr, min_timeshift=wmin, max_timeshift=wmax )
+            ### shift
+            for isac, tr in enumerate(st_lst):
+                tr.shift_time_all( dt[isac] )
+            print(dt)
+            ### stack
+            stack = sac.stack_sac(st_lst, amp_norm=False ) # amplitude normalization is not conducted in this function
+            stack.truncate('0', cc_t1, cc_t2)
+        return dt, st_lst, stack
 if __name__ == "__main__":
     ###
     pkl_fnmlst = []
@@ -273,10 +357,12 @@ if __name__ == "__main__":
     include_rcv_lst         = None
     exclude_cross_term_lst  = None
     include_cross_term_lst  = None
+    optimal_time_shift_correlation_time_range = [2375, 2475]
     ###
-    HMSG = '%s -I pklfnm_lst.txt  -O output_prenm -L log_prenm -W t1/t2 -T cc_feature_t [--exc_rcv  exc.txt] [--inc_rcv  inc.txt] [--exc_stcc exc.txt] [--inc_stcc inc.txt]' % (sys.argv[0] )
+    HMSG = '%s -I pklfnm_lst.txt  -O output_prenm -L log_prenm -W t1/t2 -T cc_feature_t --search_win t1/t2 [--exc_rcv  exc.txt] [--inc_rcv  inc.txt] [--exc_stcc exc.txt] [--inc_stcc inc.txt]' % (sys.argv[0] )
     HMSG2 = """
     
+
     This program is for plotting stcc given `.pkl` files generated by `cc_stcc.py`.
 
     
@@ -285,7 +371,7 @@ if __name__ == "__main__":
     -L log_prenm : pre-name for log files in mpi-parallel mode, or the log filename in serial mode.
     -W t1/t2 : correlation time window to focus on.
     -T cc_feature_t: the reference time for the correlation feature.
-    
+    --search_win t1/t2 : correlation time window that is used to search for the optimal time shift for each cross-term.
     [--exc_rcv  exc.txt] [--inc_rcv  inc.txt]  : a file of which contain the included or excluded receivers. 
                                                 (default is to output all receivers.)
     [--exc_stcc exc.txt] [--inc_stcc inc.txt] : a file of which contain the included or excluded cross-terms.
@@ -297,7 +383,7 @@ if __name__ == "__main__":
         print(HMSG)
         sys.exit(0)
     ###
-    options, remainder = getopt.getopt(sys.argv[1:], 'I:O:L:W:T:H', ['exc_rcv=', 'inc_rcv=', 'exc_stcc=', 'inc_stcc=' ] )
+    options, remainder = getopt.getopt(sys.argv[1:], 'I:O:L:W:T:H', ['exc_rcv=', 'inc_rcv=', 'exc_stcc=', 'inc_stcc=', 'search_win=' ] )
     for opt, arg in options:
         if opt in ('-I'):
             pkl_fnmlst = [line.strip() for line in open(arg, 'r')]
@@ -315,23 +401,25 @@ if __name__ == "__main__":
         elif opt in ('--exc_rcv' ):
             with open(arg,'r') as fid:
                 tmp = fid.readlines()
-                vol = [it for it in line.strip().split() for line in tmp]
+                vol = [it for line in tmp for it in line.split() ]
                 exclude_rcv_lst         = vol
         elif opt in ('--inc_rcv' ):
             with open(arg,'r') as fid:
                 tmp = fid.readlines()
-                vol = [it for it in line.strip().split() for line in tmp]
+                vol = [it for line in tmp for it in line.split() ]
                 include_rcv_lst         = vol
         elif opt in ('--exc_stcc'):
             with open(arg,'r') as fid:
                 tmp = fid.readlines()
-                vol = [it for it in line.strip().split() for line in tmp]
+                vol = [it for line in tmp for it in line.split() ]
                 exclude_cross_term_lst  = vol
         elif opt in ('--inc_stcc'):
             with open(arg,'r') as fid:
                 tmp = fid.readlines()
-                vol = [it for it in line.strip().split() for line in tmp]
+                vol = [it for line in tmp for it in line.split() ]
                 include_cross_term_lst  = vol
+        elif opt in ('--search_win'):
+            optimal_time_shift_correlation_time_range = [float(it) for it in arg.split('/') ]
         else:
             print('invalid options: %s' % (opt) )
             print(HMSG)
@@ -342,5 +430,6 @@ if __name__ == "__main__":
     app = cc_stcc_pkl2sac(pkl_fnmlst, output_prenm, log_prefnm)
     app.init(   cc_time_range = cc_time_range, cc_reference_time_for_shift_sec= cc_reference_time_for_shift_sec, 
                 exclude_rcv_lst         =exclude_rcv_lst,           include_rcv_lst         =include_rcv_lst, 
-                exclude_cross_term_lst  =exclude_cross_term_lst,    include_cross_term_lst  =include_cross_term_lst )
+                exclude_cross_term_lst  =exclude_cross_term_lst,    include_cross_term_lst  =include_cross_term_lst,
+                optimal_time_shift_correlation_time_range = optimal_time_shift_correlation_time_range  )
     app.run()
