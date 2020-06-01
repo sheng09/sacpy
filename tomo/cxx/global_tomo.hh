@@ -266,10 +266,10 @@ typedef struct s_pt3d
 class earthmod3d {
 public:
     earthmod3d() {};
-    earthmod3d(earthmod1d * mod1d, const double lons[], const int nlon,  const double lats[], const int nlat, const double depth[], const int ndep)  {
+    earthmod3d(earthmod1d * mod1d, const double lons[], int nlon,  const double lats[], int nlat, const double depth[], int ndep)  {
         init(mod1d, lons, nlon, lats, nlat, depth, ndep);
     }
-    earthmod3d(earthmod1d * mod1d, const double dlon, const double dlat, const double depth[], const int ndep)  {
+    earthmod3d(earthmod1d * mod1d, double dlon, double dlat, const double depth[], int ndep)  {
         init(mod1d, dlon, dlat, depth, ndep);
     }
     ~earthmod3d() {
@@ -289,8 +289,8 @@ public:
         d_mod1d = NULL;
     }
     // init 3-D grid and coordinates transformation
-    int init(earthmod1d * mod1d, const double dlon, const double dlat, const double depth[], const int ndep) ;
-    int init(earthmod1d * mod1d, const double lons[], const int nlon,  const double lats[], const int nlat, const double depth[], const int ndep );
+    int init(earthmod1d * mod1d, double dlon, double dlat, const double depth[], int ndep) ;
+    int init(earthmod1d * mod1d, const double lons[], int nlon,  const double lats[], int nlat, const double depth[], int ndep );
     int geo2sph(double lon, double lat, double depth, double *theta, double *phi, double *r)  { 
         *r =  d_mod1d->radius() - depth;
         *theta = lon;
@@ -330,7 +330,7 @@ public:
         return 0;
     }
     // accessing 3-D grid 
-    int output_grd_pts(const char * filename) ;
+    int output_grd_pts(const char * filename, char type) ; 
     double vp(int pt_idx) { return d_vp[pt_idx]; }
     double vs(int pt_idx) { return d_vs[pt_idx]; }
     double slowness_p(int pt_idx) { return d_slowness_p[pt_idx]; }
@@ -343,11 +343,11 @@ public:
     double radius() { return d_mod1d->radius(); }
     earthmod1d * mod1d() { return d_mod1d; }
     // search for the location given a 3-D point
-    inline int round_lon_index(const int ilon) {
+    inline int round_lon_index(int ilon) {
         return ilon % d_lon.size();
         //return (ilon >= d_lon.size() ) ? (ilon-d_lon.size() ) : ilon;
     }
-    inline int round_lat_index(const int ilat) {
+    inline int round_lat_index(int ilat) {
         if (ilat<0) 
         {
             return 0;
@@ -362,7 +362,7 @@ public:
         }
         //return (ilat >= d_lat.size() ) ? (d_lat.size()-1) : ilat;
     }
-    inline int round_depth_index(const int idep) {
+    inline int round_depth_index(int idep) {
         if (idep <0) 
         {
             return 0;
@@ -377,24 +377,25 @@ public:
         }
         //return (idep >= d_depth.size() ) ? (d_depth.size()-1) : idep;
     }
-    inline int point_index(const int ilon, const int ilat, const int idep) {
+    inline int point_index(int ilon, int ilat, int idep) {
         return round_depth_index(idep) * d_nlonlat + round_lat_index(ilat)*d_nlon + round_lon_index(ilon);
-    }inline int search_grd_lon(const double lon) {
+    }
+    inline int search_grd_lon(double lon) {
         std::vector<double>::iterator ptr = std::upper_bound(d_lon.begin(), d_lon.end(), lon );
         int ilon = ptr-d_lon.begin()-1; // d_lon[ilon] <= lon < d_lon[ilon+1]
         return round_lon_index(ilon);
     }
-    inline int search_grd_lat(const double lat) {
+    inline int search_grd_lat(double lat) {
         std::vector<double>::iterator ptr = std::upper_bound(d_lat.begin(), d_lat.end(), lat );
         int ilat = ptr-d_lat.begin()-1; // d_lat[ilat] <= lat < d_lat[ilat+1]
         return round_lat_index(ilat);
     }
-    inline int search_grd_dep(const double dep) {
+    inline int search_grd_dep(double dep) {
         std::vector<double>::iterator ptr = std::upper_bound(d_depth.begin(), d_depth.end(), dep );
         int idep = ptr-d_depth.begin()-1; // d_dep[idep] <= dep < d_dep[idep+1]
         return round_depth_index(idep);
     }
-    inline int search_grd(const double lon, const double lat, const double dep, int *ptr_ilon, int *ptr_ilat, int *ptr_idep) {
+    inline int search_grd(double lon, double lat, double dep, int *ptr_ilon, int *ptr_ilat, int *ptr_idep) {
         // search for the point index in the lon-lat-depth grid given a point.
         int ilon, ilat, idep;
         *ptr_ilon = search_grd_lon(lon);
@@ -403,36 +404,74 @@ public:
         return 0;
     }
 public:
-    /*
-        To set 3D velocity anomaly
-    */
-    int set_mod3d_cube(const double d0, const double d1, 
-                        const double lon0, const double lon1, 
-                        const double lat0, const double lat1,
-                        const double dvp,  const double dvs ) 
+    // To set 3D velocity anomaly
+    // the input lon0, lon1 can be ouside of [0, 360) for blocks across the meridian at 0/360 longitude degree.
+    int set_mod3d_cube(double d0,   double d1, double lon0, double lon1, double lat0, double lat1, double dvp,  double dvs ) 
     {
         double v0 = 1.0+dvp;
         double v1 = 1.0+dvs;
         double s0 = (1.0/v0);
         double s1 = (1.0/v1);
-        for(int idx=0; idx<npts(); ++idx) {
-            pt3d & pt = d_pts[idx];
-            if (pt.d_depth >= d0 && pt.d_depth <= d1 &&
-                pt.d_lon >= lon0 && pt.d_lon <= lon1 &&
-                pt.d_lat >= lat0 && pt.d_lat <= lat1 )
+        //
+        lon0 = ROUND_DEG360(lon0);
+        lon1 = ROUND_DEG360(lon1);
+        int ilon0 = round_lon_index( search_grd_lon(lon0)+1 ); 
+        int ilon1 = search_grd_lon(lon1); // 
+        int ilat0 = round_lat_index( search_grd_lat(lat0)+1 );
+        int ilat1 = search_grd_lat(lat1); // ilat0 <= it <= ilat
+        int idep0 = round_depth_index( search_grd_dep(d0)+1 );
+        int idep1 = search_grd_dep(d1);   // idep0 <= it <= idep1
+        // 
+        if ( (ilat1 < ilat0) || (idep1 < idep0) ) 
+        {
+            return 0;
+        }
+        if (ilon1 >= ilon0)
+        {
+            for (int idep=idep0; idep<=idep1; ++idep)
             {
-                d_dvp[idx] = v0;
-                d_dvs[idx] = v1;
-                d_dslowness_p[idx] = s0;
-                d_dslowness_s[idx] = s1; 
+                for (int ilat=ilat0; ilat<=ilat1; ++ilat)
+                {
+                    for (int ilon=ilon0; ilon<=ilon1; ++ilon)
+                    {
+                        int idx = point_index(ilon, ilat, idep);
+                        d_dvp[idx] = v0;
+                        d_dvs[idx] = v1;
+                        d_dslowness_p[idx] = s0;
+                        d_dslowness_s[idx] = s1;
+                    }
+                }
             }
         }
+        else 
+        {
+            for (int idep=idep0; idep<=idep1; ++idep)
+            {
+                for (int ilat=ilat0; ilat<=ilat1; ++ilat)
+                {
+                    for (int ilon=0; ilon<=ilon1; ++ilon)
+                    {
+                        int idx = point_index(ilon, ilat, idep);
+                        d_dvp[idx] = v0;
+                        d_dvs[idx] = v1;
+                        d_dslowness_p[idx] = s0;
+                        d_dslowness_s[idx] = s1;
+                    }
+                    for (int ilon=ilon0; ilon<d_lon.size(); ++ilon) 
+                    {
+                        int idx = point_index(ilon, ilat, idep);
+                        d_dvp[idx] = v0;
+                        d_dvs[idx] = v1;
+                        d_dslowness_p[idx] = s0;
+                        d_dslowness_s[idx] = s1;
+                    }
+                }
+            }
+        }
+        //
         return 0;
     }
-    int set_mod3d_cylinder(const double d0, const double d1, 
-                           const double lon, const double lat,
-                           const double radius,
-                           const double dvp,  const double dvs ) 
+    int set_mod3d_cylinder(double d0, double d1, double lon, double lat, double radius, double dvp,   double dvs ) 
     {
         double v0 = 1.0+dvp;
         double v1 = 1.0+dvs;
@@ -453,41 +492,41 @@ public:
         }
         return 0;
     }
-    int set_mod3d_smooth_sphere(double d_lonlat ) {
-        std::vector<double> new_dvp(d_npts);
-        std::vector<double> new_dvs(d_npts);
+    int set_mod3d(double * dvp, double *dvs) {
+        d_dvp.assign(dvp, dvp+d_dvp.size() );
+        d_dvs.assign(dvs, dvs+d_dvs.size() );
+        return 0;
+    }
+    int set_mod3d_smooth_lonlat(double d_lonlat ) {
         int step = (int)( round(d_lonlat*0.5/(d_lon[1]-d_lon[0]) ) );
         if (step <= 0) {
             return 0;
         }
         /////////////////////////////////////////////////////////////////////
-        double alpha = 1.0/(2*step+1)/(2*step+1);
-        printf("%d %f\n", step, alpha);
-        for (int idep=0; idep<d_depth.size(); ++idep) {
-            for (int ilat=0; ilat<d_lat.size(); ++ilat) {
-                for (int ilon=0; ilon<d_lon.size(); ++ilon) {
-                    int idx_pt = point_index(ilon, ilat, idep);
-                    new_dvp[idx_pt] = 0.0;
-                    new_dvs[idx_pt] = 0.0;
-                    // err here
-                    int ja0 = round_lat_index(ilat-step), ja1 = round_lat_index(ilat+step);
-                    int jo0 = round_lon_index(ilon-step), jo1 = round_lon_index(ilon+step);
-                    int v = 0;
-                    for(int ja=ja0; ja<=ja1; ++ja) {
-                        for(int jo=jo0; jo<=jo1; ++jo) {
-                            int jpt = point_index(jo, ja, idep);
-                            new_dvp[idx_pt] += d_dvp[jpt];
-                            new_dvs[idx_pt] += d_dvp[jpt];
-                            ++v;
+        std::vector<double> new_dvp(d_npts, 0.0);
+        std::vector<double> new_dvs(d_npts, 0.0);
+        double alpha = 1.0/(2.0*step+1.0)/(2.0*step+1.0);
+        for (int idep=0; idep<d_depth.size(); ++idep) 
+        {
+            for (int ilat=0; ilat<d_lat.size(); ++ilat) 
+            {
+                for (int ilon=0; ilon<d_lon.size(); ++ilon)
+                {
+                    int ipt = point_index(ilon, ilat, idep);
+                    // internal summing
+                    for (int loop_lat=-step; loop_lat<=step; ++loop_lat) 
+                    {
+                        for (int loop_lon=-step; loop_lon<=step; ++loop_lon)
+                        {
+                            int it_lon = round_lon_index(ilon+loop_lon);
+                            int it_lat = round_lat_index(ilat+loop_lat);
+                            int it_ipt = point_index(it_lon, it_lat, idep);
+                            new_dvp[ipt] += d_dvp[it_ipt];
+                            new_dvs[ipt] += d_dvs[it_ipt];
                         }
                     }
-                    if (v>0) {
-                        new_dvp[idx_pt] /= v;
-                        new_dvs[idx_pt] /= v;
-                    } else {
-                        new_dvp[idx_pt] = d_dvp[idx_pt];
-                        new_dvs[idx_pt] = d_dvp[idx_pt];
-                    }
+                    new_dvp[ipt] *= alpha;
+                    new_dvs[ipt] *= alpha;
                 }
             }
         }
@@ -500,8 +539,8 @@ public:
         return 0;
     }
 public:
-    int __interpolate_lonlat(const int i0, const int i1, const int i2, const int i3, 
-                    const double lon, const double lat, 
+    // 3-D interpolation
+    int __interpolate_lonlat(int i0, int i1, int i2, int i3, double lon, double lat, 
                     double *coef0, double *coef1, double *coef2, double *coef3) {
         double x0=d_pts[i0].d_lat, x1=d_pts[i1].d_lat, x2=d_pts[i2].d_lat, x3=d_pts[i3].d_lat;
         double y0=d_pts[i0].d_lon, y1=d_pts[i1].d_lon, y2=d_pts[i2].d_lon, y3=d_pts[i3].d_lon;
@@ -517,16 +556,15 @@ public:
         *coef3 = d*f;
         return 0;
     }
-    int __interpolate_dep(const int i0, const int i4, const double depth, double *g, double *h) {
+    int __interpolate_dep(int i0, int i4, double depth, double *g, double *h) {
         double z0=d_pts[i0].d_depth, z4=d_pts[i4].d_depth;
         double zp=depth;
         *g = (z4-zp)/(z4-z0);
         *h = (zp-z0)/(z4-z0);
         return 0;
     }
-    int interpolate3d(const int i0, const int i1, const int i2, const int i3,
-                        const int i4, const int i5, const int i6, const int i7,
-                        const double lon, const double lat, const double depth,
+    int interpolate3d(int i0, int i1, int i2, int i3, int i4, int i5, int i6, int i7,
+                        double lon, double lat, double depth,
                         double *c0, double *c1, double *c2, double *c3,
                         double *c4, double *c5, double *c6, double *c7    )
     {
@@ -550,9 +588,25 @@ public:
         //
         return 0;
     }
-    int __interpolate_lonlat_grd3d( const int ilon, const int ilat, const double lon, const double lat, 
+    int __interpolate_lonlat_grd3d(int ilon, int ilat, double lon, double lat, 
                                     double *coef0, double *coef1, double *coef2, double *coef3) {
         //
+        /*
+            ^ lat (x)
+            |
+            | p2     p3
+            +-------+
+            |       |
+            |   *   |
+            |       |
+            o-------+---->  lon (y)
+             p0      p1  
+            
+            p0: (ilon,  ilat)  or (lon,  lat)
+            p1: (ilon2, ilat)  or (lon2, lat)
+            p2: (ilon,  ilat2) or (lon,  lat2)
+            p3: (ilon2, ilat2) or (lon2, lat2)
+        */
         double a, b, c, d, e, f;
         int ilon2 = round_lon_index(ilon+1);
         int ilat2 = round_lat_index(ilat+1);
@@ -562,12 +616,12 @@ public:
             e = 1.0;
             f = 0.0;
         } 
-        else if(ilon2 == 0) { // 
-            double y0=d_lon[ilon], y1=d_lon[ilon2]+360.0, y2=d_lon[ilon],  y3=d_lon[ilon2]+360.0;
+        else if(ilon2 == 0) { // the point exceed the biggest longitude point
+            double y0=d_lon[ilon], y1=d_lon[ilon2]+360.0; // y2=d_lon[ilon],  y3=d_lon[ilon2]+360.0;
             e = (y1-yp)/(y1-y0); f = (yp-y0)/(y1-y0);
         }
         else {
-            double y0=d_lon[ilon], y1=d_lon[ilon2], y2=d_lon[ilon],  y3=d_lon[ilon2];
+            double y0=d_lon[ilon], y1=d_lon[ilon2]; // y2=d_lon[ilon],  y3=d_lon[ilon2];
             e = (y1-yp)/(y1-y0); f = (yp-y0)/(y1-y0);
         }
         ///
@@ -587,7 +641,7 @@ public:
         *coef3 = d*f;
         return 0;
     }
-    int __interpolate_dep_grd_3d(const int idep, const double depth, double *g, double *h) {
+    int __interpolate_dep_grd_3d(int idep, double depth, double *g, double *h) {
         int idep2 = round_depth_index(idep+1);
         if (idep == idep2) {
             *g = 1.0;
@@ -602,8 +656,7 @@ public:
         *h = (zp-z0)/(z4-z0);
         return 0;
     }
-    int interpolate_grd3d(  const int ilon, const int ilat, const int idep, 
-                            const double lon, const double lat, const double depth,
+    int interpolate_grd3d(int ilon, int ilat, int idep, double lon, double lat, double depth,
                             double *c0, double *c1, double *c2, double *c3,
                             double *c4, double *c5, double *c6, double *c7    ) {
         //
@@ -637,13 +690,13 @@ private:
     // grd points
     long d_npts;
     //
-    std::vector<double> d_vp; // 3D vp = d_vp * d_dvp
+    std::vector<double> d_vp; // actual 3D vp = d_vp * d_dvp
     std::vector<double> d_vs;
     std::vector<double> d_rho;
     std::vector<double> d_dvp;
     std::vector<double> d_dvs;
     //
-    std::vector<double> d_slowness_p; // 3D d_slowness_p = d_slowness_p * d_dslowness_p
+    std::vector<double> d_slowness_p; // actual 3D d_slowness_p = d_slowness_p * d_dslowness_p
     std::vector<double> d_slowness_s;
     std::vector<double> d_dslowness_p;
     std::vector<double> d_dslowness_s;

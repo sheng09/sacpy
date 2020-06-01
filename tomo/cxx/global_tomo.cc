@@ -454,17 +454,70 @@ int earthmod3d::init(earthmod1d * mod1d, const double lons[], const int nlon,  c
         }
     }
 }
-int earthmod3d::output_grd_pts(const char * filename) {
+// type : 'a' to output all points
+//        'p' to output points with Vp perturbation != 0.0
+//        's' to output points ...  Vs ..           != 0.0
+//        'd' to output points with Vp and Vs ...   != 0.0
+int earthmod3d::output_grd_pts(const char * filename, char type ) {
     FILE *fp = fopen(filename, "w");
     fprintf(fp, "#lon lat depth  theta phi r  x y z vp vs rho  dvp(1+e) dvs(1+e)\n" );
-    for(int idx = 0; idx<d_npts; ++idx) {
-        fprintf(fp, "%d %.4f %.4f %.4f %.4f %.4f %.4f %.4f %.4f %.4f %f %f %f %f %f\n", 
-                idx,
-                d_pts[idx].d_lon, d_pts[idx].d_lat, d_pts[idx].d_depth,
-                d_pts[idx].d_theta, d_pts[idx].d_phi, d_pts[idx].d_r,
-                d_pts[idx].d_x, d_pts[idx].d_y, d_pts[idx].d_z,
-                d_vp[idx], d_vs[idx], d_rho[idx],
-                d_dvp[idx], d_dvs[idx] );
+    if (type == 'a') 
+    {
+        for(int idx = 0; idx<d_npts; ++idx)
+        {
+            fprintf(fp, "%d %.4f %.4f %.4f %.4f %.4f %.4f %.4f %.4f %.4f %f %f %f %f %f\n", 
+                    idx,
+                    d_pts[idx].d_lon, d_pts[idx].d_lat, d_pts[idx].d_depth,
+                    d_pts[idx].d_theta, d_pts[idx].d_phi, d_pts[idx].d_r,
+                    d_pts[idx].d_x, d_pts[idx].d_y, d_pts[idx].d_z,
+                    d_vp[idx], d_vs[idx], d_rho[idx],
+                    d_dvp[idx], d_dvs[idx] );
+        }
+    }
+    else if (type == 'p' || type == 'P')
+    {
+        for(int idx = 0; idx<d_npts; ++idx)
+        {
+            if ( ISEQUAL(d_dvp[idx], 1.0) ) 
+                continue;
+            fprintf(fp, "%d %.4f %.4f %.4f %.4f %.4f %.4f %.4f %.4f %.4f %f %f %f %f %f\n", 
+                    idx,
+                    d_pts[idx].d_lon, d_pts[idx].d_lat, d_pts[idx].d_depth,
+                    d_pts[idx].d_theta, d_pts[idx].d_phi, d_pts[idx].d_r,
+                    d_pts[idx].d_x, d_pts[idx].d_y, d_pts[idx].d_z,
+                    d_vp[idx], d_vs[idx], d_rho[idx],
+                    d_dvp[idx], d_dvs[idx] );
+        }
+    }
+    else if (type == 's' || type == 'S')
+    {
+        for(int idx = 0; idx<d_npts; ++idx)
+        {
+            if ( ISEQUAL(d_dvs[idx], 1.0) ) 
+                continue;
+            fprintf(fp, "%d %.4f %.4f %.4f %.4f %.4f %.4f %.4f %.4f %.4f %f %f %f %f %f\n", 
+                    idx,
+                    d_pts[idx].d_lon, d_pts[idx].d_lat, d_pts[idx].d_depth,
+                    d_pts[idx].d_theta, d_pts[idx].d_phi, d_pts[idx].d_r,
+                    d_pts[idx].d_x, d_pts[idx].d_y, d_pts[idx].d_z,
+                    d_vp[idx], d_vs[idx], d_rho[idx],
+                    d_dvp[idx], d_dvs[idx] );
+        }
+    }
+    else if (type == 'd' || type == 'D')
+    {
+        for(int idx = 0; idx<d_npts; ++idx)
+        {
+            if ( ISEQUAL(d_dvp[idx], 1.0) &&  ISEQUAL(d_dvs[idx], 1.0) ) 
+                continue;
+            fprintf(fp, "%d %.4f %.4f %.4f %.4f %.4f %.4f %.4f %.4f %.4f %f %f %f %f %f\n", 
+                    idx,
+                    d_pts[idx].d_lon, d_pts[idx].d_lat, d_pts[idx].d_depth,
+                    d_pts[idx].d_theta, d_pts[idx].d_phi, d_pts[idx].d_r,
+                    d_pts[idx].d_x, d_pts[idx].d_y, d_pts[idx].d_z,
+                    d_vp[idx], d_vs[idx], d_rho[idx],
+                    d_dvp[idx], d_dvs[idx] );
+        }
     }
     fclose(fp);
     return 0;

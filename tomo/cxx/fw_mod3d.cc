@@ -11,9 +11,15 @@
 //    return 0;
 //}
 
-static char HMSG[] = "%s --dlon=2.5 --dlat=2.5 -O=outfnm.txt \
---plume=lon/lat/radius/d0/d1/dvp/dvs  [--plume=lon/lat/radius/d0/d1/dvp/dvs] \
---smooth=5.0\
+static char HMSG[] = "%s --dlon=2.5 --dlat=2.5 -O=outfnm.txt --output_mod=a \
+--plume=lon/lat/radius/d0/d1/dvp/dvs  [--plume=lon/lat/radius/d0/d1/dvp/dvs] \n\
+--cube=lon0/lon1/lat0/lat1/d0/d1/dvp/dvs [--cube=lon0/lon1/lat0/lat1/d0/d1/dvp/dvs]\n\
+--smooth=5.0\n\
+\n\
+    output_mod: 'a' to output all points.\n\
+                'p' to output points with P velocity perturbation being not zero.\n\
+                's' ...                   S ...\n\
+                'd' ...                   P and S ...\n\
 \n";
 
 
@@ -23,6 +29,20 @@ bool obtain_single_plume(char av[], double *lon, double *lat, double *radius, do
     {
         int n = sscanf(av+8, "%lf/%lf/%lf/%lf/%lf/%lf/%lf", lon, lat, radius, d0, d1, dvp, dvs);
         if (n != 7) 
+        {
+            fprintf(stderr, "Err: wrong plume settings (%s)\n", av );
+            exit(-1);
+        }
+        return true;
+    }
+    return false;
+}
+bool obtain_single_cube(char av[], double *lon0, double *lon1, double *lat0, double *lat1, double *d0, double *d1, double *dvp, double *dvs) 
+{
+    if (strncmp(av, "--cube=", 7 ) == 0 )
+    {
+        int n = sscanf(av+7, "%lf/%lf/%lf/%lf/%lf/%lf/%lf/%lf", lon0, lon1, lat0, lat1, d0, d1, dvp, dvs);
+        if (n != 8) 
         {
             fprintf(stderr, "Err: wrong plume settings (%s)\n", av );
             exit(-1);
@@ -41,6 +61,7 @@ int main(int argc, char *argv[])
     double dlon = getarg( 1.0, "--dlon");
     double dlat = getarg( 1.0, "--dlat");
     std::string outfnm = getarg("ak135mod.txt", "-O", "--output");
+    char output_mod = getarg('d', "--output_mod");
     fprintf(stderr, ">>> dlon: %lf, dlat: %lf\n", dlon, dlat);
     //
     double err = 1.0e-9; // 1.0e-9 is very good given double type
@@ -66,7 +87,7 @@ int main(int argc, char *argv[])
        5965.3 , 6016.01, 6066.72, 6117.44, 6168.15, 6218.86, 6269.57,
        6320.29, 6371 };
     earthmod3d mod3d(&ak135::model, dlon, dlat, deps, 135);
-    //
+    // add plume
     int nplume = 0;
     double lon, lat, radius, d0, d1, dvp, dvs;
     for(int iav=1; iav<argc; ++iav) 
@@ -77,11 +98,22 @@ int main(int argc, char *argv[])
             fprintf(stdout, ">>> Adding plume [%d]. %s\n", nplume, argv[iav] );
         }
     }
+    // add cube
+    double lon0, lon1, lat0, lat1;
+    int ncube = 0;
+    for(int iav=1; iav<argc; ++iav) 
+    {
+        if (obtain_single_cube(argv[iav], &lon0, &lon1, &lat0, &lat1, &d0, &d1, &dvp, &dvs) ) {
+            mod3d.set_mod3d_cube(d0, d1, lon0, lon1, lat0, lat1, dvp, dvs);
+            ++ncube;
+            fprintf(stdout, ">>> Adding cube [%d]. %s\n", ncube, argv[iav] );
+        }
+    }
     //
     double smooth_grid_deg = getarg( 0.0, "--smooth");
-    mod3d.set_mod3d_smooth_sphere(smooth_grid_deg);
+    mod3d.set_mod3d_smooth_lonlat(smooth_grid_deg);
     //
-    mod3d.output_grd_pts(outfnm.c_str() );
+    mod3d.output_grd_pts(outfnm.c_str(), output_mod);
     //
     return 0;
 }
