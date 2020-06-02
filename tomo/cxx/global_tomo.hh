@@ -32,18 +32,18 @@ bool ISEQUAL(T x, T y) {
 class layer {
 public:
     layer() {};
-    layer(  const double d0,   const double d1, 
-            const double p0,   const double p1, 
-            const double s0,   const double s1, 
-            const double rho0, const double rho1)
+    layer(double d0,   double d1, 
+          double p0,   double p1, 
+          double s0,   double s1, 
+          double rho0, double rho1)
     {
         init(d0, d1, p0, p1, s0, s1, rho0, rho1);
     }
     ~layer() {}
-    int init(   const double d0,   const double d1, 
-                const double p0,   const double p1, 
-                const double s0,   const double s1, 
-                const double rho0, const double rho1)
+    int init(double d0,   double d1, 
+             double p0,   double p1, 
+             double s0,   double s1, 
+             double rho0, double rho1)
     {
         d_top_depth = d0;
         d_bot_depth = d1;
@@ -72,7 +72,7 @@ public:
         Bs = (ISEQUAL(s0, 0.0)) ?  0.0: log(s0/s1) / log(r0/r1) ;
         As = (ISEQUAL(s0, 0.0)) ?  0.0: s0/pow(r0, Bs);
     }
-    char inside_layer(const double depth)
+    char inside_layer(double depth)
     {
         /* check if a depth is inside or outside the layer 
             return 'i' inside this layer
@@ -92,7 +92,7 @@ public:
            return 'i';
        }
     }
-    double interpolate_velocity(const double depth, const char type )
+    double interpolate_velocity(double depth, char type )
     {
         // return interpolated value using Bullen's law
         // Type: 'p', 's', or 'r/d'
@@ -114,7 +114,7 @@ public:
         }
         return v;
     }
-    double interpolate_slowness(const double depth, const char type ) {
+    double interpolate_slowness(double depth, char type ) {
         double v = interpolate_velocity(depth, type);
         v = ISEQUAL(v, 0.0) ? 0.0 : 1.0/v;
         //double v=0.0;
@@ -163,7 +163,7 @@ public:
 class earthmod1d {
 public:
     earthmod1d() {}
-    earthmod1d( double earth_radius, const double nlayer, 
+    earthmod1d( double earth_radius, double nlayer, 
                 const double d0[], const double d1[],
                 const double p0[], const double p1[],
                 const double s0[], const double s1[],
@@ -175,17 +175,17 @@ public:
         if (!d_layers.empty() ) d_layers.clear();
         if (!d_layer_jump.empty() ) d_layer_jump.clear();
     }
-    int init(   double earth_radius, const int nlayer, 
+    int init(   double earth_radius, int nlayer, 
                 const double d0[], const double d1[],
                 const double p0[], const double p1[],
                 const double s0[], const double s1[],
                 const double r0[], const double r1[] );
-    int search_layer(const double depth);
+    int search_layer(double depth);
     //int search_layer(const double depth1, const double depth2);
-    double evaulate_from_depth(const double depth, char type, bool return_slowness);
+    double evaulate_from_depth(double depth, char type, bool return_slowness);
     double radius() { return d_earth_radius; }
     int output_profile(const char *filename);
-    bool is_depth_on_discontinuity(const double depth, int *ptr_above, int *ptr_below) {
+    bool is_depth_on_discontinuity(double depth, int *ptr_above, int *ptr_below) {
         for(std::vector<std::pair<int, float> >::iterator it = d_layer_jump.begin(); it != d_layer_jump.end(); ++it) {
             int i_above = it->first;
             double dis_depth = it->second;
@@ -197,7 +197,7 @@ public:
         }
         return false;
     }
-    bool is_depth_cross_discontinuity(const double d0, const double d1, double * d_dis) {
+    bool is_depth_cross_discontinuity(double d0, double d1, double * d_dis) {
         // check if a line by two points across any discontinuity
         // return the minimal depth if there are more than 1 across
         for(std::vector<std::pair<int, float> >::iterator it = d_layer_jump.begin(); it != d_layer_jump.end(); ++it) {
@@ -211,7 +211,7 @@ public:
     }
     int adjust_raypath(std::list<double> & lon, std::list<double> & lat, std::list<double> & depth );
     // static method
-    static double great_cirle_distance(const double lon1, const double lat1, const double lon2, const double lat2) {
+    static double great_cirle_distance(double lon1, double lat1, double lon2, double lat2) {
         double dlamda = DEG2RAD( lon1-lon2 );
         double p1 = DEG2RAD(lat1);
         double p2 = DEG2RAD(lat2);
@@ -240,15 +240,15 @@ typedef struct s_pt3d
     double d_theta, d_phi, d_r;
     double d_x, d_y, d_z;
     /* method */
-    int init(const double lon, const double lat, const double depth) {
+    int init(double lon, double lat, double depth) {
         d_lon = lon;
         d_lat = lat;
         d_depth = depth;
         return 0;
     }
-    int init(   const double lon, const double lat, const double depth, 
-                const double theta, const double phi, const double r, 
-                const double x, const double y, const double z) {
+    int init(   double lon, double lat, double depth, 
+                double theta, double phi, double r, 
+                double x, double y, double z) {
         d_lon = lon;
         d_lat = lat;
         d_depth = depth;
@@ -272,6 +272,9 @@ public:
     earthmod3d(earthmod1d * mod1d, double dlon, double dlat, const double depth[], int ndep)  {
         init(mod1d, dlon, dlat, depth, ndep);
     }
+    earthmod3d(earthmod1d * mod1d, const char *filename, char mode) {
+        init(mod1d, filename, mode);
+    }
     ~earthmod3d() {
         if(!d_lon.empty() ) d_lon.clear();
         if(!d_lat.empty() ) d_lat.clear();
@@ -291,6 +294,7 @@ public:
     // init 3-D grid and coordinates transformation
     int init(earthmod1d * mod1d, double dlon, double dlat, const double depth[], int ndep) ;
     int init(earthmod1d * mod1d, const double lons[], int nlon,  const double lats[], int nlat, const double depth[], int ndep );
+    int init(earthmod1d * mod1d, const char *fnm, char mode);
     int geo2sph(double lon, double lat, double depth, double *theta, double *phi, double *r)  { 
         *r =  d_mod1d->radius() - depth;
         *theta = lon;
@@ -330,6 +334,7 @@ public:
         return 0;
     }
     // accessing 3-D grid 
+    int output_model(const char * filename, char mode); 
     int output_grd_pts(const char * filename, char type) ; 
     double vp(int pt_idx) { return d_vp[pt_idx]; }
     double vs(int pt_idx) { return d_vs[pt_idx]; }
@@ -492,7 +497,7 @@ public:
         }
         return 0;
     }
-    int set_mod3d(double * dvp, double *dvs) {
+    int set_mod3d(const double * dvp, const double *dvs) {
         d_dvp.assign(dvp, dvp+d_dvp.size() );
         d_dvs.assign(dvs, dvs+d_dvs.size() );
         return 0;

@@ -3,7 +3,6 @@
 
 //#include <Python.h> 
 //#include <numpy/arrayobject.h>
-
 namespace ak135
 {
     int nlayer = 127;
@@ -159,11 +158,11 @@ namespace ak135
 /*
     earthmod1d
 */
-int earthmod1d::init(   double earth_radius, const int nlayer, 
-            const double d0[], const double d1[],
-            const double p0[], const double p1[],
-            const double s0[], const double s1[],
-            const double r0[], const double r1[] )
+int earthmod1d::init(   double earth_radius, int nlayer, 
+                        const double d0[], const double d1[],
+                        const double p0[], const double p1[],
+                        const double s0[], const double s1[],
+                        const double r0[], const double r1[] )
 {
     d_earth_radius = earth_radius;
     d_layers.resize(nlayer);
@@ -214,7 +213,7 @@ int earthmod1d::find_velocity_jump() {
     if(!tmp.empty() ) tmp.clear();
     return 0;
 }
-int earthmod1d::search_layer(const double depth) {
+int earthmod1d::search_layer(double depth) {
     /* 
         search for the index of layer that contain the depth.
         */
@@ -249,7 +248,7 @@ int earthmod1d::search_layer(const double depth) {
     }
     return i1;
 }
-double earthmod1d::evaulate_from_depth(const double depth, char type, bool return_slowness) {
+double earthmod1d::evaulate_from_depth(double depth, char type, bool return_slowness) {
     //printf("%f ", depth);
     int idx = search_layer(depth);
     //printf("%f %d\n", depth, idx);
@@ -377,7 +376,7 @@ int earthmod1d::adjust_raypath(std::list<double> & lon, std::list<double> & lat,
 /* 
     earthmod3d
 */
-int earthmod3d::init(earthmod1d * mod1d, const double dlon, const double dlat, const double depth[], const int ndep) {
+int earthmod3d::init(earthmod1d * mod1d, double dlon, double dlat, const double depth[], int ndep) {
     int nlon = 360.0/dlon;
     int nlat = 180.0/dlat;
     std::vector<double> lons, lats;
@@ -393,7 +392,7 @@ int earthmod3d::init(earthmod1d * mod1d, const double dlon, const double dlat, c
 // lons should be values in the range of [0, 360) degree
 // lats should be values in the range of [-90, 90] degree
 // depts should be values in the range of [0, 6371] km
-int earthmod3d::init(earthmod1d * mod1d, const double lons[], const int nlon,  const double lats[], const int nlat, const double depth[], const int ndep )
+int earthmod3d::init(earthmod1d * mod1d, const double lons[], int nlon,  const double lats[], int nlat, const double depth[], int ndep )
 {
     d_mod1d = mod1d;
     // init grid lines
@@ -453,6 +452,149 @@ int earthmod3d::init(earthmod1d * mod1d, const double lons[], const int nlon,  c
             }
         }
     }
+}
+// Init 3-D Earth model from file  that can be 'p' for plain text, 'b' for binary file.
+// The Format is:
+//      +-------------------------+
+//      |ndep nlat nlon           |
+//      |dep1 dep2 dep3 ... depN  |
+//      |lat1 lat2 lat3 ... latM  |
+//      |lon1 lon2 lon3 ... lonL  |
+//      |dvp1 dvp2 dvp3 ... dvpX  |
+//      |dvs1 dvs2 dvs3 ... dvsX  |
+//      +-------------------------+
+int earthmod3d::init(earthmod1d * mod1d, const char *fnm, char mode) {
+    std::vector<double> deps, lats, lons, dvp, dvs;
+    int junk;
+    if (mode == 'p')
+    {
+        FILE *fid = fopen(fnm, "r");
+        // part 1
+        int ndep, nlat, nlon;
+        junk = fscanf(fid, "%d %d %d", &ndep, &nlat, &nlon);
+        deps.resize(ndep); lats.resize(nlat); lons.resize(nlon);
+        // part 2
+        for(int idx=0; idx<ndep; ++idx) {
+            junk = fscanf(fid, "%lf", &(deps[idx]) );
+        }
+        for(int idx=0; idx<nlat; ++idx) {
+            junk = fscanf(fid, "%lf", &(lats[idx]) );
+        }
+        for(int idx=0; idx<nlon; ++idx) {
+            junk = fscanf(fid, "%lf", &(lons[idx]) );
+        }
+        // part 3
+        int npts = ndep*nlat*nlon;
+        dvp.resize(npts); dvp.assign(npts, 0.0);
+        dvs.resize(npts); dvs.assign(npts, 0.0);
+        for(int idx=0; idx<npts; ++idx) {
+            junk = fscanf(fid, "%lf", &(dvp[idx]) );
+        }
+        for(int idx=0; idx<npts; ++idx) {
+            junk = fscanf(fid, "%lf", &(dvs[idx]) );
+        }
+        //
+        fclose(fid);
+        //
+        init(mod1d, lons.data(), nlon, lats.data(), nlat, deps.data(), ndep );
+        set_mod3d(dvp.data(), dvs.data() );
+    }
+    else if (mode == 'b')
+    {
+        FILE *fid = fopen(fnm, "rb");
+        // part 1
+        int ndep, nlat, nlon;
+        junk = fread(&ndep, sizeof(int), 1, fid);
+        junk = fread(&nlat, sizeof(int), 1, fid);
+        junk = fread(&nlon, sizeof(int), 1, fid);
+        deps.resize(ndep); lats.resize(nlat); lons.resize(nlon);
+        // part 2
+        junk = fread(deps.data(), sizeof(double), ndep, fid);
+        junk = fread(lats.data(), sizeof(double), nlat, fid);
+        junk = fread(lons.data(), sizeof(double), nlon, fid);
+        // part 3
+        int npts = ndep*nlat*nlon;
+        dvp.resize(npts); dvp.assign(npts, 1.0);
+        dvs.resize(npts); dvs.assign(npts, 1.0);
+        junk = fread(dvp.data(), sizeof(double), npts, fid);
+        junk = fread(dvs.data(), sizeof(double), npts, fid);
+        //
+        fclose(fid);
+        //
+        init(mod1d, lons.data(), nlon, lats.data(), nlat, deps.data(), ndep );
+        set_mod3d(dvp.data(), dvs.data() );
+    }
+    return 0;
+}
+int earthmod3d::output_model(const char * fnm, char mode) {
+    int junk;
+    if (mode == 'p')
+    {
+        FILE *fid = fopen(fnm, "w");
+        // part 1
+        int ndep = d_depth.size();
+        int nlat =  d_lat.size();
+        int nlon =  d_lon.size();
+        junk = fprintf(fid, "%d %d %d\n", ndep, nlat, nlon );
+        // part 2
+        for(int idx=0; idx<d_depth.size(); ++idx) {
+            junk = fprintf(fid, "%.12lf ", d_depth[idx] );
+        }
+        fprintf(fid, "\n");
+        for(int idx=0; idx<d_lat.size(); ++idx) {
+            junk = fprintf(fid, "%.4lf ", d_lat[idx] );
+        }
+        fprintf(fid, "\n");
+        for(int idx=0; idx<d_lon.size(); ++idx) {
+            junk = fprintf(fid, "%.4lf ", d_lon[idx] );
+        }
+        fprintf(fid, "\n");
+        // part 3
+        int ipt =0;
+        for(int idep=0; idep<d_depth.size(); ++idep) {
+            for(int ilat=0;ilat<d_lat.size(); ++ilat) {
+                for(int ilon=0;ilon<d_lon.size(); ++ilon) {
+                    junk = fprintf(fid, "%lf ", d_dvp[ipt]);
+                    ++ipt;
+                }
+                fprintf(fid, "\n");
+            }
+        }
+        ipt =0;
+        for(int idep=0; idep<d_depth.size(); ++idep) {
+            for(int ilat=0;ilat<d_lat.size(); ++ilat) {
+                for(int ilon=0;ilon<d_lon.size(); ++ilon) {
+                    junk = fprintf(fid, "%lf ", d_dvs[ipt]);
+                    ++ipt;
+                }
+                fprintf(fid, "\n");
+            }
+        }
+        //
+        fclose(fid);
+    }
+    else if (mode == 'b')
+    {
+        FILE *fid = fopen(fnm, "wb");
+        // part 1
+        int ndep = d_depth.size();
+        int nlat =  d_lat.size();
+        int nlon =  d_lon.size();
+        junk = fwrite(&ndep, sizeof(int), 1, fid);
+        junk = fwrite(&nlat, sizeof(int), 1, fid);
+        junk = fwrite(&nlon, sizeof(int), 1, fid);
+        // part 2
+        junk = fwrite(d_depth.data(), sizeof(double), ndep, fid);
+        junk = fwrite(d_lat.data(),   sizeof(double), nlat, fid);
+        junk = fwrite(d_lon.data(),   sizeof(double), nlon, fid);
+        // part 3
+        junk = fread(d_dvp.data(), sizeof(double), d_dvp.size(), fid);
+        junk = fread(d_dvs.data(), sizeof(double), d_dvs.size(), fid);
+        //
+        fclose(fid);
+        //
+    }
+    return 0;
 }
 // type : 'a' to output all points
 //        'p' to output points with Vp perturbation != 0.0
