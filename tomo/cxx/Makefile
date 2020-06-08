@@ -1,12 +1,17 @@
 export CPLUS_INCLUDE_PATH = /usr/include/python3.5m/
-export DEBUG = -O3 -fopenmp -fdiagnostics-color=always
-export CXXFLAGS =  -std=c++11 ${DEBUG} 
-
+export DEBUG = -g -fdiagnostics-color=always
+export H5FlAGS = -I/usr/include/hdf5/serial -D_LARGEFILE64_SOURCE -D_LARGEFILE_SOURCE -Wdate-time 
+export CXXFLAGS =  -std=c++11 ${DEBUG} ${H5FlAGS}
+export CXX = g++
 
 SRC = $(wildcard *.cc)
 OBJ = $(patsubst %.cc, %.o,${SRC}) 
-EXEC =  fw_ray.x fw_mod3d.x test.x 
-all: getopt_sub ${OBJ} ${EXEC}
+EXEC_test = test.x  test_I2_fw.x
+EXEC =      fw_ray.x fw_generate_mod3d.x fw_traveltime_sensitivity.x  ${EXEC_test}
+
+
+
+all: getopt_sub ${OBJ} ${EXEC} 
 
 
 
@@ -18,14 +23,14 @@ getopt_sub:
 
 %.d: %.cc
 	@set -e; rm -f $@; \
-	${CXX} -MM -std=c++11  $< > $@.$$$$; \
+	${CXX} -MM -std=c++11 ${CXXFLAGS}  $< > $@.$$$$; \
 	sed 's,\($*\)\.o[ :]*,\1.o $@ : ,g' < $@.$$$$ > $@; \
 	rm -f $@.$$$$
 
 sinclude $(SRC:.cc=.d)
 
 ${EXEC}:%.x:%.o
-	${CXX} ${DEBUG} ${LINK} -o $@ $<  global_tomo.o  -lm 
+	h5c++ ${DEBUG} ${LINK} -o $@ $< earthmodel.o  -lm
 
 clean:
 	make -C getopt clean

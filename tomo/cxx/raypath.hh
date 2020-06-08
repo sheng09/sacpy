@@ -68,7 +68,7 @@ public:
     //
     inline int init(double lo, double la, double dep) {
         lon = lo;
-        lat = lat;
+        lat = la;
         depth = dep;
         return 0;
     }
@@ -332,6 +332,7 @@ public:
     inline int set_path_type(char type) { d_type = type; }
     inline int set_path(int npts, double * lon, double * lat, double *dep) 
     {
+        if ( !this->empty() ) this->clear();
         for(int idx=0; idx<npts; ++idx, ++lon, ++lat, ++dep) 
         {
             this->push_back( pt3d(*lon, *lat, *dep, d_R0) );
@@ -605,8 +606,12 @@ public:
     };
     /* Set the ray-path
     */
-    int init(const char *phase, int npts, double *lon, double *lat, double *dep, int verbose=0) {
+    int init(const char *phase, int npts, double *lon, double *lat, double *dep, double time, double rp, const char * tag=NULL, int verbose=0) {
+        if (!this->empty() )   this->clear();
         d_phase = phase;
+        d_traveltime_taup = time;
+        d_rayparam_taup = rp;
+        d_tag.assign(tag);
         d_whole_path.set_path(npts, lon, lat, dep);
         decipher_phase_path(verbose);
         return 0;
@@ -637,7 +642,7 @@ public:
         if (junk != npts) { fprintf(stderr, "Err in reading file %s\n", filename); exit(-1); }
         fclose(fid);
         //
-        init(phase, npts, lons, lats, depth, verbose);
+        init(phase, npts, lons, lats, depth, d_traveltime_taup, d_rayparam_taup, NULL, verbose);
         return 0;
         #undef MAXNPTS
     }
@@ -708,6 +713,7 @@ private:
     raypath3d_segment  d_whole_path;
     //
     std::string d_phase;
+    std::string d_tag;
     double d_traveltime_taup;
     double d_rayparam_taup;
     /**/

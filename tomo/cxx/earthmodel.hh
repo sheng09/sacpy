@@ -287,6 +287,8 @@ public:
     std::vector<double> & vs_vector() { return d_vs; }
     std::vector<double> & slowness_p_vector() { return d_slowness_p; }
     std::vector<double> & slowness_s_vector() { return d_slowness_s; }
+    std::vector<double> & slowness_p_pert() { return d_slowness_p_pert; }
+    std::vector<double> & slowness_s_pert() { return d_slowness_s_pert; }
 
     // const  pt3d &  point(int pt_idx) const { return d_pts[pt_idx]; }
     // double lon(int pt_idx)   const { return d_pts[pt_idx].lon;    }
