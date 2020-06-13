@@ -224,7 +224,7 @@ def time_shift_all_sac(sac_trace, t_shift_sec):
     st = copy.deepcopy(sac_trace)
     st.shift_time_all(t_shift_sec)
     return st
-def optimal_timeshift_cc_sac(st1, st2, min_timeshift=-1.e12, max_timeshift=1.e12, cc_amp= 'pos'):
+def optimal_timeshift_cc_sac(st1, st2, min_timeshift=-1.e12, max_timeshift=1.e12, cc_amp= 'pos', search_time_window=None):
     """
     Use cross-correlation method to search the optimal 
     time shift between sac traces. 
@@ -232,10 +232,25 @@ def optimal_timeshift_cc_sac(st1, st2, min_timeshift=-1.e12, max_timeshift=1.e12
     shift, `coef` the correlation coefficient, and `cc`
     the cross-correlation traces in SACTRACE.
     """
-    cc = correlation_sac(st1, st2)
+    cc = None
+    if search_time_window:
+        t1, t2 = search_time_window
+        cc = correlation_sac(truncate_sac(st1, '0', t1, t2), truncate_sac(st2, '0', t1, t2) )
+    else:
+        cc = correlation_sac(st1, st2)
     cc.truncate('0', min_timeshift, max_timeshift)
     t, coef = cc.max_amplitude_time(cc_amp )
     return t, coef, cc
+def plot_sac_lst(st_lst, ax=None):
+    fig = None
+    if ax == None:
+        fig, ax = plt.subplots(1, 1)
+    for isac, it in enumerate(st_lst):
+        junk = copy.deepcopy(it)
+        junk.norm()
+        junk['dat'] = junk['dat']*0.4 + isac
+        junk.plot_ax(ax, color='k', linewidth= 0.6)
+    return ax
 ###
 #  classes
 ###
@@ -658,12 +673,18 @@ class sactrace:
         Plot into specified axis, with **kwargs used by pyplot.plot(...).
         """
         ax.plot(self.get_time_axis(), self.dat, **kwargs)
+        max_amp, min_amp = self.dat.max(), self.dat.min()
+        for key in ['t0', 't1', 't2', 't3', 't4', 't5', 't6', 't7', 't8', 't9']:
+            #print(key, self[key])
+            if self[key] != -12345.0:
+                ax.plot( [self[key], self[key]], [min_amp, max_amp], 'r' )
+                ax.text(self[key], max_amp, self['k%s' % key ])
+        #plt.show()
     def plot(self, **kwargs):
         """
         Plot and show, with **kwargs used by pyplot.plot(...).
         """
         plt.plot(self.get_time_axis(), self.dat, **kwargs)
-        plt.show()
         #plt.close()
     ###
     def rfft(self, zeropad = 0):
