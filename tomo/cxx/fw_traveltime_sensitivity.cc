@@ -6,7 +6,7 @@
 static char HMSG[] = "\
 Compute traveltime sensitivity given a background model.\n\
 \n\
-%s --model3d=p/fnm --raypath=fnm --phase=phasename --output_sensitivity=fnm.bin   [--zip]\n\
+%s --model3d=p/fnm --raypath=fnm --output_sensitivity=fnm.bin   [--zip]\n\
     --output_raypath_segments=fnm.txt --verbose=0\n\
 \n\
 Arg details:\n\
@@ -31,13 +31,14 @@ Arg details:\n\
 ";
 int main(int argc, char *argv[])
 {
+    static char verbose_msg[MAXMSG_LEN];
     if (argc == 1)
     {
         fprintf(stdout, HMSG, argv[0]);
         return 0;
     }
     //
-    int verbose = getarg(0, "--verbose");
+    bool verbose = getarg(false, "--verbose");
     // set 3-D model
     std::string model_setting = getarg("", "--model3d");
     earthmod3d * mod3d;
@@ -49,7 +50,9 @@ int main(int argc, char *argv[])
         double dlat=2.0;
         if (verbose)
         {
-            fprintf(stderr, ">>> Init 3-D model from internal ak135. dlon: %lf, dlat: %lf\n", dlon, dlat);
+            std::memset(verbose_msg, 0, MAXMSG_LEN);
+            sprintf(verbose_msg, "Init 3-D model from internal ak135. dlon: %lf, dlat: %lf\n", dlon, dlat);
+            verbose_print(0, verbose_msg);
         }
         mod3d = new earthmod3d(&ak135::model, dlon, dlat, dep, ndep);
     }
@@ -59,8 +62,9 @@ int main(int argc, char *argv[])
         const char *fnm = model_setting.c_str()+2;
         if (verbose)
         {
-
-            fprintf(stderr, ">>> Init 3-D model from external file. (%s)\n", fnm);
+            std::memset(verbose_msg, 0, MAXMSG_LEN);
+            sprintf(verbose_msg, "Init 3-D model from external file. (%s)\n", fnm);
+            verbose_print(0, verbose_msg);
         }
         mod3d = new earthmod3d(&ak135::model, fnm, mode);
     }
@@ -77,6 +81,12 @@ int main(int argc, char *argv[])
         fprintf(stderr, "Err. please provide output_raypath_segments file.\n");
         exit(-1);
     }
+    if (verbose)
+    {
+        std::memset(verbose_msg, 0, MAXMSG_LEN);
+        sprintf(verbose_msg, "Set input raypth file (%s) and output sensitivity file (%s)\n",  ray_fnm.c_str(), output_raypath_segments.c_str() );
+        verbose_print(0, verbose_msg);
+    }
     // input HDF5
     int nray;
     hid_t fid = H5Fopen(ray_fnm.c_str(), H5F_ACC_RDONLY, H5P_DEFAULT);
@@ -86,9 +96,14 @@ int main(int argc, char *argv[])
     hid_t out_fid  = H5Fcreate(output_raypath_segments.c_str(), H5F_ACC_TRUNC, H5P_DEFAULT, H5P_DEFAULT);
     hid_t grp_sens = H5Gcreate2(out_fid, "sensitivity_zip", H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
     H5LTset_attribute_int(grp_sens, ".", "size", &nray, 1);
+    H5LTset_attribute_string(grp_sens, ".", "info", "The sensitivity is based on 1D earth model");
     // Loop over all raypath
     raypath3d   ray;
     sensitivity_zip gmat;
+    if (verbose)
+    {
+        verbose_print(0, "Start running for each raypath...\n");
+    }
     for (int idx=0; idx<nray; ++idx)
     {
         static char sub_grp_name[4096];
@@ -113,7 +128,9 @@ int main(int argc, char *argv[])
 
         if (verbose)
         {
-            fprintf(stdout, ">>> [%d/%d] running... raypath id(%d) tag(%s) npts(%d)\n", idx, nray, id, c_tag, npts );
+            std::memset(verbose_msg, 0, MAXMSG_LEN);
+            sprintf(verbose_msg, "[%d/%d] running... raypath id(%d) tag(%s) npts(%d)\n", idx+1, nray, id, c_tag, npts );
+            verbose_print(1, verbose_msg);
         }
 
         std::vector<double> lons(npts), lats(npts), deps(npts);
@@ -128,21 +145,31 @@ int main(int argc, char *argv[])
         // check ray-path
         // int test_idx = 900;
         // fprintf(stdout, "    %d: %.12lf %.12lf %.12lf\n", test_idx, lons[test_idx], lats[test_idx], deps[test_idx] );
-        ray.init(c_phase, npts, lons.data(), lats.data(), deps.data(),time, rp, c_tag, 0);
+        ray.init(c_phase, npts, lons.data(), lats.data(), deps.data(),time, rp, c_tag, 2);
 
-        gmat.run(*mod3d, ray);
         if (verbose)
         {
-            double t  = gmat.time_1d();
-            double t0 = ray.traveltime_taup();
+            verbose_print(2, "Computing sensitivities...\n");
+        }
+        gmat.clear();
+        gmat.run(*mod3d, ray, 3);
+        double t  = gmat.time_1d();
+        double t0 = ray.traveltime_taup();
+        if (verbose)
+        {    
             double t3d =gmat.time_3d();
             double relative_err = fabs((t0-t)/t)*100;
             double dt = t3d-t;
-            fprintf(stdout, "    time: 1D_here(%lf) 1Dtaup(%lf), err: %lf%%. 3Dhere(%lf, %lf) \n", t, t0, relative_err, t3d, dt);
+
+            std::memset(verbose_msg, 0, MAXMSG_LEN);
+            sprintf(verbose_msg, "time: 1D_here(%lf) 1Dtaup(%lf), err: %lf%%. 3Dhere(%lf, %lf) \n", t, t0, relative_err, t3d, dt);
+            verbose_print(2, verbose_msg);
         }
         
         // set sensitivity
         hid_t single_sens = H5Gcreate2(grp_sens, sub_grp_name, H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
+        H5LTset_attribute_double(single_sens, ".", "time1d", &t, 1);
+        H5LTset_attribute_double(single_sens, ".", "time1d_taup", &t0, 1);
         std::vector<int> row_index;
         std::vector<double> row_value;
 
@@ -168,6 +195,7 @@ int main(int argc, char *argv[])
     H5Gclose(grp_sens);
     H5Fclose(out_fid);
     //
+    verbose_print(0, "Safely exit\n");
 
     delete mod3d;
     return 0;

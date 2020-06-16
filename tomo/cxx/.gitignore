@@ -3,3 +3,13 @@
 *.x
 *.bin
 *.txt
+Tutorial.md
+__pycache__/
+check.sh
+codemap/
+test.cc
+test.py
+test_I2_fw.cc
+test_netcdf.cc
+tmptmp.hh
+getopt/demo

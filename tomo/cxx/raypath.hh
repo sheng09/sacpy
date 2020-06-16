@@ -13,6 +13,7 @@
 #include <cstring>
 #include <unordered_map>
 
+#define MAXMSG_LEN 2048
 #define DEG2RAD(x) ( (x)/180.0*3.1415926535 )
 #define RAD2DEG(x) ( (x)*180.0/3.1415926535 )
 //#define DEG360(x)  ( (x) < 0.0 ? ((x)+360) : (x) )
@@ -30,6 +31,13 @@ bool ISEQUAL(T x, T y) {
     return true;
 }
 
+inline int verbose_print(int level, const char *msg)
+{
+    std::vector<std::string> leading_string  = {"0>> ", "1>>     ", "2>>         ", "3>>             ", "4>>                 ", "5>>                     " };
+    fprintf(stdout, "%s", leading_string[level].c_str() );
+    fprintf(stdout, "%s", msg);
+    return 0;
+}
 
 
 /* Basic geometry functions
@@ -56,31 +64,12 @@ inline int xyz2geo(double x, double y, double z, double *lon, double *lat, doubl
 
 /* Basic 3-D point and related functions
 */
-class pt3d_less
-{
-public:
-    /* method */
-    pt3d_less() {}
-    pt3d_less(double lo, double la, double dep) {
-        init(lo, la, dep);
-    }
-    ~pt3d_less() {}
-    //
-    inline int init(double lo, double la, double dep) {
-        lon = lo;
-        lat = la;
-        depth = dep;
-        return 0;
-    }
-public:
-    /* data */
-    double lon, lat, depth;
-};
 
 class pt3d
 {
 public:
     pt3d() {}
+    // Use `xyz=true` to set x,y,z instead of lo,la,dep
     pt3d(double lo, double la, double dep, double R0= 6371.0, bool xyz=false) {
         if (!xyz) 
         {
@@ -91,9 +80,6 @@ public:
             init_xyz(lo, la, dep, R0);
         }
     }
-    pt3d(pt3d_less pt) {
-        init(pt);
-    }
     ~pt3d() {}
     /* method */
     inline int init(double lo, double la, double dep, double R0= 6371.0) {
@@ -101,10 +87,6 @@ public:
         lat = la;
         depth = dep;
         geo2xyz(lon, lat, depth, &x, &y, &z, R0);
-        return 0;
-    }
-    inline int init(pt3d_less pt) {
-        init(pt.lon, pt.lat, pt.depth);
         return 0;
     }
     inline int init_xyz(double ix, double iy, double iz, double R0= 6371.0) {
@@ -123,7 +105,7 @@ public:
     double x, y, z;
 };
 
-// Great circle distance
+// Great circle distance (in degree)
 inline double great_circle_distance(double lon1, double lat1, double lon2, double lat2) {
         double dlamda = DEG2RAD( lon1-lon2 );
         double p1 = DEG2RAD(lat1);
@@ -138,20 +120,14 @@ inline double great_circle_distance(pt3d & pt1, pt3d & pt2) {
     double lat2 = pt2.lat;
     return great_circle_distance(lon1, lat1, lon2, lat2);
 }
-// Line distance in 3-D
+// Line distance in 3-D in the unit of x,y,z
 inline double distance(pt3d & pt1, pt3d & pt2) {
     double dx = pt1.x-pt2.x;
     double dy = pt1.y-pt2.y;
     double dz = pt1.z-pt2.z;
     return sqrt(dx*dx + dy*dy + dz*dz);
 }
-inline double distance(pt3d_less & pt1, pt3d_less & pt2) {
-    pt3d q1, q2;
-    q1.init(pt1);
-    q2.init(pt2);
-    return distance(q1, q2);
-}
-// Interpolate a new point between two points
+// Interpolate a new point on the straight line formed by two points. The new point should be the closest one to two points.
 inline pt3d interpolate3D_depth(pt3d & pt1, pt3d & pt2, double depth, double R0=6371.0) {
     double a = pt2.x - pt1.x;
     double b = pt2.y - pt1.y;
@@ -181,7 +157,7 @@ inline pt3d interpolate3D_depth(pt3d & pt1, pt3d & pt2, double depth, double R0=
         return pt3d(lon, lat, depth, R0);
     }
 }
-// check if a depth is between two points. That does not includes the depth exactly on either points.
+// Check if a depth is between two points. That does not includes the depth exactly on either points.
 inline bool cross_depth(pt3d &pt1, pt3d &pt2, double depth) {
     if (    ( (pt1.depth - depth)*(pt2.depth - depth) < 0 ) &&
             (!ISEQUAL(pt1.depth, depth)) &&
@@ -310,6 +286,7 @@ inline int interpolate3D_cube(double x0, double y0, double z0,
 class raypath3d_segment : public std::list<pt3d> {
 public:
     raypath3d_segment()  {}
+    // `type` can be 'P' or 'S'
     raypath3d_segment(char type, double R0, std::list<pt3d> & path) { set_path_type(type); set_R0(R0); set_path(path); }
     raypath3d_segment(std::list<pt3d> & path) { set_path(path); }
     //raypath3d_segment(raypath3d_segment & ray_path) { if (this != &ray_path) {  set_path(ray_path); }  }
@@ -344,6 +321,7 @@ public:
         this->assign(path.begin(), path.end() );
         return 0;
     }
+    inline int set_time1d(double t) { d_time_1d = t; }
     int inter_denser_raypath(double dl)
     {
         std::list<pt3d> new_path;
@@ -403,8 +381,10 @@ public:
         }
         return 0;
     }
-    int insert_point_avoid_depth(double depth, int verbose= 0) {
+    int insert_point_avoid_depth(double depth, int verbose_level= -1) 
+    {
         static double derr = 1.0e-6; // 1.0e-6 present very good performence
+        static char msg[MAXMSG_LEN];
         std::list<pt3d>::iterator point0 = this->begin();
         std::list<pt3d>::iterator point1 = point0; ++point1;
         std::list<pt3d>::iterator point2 = point1; ++point2;
@@ -420,11 +400,6 @@ public:
                 //      * x1
                 ///
                 point0->depth += derr;
-                if (verbose)
-                {
-                    fprintf(stderr, "first point: depth x0(%lf) x1(%lf)\n", point0->depth, point1->depth);
-                }
-                point0->init(point0->lon, point0->lat, point0->depth, d_R0);
             }
             else
             {
@@ -437,12 +412,13 @@ public:
                 point0->depth -= derr;
             }
             // update XYZ
-            if (verbose)
-            {
-                fprintf(stderr, "first point: depth x0(%lf) x1(%lf)\n", point0->depth, point1->depth);
-            }
             point0->init(point0->lon, point0->lat, point0->depth, d_R0);
-            
+            if (verbose_level >= 0)
+            {
+                std::memset(msg, 0, MAXMSG_LEN);
+                sprintf(msg, "Adjust the 1st point to avoid depth (%lf): depth (*%lf, %lf)\n", depth, point0->depth, point1->depth);
+                verbose_print(verbose_level, msg);
+            }
         }
         // check the midder point
         for(;point2 != this->end(); ++point0, ++point1, ++point2 )
@@ -462,12 +438,14 @@ public:
                     ///
                     x1 -= derr;
                     point1->init(point1->lon, point1->lat, x1, d_R0);
-                    if (verbose)
+                    if (verbose_level >= 0)
                     {
-                        fprintf(stderr, "middle point: depth x0(%lf) x1(%lf) x2(%lf)\n", point0->depth, point1->depth, point2->depth);
+                        std::memset(msg, 0, MAXMSG_LEN);
+                        sprintf(msg, "Adjust middle point: depth (%lf, *%lf, %lf)\n", x0, x1, x2);
+                        verbose_print(verbose_level, msg);
                     }
                 }
-                else if (x0 < x1 && x2 > x1) 
+                else if (x0 < x1 && x1 < x2 ) 
                 {
                     ///
                     //   * x0 (itdep0)         * x0 (itdep0)        
@@ -478,15 +456,17 @@ public:
                     //        \                     \               
                     //         * x2 (itdep2)         * x2 (itdep2)  
                     ///
-                    if (verbose)
-                    {
-                        fprintf(stderr, "middle point: depth x0(%lf) x1(%lf) x2(%lf)\n", point0->depth, point1->depth, point2->depth);
-                    }
                     this->insert(point1, *point1);
                     ++point0;
                     //
                     point0->init(point0->lon, point0->lat, x1-derr, d_R0);
                     point1->init(point1->lon, point1->lat, x1+derr, d_R0);
+                    if (verbose_level >= 0)
+                    {
+                        std::memset(msg, 0, MAXMSG_LEN);
+                        sprintf(msg, "Adjust middle point and add a new point: depth (%lf, *%lf, *%lf, %lf)\n", x0, x1-derr, x1+derr, x2);
+                        verbose_print(verbose_level, msg);
+                    }
                 }
                 else if ( x0 > x1 && x2 >= x1) 
                 {
@@ -496,12 +476,14 @@ public:
                     //    /   \
                     //   * x0  * x2 
                     ///
-                    if (verbose)
-                    {
-                        fprintf(stderr, "middle point: depth x0(%lf) x1(%lf) x2(%lf)\n", point0->depth, point1->depth, point2->depth);
-                    }
                     x1 += derr;
                     point1->init(point1->lon, point1->lat, x1, d_R0);
+                    if (verbose_level >= 0)
+                    {
+                        std::memset(msg, 0, MAXMSG_LEN);
+                        sprintf(msg, "Adjust middle point: depth (%lf, *%lf, %lf)\n", x0, x1, x2);
+                        verbose_print(verbose_level, msg);
+                    }
                 }
                 else if ( x0 > x1 && x2 < x1) 
                 {
@@ -514,15 +496,17 @@ public:
                     //     /                        /                   
                     //    * x0 (itdep0)            * x0 (itdep0)        
                     ///
-                    if (verbose)
-                    {
-                        fprintf(stderr, "middle point: depth x0(%lf) x1(%lf) x2(%lf)\n", point0->depth, point1->depth, point2->depth);
-                    }
                     this->insert(point1, *point1);
                     ++point0;
                     //
                     point0->init(point0->lon, point0->lat, x1+derr, d_R0);
                     point1->init(point1->lon, point1->lat, x1-derr, d_R0);
+                    if (verbose_level >= 0)
+                    {
+                        std::memset(msg, 0, MAXMSG_LEN);
+                        sprintf(msg, "Adjust middle point and add a new point: depth (%lf, *%lf, *%lf, %lf)\n", x0, x1+derr, x1-derr, x2);
+                        verbose_print(verbose_level, msg);
+                    }
                 }
             }
         }
@@ -540,10 +524,6 @@ public:
                 //      * x1 here we need to move x1 upward a little bit
                 ///
                 point1->depth -= derr;
-                if (verbose)
-                {
-                    fprintf(stderr, "last point: depth x0(%lf) x1(%lf)\n", point0->depth, point1->depth);
-                }
             }
             else
             {
@@ -554,13 +534,15 @@ public:
                 //    * x0    
                 ///
                 point1->depth += derr;
-                if (verbose)
-                {
-                    fprintf(stderr, "last point: depth x0(%lf) x1(%lf)\n", point0->depth, point1->depth);
-                }
             }
             // update XYZ
             point1->init(point1->lon, point1->lat, point1->depth, d_R0);
+            if (verbose_level >= 0)
+            {
+                std::memset(msg, 0, MAXMSG_LEN);
+                sprintf(msg, "Adjust the last point: depth (%lf, *%lf)\n", point0->depth, point1->depth);
+                verbose_print(verbose_level, msg);
+            }
         }
         return 0;
     }
@@ -579,14 +561,27 @@ public:
     char type() { return d_type; }
     inline double R0 () { return d_R0; }
     inline int npts() const { return this->size(); }
-    inline int set_time1d(double t) { d_time_1d = t; }
     inline double time1d() { return d_time_1d; }
+    int tovec(std::vector<double> & lon, std::vector<double> & lat, std::vector<double> & dep)
+    {
+        lon.resize(this->npts() );
+        lat.resize(this->npts() );
+        dep.resize(this->npts() );
+        int idx=0;
+        for(auto pt= this->begin(); pt != this->end(); ++pt, ++idx)
+        {
+            lon[idx] = pt->lon;
+            lat[idx] = pt->lat;
+            dep[idx] = pt->depth;
+        }
+        return 0;
+    }
     //std::list<pt3d> & raypath_points() { return d_path_pts; }
     //const std::list<pt3d> & const_raypath_points() const { return d_path_pts; }
 private:
     /* 3-D Ray-path for S or P wave
     */
-    char d_type; // can be 'S/P'
+    char d_type; // can be 'S' or 'P'
     //d_path_pts;
     /* Some background values
     */
@@ -606,45 +601,15 @@ public:
     };
     /* Set the ray-path
     */
-    int init(const char *phase, int npts, double *lon, double *lat, double *dep, double time, double rp, const char * tag=NULL, int verbose=0) {
+    int init(const char *phase, int npts, double *lon, double *lat, double *dep, double time, double rp, const char * tag=NULL, int verbose_level=-1) {
         if (!this->empty() )   this->clear();
         d_phase = phase;
         d_traveltime_taup = time;
         d_rayparam_taup = rp;
         d_tag.assign(tag);
         d_whole_path.set_path(npts, lon, lat, dep);
-        decipher_phase_path(verbose);
+        decipher_phase_path(verbose_level);
         return 0;
-    }
-    int init(const char *phase, const char * filename, int verbose= 0)
-    {
-        #define MAXNPTS 4194304
-        //
-        FILE *fid = fopen(filename, "rb");
-        int npts;
-        int junk;
-        static double lons[MAXNPTS];
-        static double lats[MAXNPTS];
-        static double depth[MAXNPTS];
-        junk = fread(&npts, sizeof(int), 1, fid);
-        junk = fread(&d_traveltime_taup, sizeof(double), 1, fid);
-        junk = fread(&d_rayparam_taup,   sizeof(double), 1, fid);
-        if (npts > MAXNPTS) 
-        { 
-            fprintf(stderr, "Err. Too many points in the raypath. (%d, %s)\n", npts, filename);
-        }
-        if (junk != 1)    { fprintf(stderr, "Err in reading file %s\n", filename); exit(-1); }
-        junk = fread(lons,  sizeof(double), npts, fid );
-        if (junk != npts) { fprintf(stderr, "Err in reading file %s\n", filename); exit(-1); }
-        junk = fread(lats,  sizeof(double), npts, fid );
-        if (junk != npts) { fprintf(stderr, "Err in reading file %s\n", filename); exit(-1); }
-        junk = fread(depth, sizeof(double), npts, fid );
-        if (junk != npts) { fprintf(stderr, "Err in reading file %s\n", filename); exit(-1); }
-        fclose(fid);
-        //
-        init(phase, npts, lons, lats, depth, d_traveltime_taup, d_rayparam_taup, NULL, verbose);
-        return 0;
-        #undef MAXNPTS
     }
     int output_plain_txt(const char *fnm)
     {
@@ -660,12 +625,15 @@ public:
         fclose(fid);
         return 0;
     }
+    /* Access the ray-path
+    */
     inline double traveltime_taup() { return  d_traveltime_taup; }
     inline double rayparam_taup()   { return  d_rayparam_taup; }
 private:
     // To cut whole path into peices so that each peice correspond to a single wave leg (P, S, K, I, J)
-    int decipher_phase_path(int verbose= 0)
+    int decipher_phase_path(int verbose_level=-1)
     {
+        static char msg[MAXMSG_LEN];
         // update the whole path to make sure there are intersections with the CMB and ICB.
         d_whole_path.insert_point_depth(d_CMB);
         d_whole_path.insert_point_depth(d_ICB);
@@ -674,6 +642,11 @@ private:
         raypath3d_segment::iterator it1 = d_whole_path.begin(); ++it1;
         auto itphase = d_phase.begin();
         int npts = 2;
+        if (verbose_level>= 0) 
+        {
+            verbose_print(verbose_level, "Deciphering raypath...\n");
+        }
+        int isegment = 0;
         while( it1 != d_whole_path.end() )
         {
             if (ISEQUAL(it1->depth, 0.0) || ISEQUAL(it1->depth, d_CMB) || ISEQUAL(it1->depth, d_ICB) )
@@ -683,10 +656,11 @@ private:
                 //raypath3d_segment *segment = new raypath3d_segment(*itphase, d_whole_path.R0(), it0, it1);
                 this->push_back( raypath3d_segment(*itphase, d_whole_path.R0(), it0, ittmp) );
                 //printf("%d \n", this->operator[](0).size() );
-                if (verbose) 
+                if (verbose_level>= 0) 
                 {
-                    fprintf(stderr, ">>> Find one raypath segment: %c  depth(%lf->%lf) npts(%d)\n", *itphase, 
-                        it0->depth, it1->depth, npts);
+                    std::memset(msg, 0, MAXMSG_LEN);
+                    sprintf(msg, "Find one raypath segment: %c (%d)  depth(%lf->%lf) npts(%d)\n", *itphase, ++isegment, it0->depth, it1->depth, npts);
+                    verbose_print(verbose_level+1, msg);
                 }
                 //
                 it0 = it1; 
@@ -704,8 +678,12 @@ private:
             --npts;
             if (*itphase == 'c') ++itphase; // there cannot be `cc`
             auto ittmp = it1; --ittmp;
-            fprintf(stderr, ">>> Find one raypath segment: %c  depth(%lf->%lf) npts(%d)\n", *itphase, 
-                        it0->depth, ittmp->depth, npts);
+            if (verbose_level>= 0) 
+            {
+                std::memset(msg, 0, MAXMSG_LEN);
+                sprintf(msg, "Find one raypath segment: %c (%d) depth(%lf->%lf) npts(%d)\n", *itphase, ++isegment, it0->depth, ittmp->depth, npts);
+                verbose_print(verbose_level, msg);
+            }
             this->push_back( raypath3d_segment(*itphase, d_whole_path.R0(), it0, it1) );
         }
     }
