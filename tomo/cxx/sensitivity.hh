@@ -311,7 +311,7 @@ public:
     }
     
     int set_phase(const char * phase) { d_phase = phase; return 0; }
-    int set_id(int id) { d_id=id; }
+    inline int set_id(int id) { d_id=id; return 0;}
     inline int set_time_1d_taup(double t) { d_time_1d_taup = t; return 0; }
     inline int set_time_1d(double t) { d_time_1d = t; return 0; }
     inline int set_time_3d(double t) { d_time_3d = t; return 0; }

@@ -303,10 +303,10 @@ public:
     }
     /* Set R0
     */
-    inline int set_R0(double R0) { d_R0 = R0; }
+    inline int set_R0(double R0) { d_R0 = R0; return 0; }
     /* set and manipulate ray-path
     */
-    inline int set_path_type(char type) { d_type = type; }
+    inline int set_path_type(char type) { d_type = type; return 0; }
     inline int set_path(int npts, double * lon, double * lat, double *dep) 
     {
         if ( !this->empty() ) this->clear();
@@ -321,7 +321,7 @@ public:
         this->assign(path.begin(), path.end() );
         return 0;
     }
-    inline int set_time1d(double t) { d_time_1d = t; }
+    inline int set_time1d(double t) { d_time_1d = t; return 0;  }
     int inter_denser_raypath(double dl)
     {
         std::list<pt3d> new_path;
@@ -395,9 +395,9 @@ public:
             {
                 ///
                 //   * x0    here we need to move x0 lowerward a little bit
-                //    \  
-                //     \ 
-                //      * x1
+                //    \        //
+                //     \       //
+                //      * x1   // 
                 ///
                 point0->depth += derr;
             }
@@ -448,13 +448,13 @@ public:
                 else if (x0 < x1 && x1 < x2 ) 
                 {
                     ///
-                    //   * x0 (itdep0)         * x0 (itdep0)        
-                    //    \                     \                   
-                    //     \                     *  <== insert point here
-                    //      \                     \                 
-                    //       * x1 (itdep1)         * x1 (itdep1)    
-                    //        \                     \               
-                    //         * x2 (itdep2)         * x2 (itdep2)  
+                    //   * x0 (itdep0)         * x0 (itdep0)               // 
+                    //    \                     \                          //
+                    //     \                     *  <== insert point here  //
+                    //      \                     \                        //
+                    //       * x1 (itdep1)         * x1 (itdep1)           //
+                    //        \                     \                      //
+                    //         * x2 (itdep2)         * x2 (itdep2)         //
                     ///
                     this->insert(point1, *point1);
                     ++point0;
@@ -518,9 +518,9 @@ public:
             if (point0->depth < point1->depth)
             {
                 ///
-                //   * x0    
-                //    \  
-                //     \ 
+                //   * x0      //
+                //    \        //
+                //     \       // 
                 //      * x1 here we need to move x1 upward a little bit
                 ///
                 point1->depth -= derr;
@@ -686,6 +686,7 @@ private:
             }
             this->push_back( raypath3d_segment(*itphase, d_whole_path.R0(), it0, it1) );
         }
+        return 0;
     }
 private:
     raypath3d_segment  d_whole_path;

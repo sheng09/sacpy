@@ -5,7 +5,7 @@ LIB = libgetopt.a
 DEBUG = -O3 -std=c++11
 CXX = g++
 
-all: ${OBJ} ${LIB} demo
+all: ${OBJ} demo
 
 
 ${OBJ}:%.o:%.cpp getopt.cpp

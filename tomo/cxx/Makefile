@@ -7,7 +7,7 @@ export CXX = g++
 SRC = $(wildcard *.cc)
 OBJ = $(patsubst %.cc, %.o,${SRC}) 
 EXEC_test = 
-EXEC =      fw_ray.x fw_generate_mod3d.x fw_traveltime_sensitivity.x  fw_decipher_raypath.x  fw_crossterm_sensitivity.x \
+EXEC =       fw_generate_mod3d.x fw_traveltime_sensitivity.x  fw_decipher_raypath.x  fw_crossterm_sensitivity.x \
 ${EXEC_test}
 
 

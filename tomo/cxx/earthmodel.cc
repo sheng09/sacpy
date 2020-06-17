@@ -775,5 +775,6 @@ int earthmod3d::read_part2(FILE *fid, char mod, int *ndep, double **deps)
             exit(-1);
         }
     }
+    return 0;
 #undef MAXGRD
 }

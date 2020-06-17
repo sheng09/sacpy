@@ -16,7 +16,7 @@
 
 class layer {
 public:
-    layer() {};
+    layer() {}
     layer(double d0,   double d1, double p0,   double p1, double s0,   double s1, double rho0, double rho1)
     {
         init(d0, d1, p0, p1, s0, s1, rho0, rho1);
@@ -50,6 +50,7 @@ public:
         Ap = p0/pow(r0, Bp);
         Bs = (ISEQUAL(s0, 0.0)) ?  0.0: log(s0/s1) / log(r0/r1) ;
         As = (ISEQUAL(s0, 0.0)) ?  0.0: s0/pow(r0, Bs);
+        return 0;
     }
     char inside_layer(double depth)
     {
@@ -176,7 +177,7 @@ public:
         find_velocity_jump(verbose);
         return 0;
     }
-    int set_info(const char *info) { d_info = info; }
+    inline int set_info(const char *info) { d_info = info; return 0;  }
     //
     int search_layer(double depth);
     //int search_layer(const double depth1, const double depth2);
