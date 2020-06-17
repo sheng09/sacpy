@@ -10,13 +10,8 @@
 #include <string>
 #include <cstring>
 #include <unordered_map>
+#include "raypath.hh"
 
-#define DEG2RAD(x) ( (x)/180.0*3.1415926535)
-#define RAD2DEG(x) ( (x)*180.0/3.1415926535)
-//#define DEG360(x)  ( (x) < 0.0 ? ((x)+360) : (x) )
-#define ROUND_DEG360(x) ( fmod((x), 360.0) )       // return angle in [0, 360) degree
-#define ROUND_DEG180(x) ( fmod((x), 360.0)-180.0 ) // return angle in [-180, 180) degree
-//#define ISEQUAL(x, y) (fabsf((x)-(y)) < fabsf((x)+(y))*1.0e-20+1.0e-20 ? 1 : 0 ) // check if x and y equals or not
 template<typename T>
 bool ISEQUAL(T x, T y) {
     // the least accuray is 10^(-6) for double and 10^(-14) for double
@@ -209,8 +204,94 @@ public:
         }
         return false;
     }
-    int adjust_raypath(std::list<double> & lon, std::list<double> & lat, std::list<double> & depth );
+    int adjust_raypath_across_boundary(std::list<double> & lon, std::list<double> & lat, std::list<double> & depth ) const ;
+    int adjust_raypath_on_boundary(std::list<double> & lon, std::list<double> & lat, std::list<double> & depth ) const ;
+    int adjust_raypath(std::list<double> & lon, std::list<double> & lat, std::list<double> & depth ) const;
+    //
+    inline int geo2sph(double lon, double lat, double depth, double *theta, double *phi, double *r)  { 
+        *r =  d_earth_radius - depth;
+        *theta = lon;
+        *phi = 90.0 - lat;
+        return 0;
+    }
+    inline int sph2xyz(double theta, double phi, double r, double *x, double *y, double *z) 
+    { 
+        *x = r*sin(DEG2RAD(phi))*cos(DEG2RAD(theta));
+        *y = r*sin(DEG2RAD(phi))*sin(DEG2RAD(theta));
+        *z = r*cos(DEG2RAD(phi));
+        return 0;
+    }
+    inline int xyz2sph(double x, double y, double z, double *theta, double *phi, double *r) {
+        double tmp = x*x+y*y;
+        *theta = RAD2DEG( atan2(y, x) );
+        *phi   = RAD2DEG( atan2(sqrtf(tmp), z) );
+        *r = sqrtf( tmp+z*z );
+        return 0;
+    }
+    inline int sph2geo(double theta, double phi, double r, double *lon, double *lat, double *depth) {
+        *lat = 90.0 - phi;
+        *lon = ROUND_DEG360(theta); // longitude should be in the range of [0, 360) degree
+        *depth = d_earth_radius - r;
+        return 0;
+    } 
+    inline int geo2xyz(double lon, double lat, double depth, double *x, double *y, double *z) {
+        double theta, phi, r;
+        geo2sph(lon, lat, depth, &theta, &phi, &r);
+        sph2xyz(theta, phi, r, x, y, z);
+        return 0;
+    }
+    inline int xyz2geo(double x, double y, double z, double *lon, double *lat, double *depth) {
+        double theta, phi, r;
+        xyz2sph(x, y, z, &theta, &phi, &r);
+        sph2geo(theta, phi, r, lon, lat, depth);
+        return 0;
+    }
+    
+    inline int interpolate3D(double lon0, double lat0, double dep0, double lon1, double lat1, double dep1, 
+                                 double depth, double *lon, double *lat) 
+    {
+        double x0, y0, z0;
+        double x1, y1, z1;
+        geo2xyz(lon0, lat0, dep0, &x0, &y0, &z0);
+        geo2xyz(lon1, lat1, dep1, &x1, &y1, &z1);
+        double r = d_earth_radius - depth;
+        double a = x1-x0;
+        double b = y1-y0;
+        double c = z1-z0;
+        double A = a*a + b*b + c*c;
+        double B = 2.0*(a*x0 + b*y0 + c*z0);
+        double C = x0*x0 + y0*y0 + z0*z0 - r*r;
+        double delta = std::sqrt(B*B-4*A*C);
+        double l0 = (-B+delta)/A*0.5;
+        double l1=  (-B-delta)/A*0.5;
+        double vx0 = l0*a+x0;
+        double vy0 = l0*b+y0;
+        double vz0 = l0*c+z0;
+        double vx1 = l1*a+x0;
+        double vy1 = l1*b+y0;
+        double vz1 = l1*c+z0;
+        double junk;
+        double dis0 =   earthmod1d::length(x0, y0, z0, vx0, vy0, vz0) +
+                        earthmod1d::length(x1, y1, z1, vx0, vy0, vz0);
+        double dis1 =   earthmod1d::length(x0, y0, z0, vx1, vy1, vz1) +
+                        earthmod1d::length(x1, y1, z1, vx1, vy1, vz1);
+        if ( dis0 < dis1 )
+        {
+            xyz2geo(vx0, vy0, vz0, lon, lat, &junk);
+        }
+        else
+        {
+            xyz2geo(vx1, vy1, vz1, lon, lat, &junk);
+        }
+        return 0;
+    }
     // static method
+    static double length(double x1, double y1, double z1, double x2, double y2, double z2) {
+        double dx = x1-x2;
+        double dy = y1-y2;
+        double dz = z1-z2;
+        return sqrt(dx*dx+dy*dy+dz*dz);
+    }
     static double great_cirle_distance(double lon1, double lat1, double lon2, double lat2) {
         double dlamda = DEG2RAD( lon1-lon2 );
         double p1 = DEG2RAD(lat1);
@@ -232,35 +313,6 @@ private:
     // velocity jump
     std::vector<std::pair<int, float> >  d_layer_jump;
 };
-
-typedef struct s_pt3d
-{
-    /* data */
-    double d_lon, d_lat, d_depth;
-    double d_theta, d_phi, d_r;
-    double d_x, d_y, d_z;
-    /* method */
-    int init(double lon, double lat, double depth) {
-        d_lon = lon;
-        d_lat = lat;
-        d_depth = depth;
-        return 0;
-    }
-    int init(   double lon, double lat, double depth, 
-                double theta, double phi, double r, 
-                double x, double y, double z) {
-        d_lon = lon;
-        d_lat = lat;
-        d_depth = depth;
-        d_r = r;
-        d_theta = theta;
-        d_phi = phi;
-        d_x = x;
-        d_y = y;
-        d_z = z;
-        return 0;
-    }
-} pt3d;
 
 
 class earthmod3d {
@@ -295,51 +347,40 @@ public:
     int init(earthmod1d * mod1d, double dlon, double dlat, const double depth[], int ndep) ;
     int init(earthmod1d * mod1d, const double lons[], int nlon,  const double lats[], int nlat, const double depth[], int ndep );
     int init(earthmod1d * mod1d, const char *fnm, char mode);
-    int geo2sph(double lon, double lat, double depth, double *theta, double *phi, double *r)  { 
-        *r =  d_mod1d->radius() - depth;
-        *theta = lon;
-        *phi = 90.0 - lat;
+    inline int geo2sph(double lon, double lat, double depth, double *theta, double *phi, double *r)  { 
+        d_mod1d->geo2sph(lon, lat, depth, theta, phi, r);
         return 0;
     }
-    int sph2xyz(double theta, double phi, double r, double *x, double *y, double *z) 
-    { 
-        *x = r*sin(DEG2RAD(phi))*cos(DEG2RAD(theta));
-        *y = r*sin(DEG2RAD(phi))*sin(DEG2RAD(theta));
-        *z = r*cos(DEG2RAD(phi));
+    inline int sph2xyz(double theta, double phi, double r, double *x, double *y, double *z) { 
+        d_mod1d->sph2xyz(theta, phi, r, x, y, z);
         return 0;
     }
-    int xyz2sph(double x, double y, double z, double *theta, double *phi, double *r) {
-        double tmp = x*x+y*y;
-        *theta = RAD2DEG( atan2(y, x) );
-        *phi   = RAD2DEG( atan2(sqrtf(tmp), z) );
-        *r = sqrtf( tmp+z*z );
+    inline int xyz2sph(double x, double y, double z, double *theta, double *phi, double *r) {
+        d_mod1d->xyz2sph(x, y, z, theta, phi, r);
         return 0;
     }
-    int sph2geo(double theta, double phi, double r, double *lon, double *lat, double *depth) {
-        *lat = 90.0 - phi;
-        *lon = ROUND_DEG360(theta); // longitude should be in the range of [0, 360) degree
-        *depth = d_mod1d->radius() - r;
+    inline int sph2geo(double theta, double phi, double r, double *lon, double *lat, double *depth) {
+        d_mod1d->sph2geo(theta, phi, r, lon, lat, depth);
         return 0;
     } 
-    int geo2xyz(double lon, double lat, double depth, double *x, double *y, double *z) {
-        double theta, phi, r;
-        geo2sph(lon, lat, depth, &theta, &phi, &r);
-        sph2xyz(theta, phi, r, x, y, z);
+    inline int geo2xyz(double lon, double lat, double depth, double *x, double *y, double *z) {
+        d_mod1d->geo2xyz(lon, lat, depth, x, y, z);
         return 0;
     }
-    int xyz2geo(double x, double y, double z, double *lon, double *lat, double *depth) {
-        double theta, phi, r;
-        xyz2sph(x, y, z, &theta, &phi, &r);
-        sph2geo(theta, phi, r, lon, lat, depth);
+    inline int xyz2geo(double x, double y, double z, double *lon, double *lat, double *depth) {
+        d_mod1d->xyz2geo(x, y, z, lon, lat, depth);
         return 0;
     }
     // accessing 3-D grid 
+    const earthmod1d * mod1d() const { return d_mod1d; }
     int output_model(const char * filename, char mode); 
     int output_grd_pts(const char * filename, char type) ; 
     double vp(int pt_idx) { return d_vp[pt_idx]; }
     double vs(int pt_idx) { return d_vs[pt_idx]; }
     double slowness_p(int pt_idx) { return d_slowness_p[pt_idx]; }
     double slowness_s(int pt_idx) { return d_slowness_s[pt_idx]; }
+    const double * slowness_p_array() const { return d_slowness_p.data(); }
+    const double * slowness_s_array() const { return d_slowness_s.data(); }
     pt3d*  point(int pt_idx) { return &(d_pts[pt_idx]); }
     double lon(int pt_idx)   { return d_pts[pt_idx].d_lon; }
     double lat(int pt_idx)   { return d_pts[pt_idx].d_lat; }
@@ -713,10 +754,11 @@ private:
 /*
     A single raypath
 */
+/*
 class raypath3d {
 public:
     raypath3d() {}
-    raypath3d(earthmod3d *mod3d, const int npts, const double lons[], const double lats[], const double depth[] ) {
+    raypath3d(earthmod3d *mod3d, int npts, const double lons[], const double lats[], const double depth[] ) {
         init(mod3d, npts, lons, lats, depth);
         //output("I2_old.txt");
         //adjust_avoid_discontinuity();
@@ -726,7 +768,7 @@ public:
         init(mod3d, filename);
         //adjust_avoid_discontinuity();
     }
-    raypath3d(earthmod3d *mod3d, const int id, const char * filename, const char * tag) {
+    raypath3d(earthmod3d *mod3d, int id, const char * filename, const char * tag) {
         init(mod3d, id, filename, tag);
     }
     raypath3d(earthmod3d * mod3d, double evdp, double evlo, double evla, double stlo, double stla, char * phase ) {
@@ -758,7 +800,7 @@ public:
     int adjust_avoid_discontinuity();
     int grd_sensitivity();
     int output(const char * filename);
-    static double length(const double x1, const double y1, const double z1, const double x2, const double y2, const double z2) {
+    static double length(double x1, double y1, double z1, double x2, double y2, double z2) {
         double dx = x1-x2;
         double dy = y1-y2;
         double dz = z1-z2;
@@ -770,7 +812,7 @@ public:
     const char * tag() { return d_tag.c_str(); }
 private:
     int init(earthmod3d *mod3d, double evdp, double evlo, double evla, double stlo, double stla, char * phase );
-    int init(earthmod3d *mod3d, const int npts, const double lons[], const double lats[], const double depth[]);
+    int init(earthmod3d *mod3d, int npts, const double lons[], const double lats[], const double depth[]);
     int init(earthmod3d *mod3d, const std::list<double> lon, const std::list<double> lat, const std::list<double> depth );
     int init(earthmod3d *mod3d, const char *filename);
     int list2vec();
@@ -803,6 +845,428 @@ private:
     std::vector<double> d_x;
     std::vector<double> d_y;
     std::vector<double> d_z;
+};
+*/
+class raypath3d_segments {
+public:
+    raypath3d_segments()  {}
+    raypath3d_segments(earthmod3d *mod3d, int npts, const double lons[], const double lats[], const double depths[])  {
+        set_mod3d(mod3d);
+        set_path(npts, lons, lats, depths);
+    }
+    ~raypath3d_segments() {
+        d_mod3d = NULL;
+        if ( !d_lon_list.empty()   ) d_lon_list.clear();
+        if ( !d_lat_list.empty()   ) d_lat_list.clear();
+        if ( !d_depth_list.empty() ) d_depth_list.clear();
+        if ( !d_x.empty()          ) d_x.clear();
+        if ( !d_y.empty()          ) d_y.clear();
+        if ( !d_z.empty()          ) d_z.clear();
+    }
+    int npts() const { return d_lon_list.size(); }
+    // set 3-D model
+    int set_mod3d(earthmod3d * mod3d) { 
+        d_mod3d = mod3d; 
+        d_sensitivity.resize(d_mod3d->npts() );
+        d_sensitivity.assign(d_sensitivity.size(), 0.0);
+    }
+    // set and manipulate ray-path
+    int set_path_type(char type) { d_type = type; }
+    int set_path(const std::list<double> lon, const std::list<double> lat, const std::list<double> depth ) {
+        d_lon_list.assign(  lon.begin(),   lon.end()   );
+        d_lat_list.assign(  lat.begin(),   lat.end()   );
+        d_depth_list.assign(depth.begin(), depth.end() );
+        adjust_avoid_discontinuity();
+        geo2xyz();
+        return 0;
+    }
+    int set_path(int npts, const double lons[], const double lats[], const double depths[] ) {
+        d_lon_list.assign(lons, lons+npts);
+        d_lat_list.assign(lats, lats+npts);
+        d_depth_list.assign(depths, depths+npts);
+        adjust_avoid_discontinuity();
+        geo2xyz();
+        return 0;
+    }
+    int inter_denser_raypath(double dl) {
+        std::list<double> new_lon, new_lat, new_dep;
+        int npts = d_lon_list.size();
+        std::list<double>::iterator itlon = d_lon_list.begin();
+        std::list<double>::iterator itlat = d_lat_list.begin();
+        std::list<double>::iterator itdep = d_depth_list.begin();
+        //
+        for(int idx=1; idx<npts; ++idx, ++itlon, ++itlat, ++itdep) {
+            double x0 = d_x[idx-1], y0 = d_y[idx-1], z0 = d_z[idx-1];
+            double x1 = d_x[idx],   y1 = d_y[idx],   z1 = d_z[idx];
+            double l = raypath3d_segments::length(x0, y0, z0, x1, y1, z1);
+            if (l <= dl) {
+                new_lon.push_back( *itlon );
+                new_lat.push_back( *itlat );
+                new_dep.push_back( *itdep );
+                continue;
+            }
+            //////
+            int n = (int)(l/dl+1);
+            double deltax = (x1-x0)/n, deltay = (y1-y0)/n, deltaz = (z1-z0)/n;
+            for(int ipt=0; ipt<n; ++ipt) {
+                double x = (x0 + deltax*ipt);
+                double y = (y0 + deltay*ipt);
+                double z = (z0 + deltaz*ipt);
+                double lon, lat, dep;
+                d_mod3d->xyz2geo(x, y, z, &lon, &lat, &dep);
+                new_lon.push_back(lon);
+                new_lat.push_back(lat);
+                new_dep.push_back(dep);
+            }
+        }
+        new_lon.push_back( *itlon );
+        new_lat.push_back( *itlat );
+        new_dep.push_back( *itdep );
+        set_path(new_lon, new_lat, new_dep);
+        if (!new_lon.empty() ) { new_lon.clear(); }
+        if (!new_lat.empty() ) { new_lat.clear(); }
+        if (!new_dep.empty() ) { new_dep.clear(); }
+        return 0;
+    }
+    int double_denser_raypath() {
+        std::vector<double> old_x, old_y, old_z;
+        std::vector<double> new_x, new_y, new_z;
+        old_x.assign(d_x.begin(), d_x.end() );
+        old_y.assign(d_y.begin(), d_y.end() );
+        old_z.assign(d_z.begin(), d_z.end() );
+        int old_npts = d_x.size();
+        //
+        int new_npts = old_npts*2-1;
+        new_x.resize(new_npts);
+        new_y.resize(new_npts);
+        new_z.resize(new_npts);
+        for(int idx=0; idx<old_npts; ++idx) {
+            new_x[idx*2] = old_x[idx];
+            new_y[idx*2] = old_y[idx];
+            new_z[idx*2] = old_z[idx];
+        }
+        for(int idx=1; idx<new_npts; idx+=2) {
+            new_x[idx] = 0.5*(new_x[idx-1]+new_x[idx+1] );
+            new_y[idx] = 0.5*(new_y[idx-1]+new_y[idx+1] );
+            new_z[idx] = 0.5*(new_z[idx-1]+new_z[idx+1] );
+        }
+        //
+        for(int idx=0; idx<new_npts; ++idx) {
+            double x= new_x[idx], y= new_y[idx], z= new_z[idx];
+            d_mod3d->xyz2geo(x, y, z, &(new_x[idx]), &(new_y[idx]), &(new_z[idx]) );
+        }
+        set_path(new_npts, new_x.data(), new_y.data(), new_z.data() );
+        //
+        if(!old_x.empty() ) old_x.clear();
+        if(!old_y.empty() ) old_y.clear();
+        if(!old_z.empty() ) old_z.clear();
+        if(!new_x.empty() ) new_x.clear();
+        if(!new_y.empty() ) new_y.clear();
+        if(!new_z.empty() ) new_z.clear();
+        return 0;
+    }
+    int grd_sensitivity() {
+        d_sensitivity.assign(d_sensitivity.size(), 0.0);
+        int npts = d_lat_list.size();
+        int nseg = npts - 1;
+        std::list<double>::iterator lon0 = d_lon_list.begin();
+        std::list<double>::iterator lon1 = d_lon_list.begin(); ++lon1;
+        std::list<double>::iterator lat0 = d_lat_list.begin();
+        std::list<double>::iterator lat1 = d_lat_list.begin(); ++lat1;
+        std::list<double>::iterator dep0 = d_depth_list.begin();
+        std::list<double>::iterator dep1 = d_depth_list.begin(); ++dep1;
+        const double * slowness = (d_type == 'P' || d_type == 'S' ) ? d_mod3d->slowness_p_array() : d_mod3d->slowness_s_array();
+        for(int idx = 0; idx<nseg; ++idx, ++lon0, ++lon1, ++lat0, ++lat1, ++dep0, ++dep1) {
+            // length
+            int pt1=idx, pt2=idx+1;
+            double segment_length = raypath3d_segments::length( d_x[pt1], d_y[pt1], d_z[pt1], d_x[pt2], d_y[pt2], d_z[pt2] );
+            //printf("\n>>> segment length: %lf\n", segment_length);
+            double half_segment_length = 0.5*segment_length;
+            // interpolation for the middle point
+            if (false)
+            {
+                double x_mid = 0.5*(d_x[pt1]+d_x[pt2]);
+                double y_mid = 0.5*(d_y[pt1]+d_y[pt2]);
+                double z_mid = 0.5*(d_z[pt1]+d_z[pt2]);
+                double theta, phi, r;
+                double lon, lat, depth;
+                d_mod3d->xyz2sph(x_mid, y_mid, z_mid, &theta, &phi, &r);
+                d_mod3d->sph2geo(theta, phi, r, &lon, &lat, &depth);
+                //double lon=0.5*(d_lon[pt1]+d_lon[pt2]); 
+                //double lat=0.5*(d_lat[pt1]+d_lat[pt2]);
+                //double depth=0.5*(d_depth[pt1]+d_depth[pt2]);
+                int ilon, ilat, idep;
+                d_mod3d->search_grd(lon, lat, depth, &ilon, &ilat, &idep);
+                int i0, i1, i2, i3, i4, i5, i6, i7;
+                i0 = d_mod3d->point_index(ilon,   ilat,   idep  );
+                i1 = d_mod3d->point_index(ilon+1, ilat,   idep  );
+                i2 = d_mod3d->point_index(ilon,   ilat+1, idep  );
+                i3 = d_mod3d->point_index(ilon+1, ilat+1, idep  );
+                i4 = d_mod3d->point_index(ilon,   ilat,   idep+1);
+                i5 = d_mod3d->point_index(ilon+1, ilat,   idep+1);
+                i6 = d_mod3d->point_index(ilon,   ilat+1, idep+1);
+                i7 = d_mod3d->point_index(ilon+1, ilat+1, idep+1);
+                //double c0, c1, c2, c3, c4, c5, c6, c7;
+                //// s   = c0*s[i0] + c1*s[i1] + ...
+                //// t   = 0.5*l*(c0*s[i0] + c1*s[i1] + ...)
+                //// t   = d[i0] * s[i0] + ...
+                //// d[i0] = 0.5*l*c[i0]
+                //d_mod3d->interpolate3d(i0, i1, i2, i3, i4, i5, i6, i7, d_lon[pt1], d_lat[pt1], d_depth[pt1],
+                //                        &c0, &c1, &c2, &c3, &c4, &c5, &c6, &c7);
+
+                double d0, d1, d2, d3, d4, d5, d6, d7;
+                d_mod3d->interpolate_grd3d(ilon, ilat, idep, lon, lat, depth,
+                                        &d0, &d1, &d2, &d3, &d4, &d5, &d6, &d7);
+                //printf("%f %f %f %f    %f %f %f %f\n", c0, c1, c2, c3, c4, c5, c6, c7);
+                //printf("%f %f %f %f    %f %f %f %f\n", d0, d1, d2, d3, d4, d5, d6, d7);
+                //printf("%f %f %f %f    %f %f %f %f\n", c0-d0, c1-d1, c2-d2, c3-d3, c4-d4, c5-d5, c6-d6, c7-d7);
+                d_sensitivity[i0] += (d0*segment_length)*slowness[i0];
+                d_sensitivity[i1] += (d1*segment_length)*slowness[i1];
+                d_sensitivity[i2] += (d2*segment_length)*slowness[i2];
+                d_sensitivity[i3] += (d3*segment_length)*slowness[i3];
+                d_sensitivity[i4] += (d4*segment_length)*slowness[i4];
+                d_sensitivity[i5] += (d5*segment_length)*slowness[i5];
+                d_sensitivity[i6] += (d6*segment_length)*slowness[i6];
+                d_sensitivity[i7] += (d7*segment_length)*slowness[i7];
+                //printf("sens %lf %lf %lf  %d %d %d\n", lon, lat, depth, ilon, ilat, idep);
+                //printf("sens i0: %d %lf %lf = %lf * l / %lf (dep: %lf)\n", i0, d_sensitivity[i0], (d0*segment_length)/d_mod3d->vp(i0), d0,  d_mod3d->vp(i0), d_mod3d->depth(i0)  );
+                //printf("sens i1: %d %lf %lf = %lf * l / %lf (dep: %lf)\n", i1, d_sensitivity[i1], (d1*segment_length)/d_mod3d->vp(i1), d1,  d_mod3d->vp(i1), d_mod3d->depth(i1)  );
+                //printf("sens i2: %d %lf %lf = %lf * l / %lf (dep: %lf)\n", i2, d_sensitivity[i2], (d2*segment_length)/d_mod3d->vp(i2), d2,  d_mod3d->vp(i2), d_mod3d->depth(i2)  );
+                //printf("sens i3: %d %lf %lf = %lf * l / %lf (dep: %lf)\n", i3, d_sensitivity[i3], (d3*segment_length)/d_mod3d->vp(i3), d3,  d_mod3d->vp(i3), d_mod3d->depth(i3)  );
+                //printf("sens i4: %d %lf %lf = %lf * l / %lf (dep: %lf)\n", i4, d_sensitivity[i4], (d4*segment_length)/d_mod3d->vp(i4), d4,  d_mod3d->vp(i4), d_mod3d->depth(i4)  );
+                //printf("sens i5: %d %lf %lf = %lf * l / %lf (dep: %lf)\n", i5, d_sensitivity[i5], (d5*segment_length)/d_mod3d->vp(i5), d5,  d_mod3d->vp(i5), d_mod3d->depth(i5)  );
+                //printf("sens i6: %d %lf %lf = %lf * l / %lf (dep: %lf)\n", i6, d_sensitivity[i6], (d6*segment_length)/d_mod3d->vp(i6), d6,  d_mod3d->vp(i6), d_mod3d->depth(i6)  );
+                //printf("sens i7: %d %lf %lf = %lf * l / %lf (dep: %lf)\n", i7, d_sensitivity[i7], (d7*segment_length)/d_mod3d->vp(i7), d7,  d_mod3d->vp(i7), d_mod3d->depth(i7)  );
+                //printf("%f\n", segment_length);
+                //printf("%d %d %d @@ %f %f %f %f %f %f %f %f \n", ilon, ilat, idep, d0, d1, d2, d3, d4, d5, d6, d7);
+            }
+            // interpolation for the end point pt1
+            if (true)
+            {
+                int ilon, ilat, idep;
+                //d_mod3d->search_grd(d_lon[pt1], d_lat[pt1], d_depth[pt1], &ilon, &ilat, &idep);
+                d_mod3d->search_grd(*lon0, *lat0, *dep0, &ilon, &ilat, &idep);
+                int i0, i1, i2, i3, i4, i5, i6, i7;
+                i0 = d_mod3d->point_index(ilon,   ilat,   idep  );
+                i1 = d_mod3d->point_index(ilon+1, ilat,   idep  );
+                i2 = d_mod3d->point_index(ilon,   ilat+1, idep  );
+                i3 = d_mod3d->point_index(ilon+1, ilat+1, idep  );
+                i4 = d_mod3d->point_index(ilon,   ilat,   idep+1);
+                i5 = d_mod3d->point_index(ilon+1, ilat,   idep+1);
+                i6 = d_mod3d->point_index(ilon,   ilat+1, idep+1);
+                i7 = d_mod3d->point_index(ilon+1, ilat+1, idep+1);
+                //double c0, c1, c2, c3, c4, c5, c6, c7;
+                //// s   = c0*s[i0] + c1*s[i1] + ...
+                //// t   = 0.5*l*(c0*s[i0] + c1*s[i1] + ...)
+                //// t   = d[i0] * s[i0] + ...
+                //// d[i0] = 0.5*l*c[i0]
+                //d_mod3d->interpolate3d(i0, i1, i2, i3, i4, i5, i6, i7, d_lon[pt1], d_lat[pt1], d_depth[pt1],
+                //                        &c0, &c1, &c2, &c3, &c4, &c5, &c6, &c7);
+                double d0, d1, d2, d3, d4, d5, d6, d7;
+                d_mod3d->interpolate_grd3d(ilon, ilat, idep, *lon0, *lat0, *dep0,
+                                        &d0, &d1, &d2, &d3, &d4, &d5, &d6, &d7);
+                //printf("%f %f %f %f    %f %f %f %f\n", c0, c1, c2, c3, c4, c5, c6, c7);
+                //printf("%f %f %f %f    %f %f %f %f\n", d0, d1, d2, d3, d4, d5, d6, d7);
+                //printf("%f %f %f %f    %f %f %f %f\n", c0-d0, c1-d1, c2-d2, c3-d3, c4-d4, c5-d5, c6-d6, c7-d7);
+                d_sensitivity[i0] += (d0*half_segment_length)*slowness[i0];
+                d_sensitivity[i1] += (d1*half_segment_length)*slowness[i1];
+                d_sensitivity[i2] += (d2*half_segment_length)*slowness[i2];
+                d_sensitivity[i3] += (d3*half_segment_length)*slowness[i3];
+                d_sensitivity[i4] += (d4*half_segment_length)*slowness[i4];
+                d_sensitivity[i5] += (d5*half_segment_length)*slowness[i5];
+                d_sensitivity[i6] += (d6*half_segment_length)*slowness[i6];
+                d_sensitivity[i7] += (d7*half_segment_length)*slowness[i7];
+                //printf("%d %d %d @@ %f %f %f %f %f %f %f %f \n", ilon, ilat, idep, d0, d1, d2, d3, d4, d5, d6, d7);
+                //printf("sens %lf %lf %lf \n", d_lon[pt1], d_lat[pt1], d_depth[pt1] );
+                //printf("sens i0: %d %lf %lf = %lf * l / %lf (dep: %lf)\n", i0, d_sensitivity[i0], (d0*segment_length)/d_mod3d->vp(i0), d0,  d_mod3d->vp(i0), d_mod3d->depth(i0)  );
+                //printf("sens i1: %d %lf %lf = %lf * l / %lf (dep: %lf)\n", i1, d_sensitivity[i1], (d1*segment_length)/d_mod3d->vp(i1), d1,  d_mod3d->vp(i1), d_mod3d->depth(i1)  );
+                //printf("sens i2: %d %lf %lf = %lf * l / %lf (dep: %lf)\n", i2, d_sensitivity[i2], (d2*segment_length)/d_mod3d->vp(i2), d2,  d_mod3d->vp(i2), d_mod3d->depth(i2)  );
+                //printf("sens i3: %d %lf %lf = %lf * l / %lf (dep: %lf)\n", i3, d_sensitivity[i3], (d3*segment_length)/d_mod3d->vp(i3), d3,  d_mod3d->vp(i3), d_mod3d->depth(i3)  );
+                //printf("sens i4: %d %lf %lf = %lf * l / %lf (dep: %lf)\n", i4, d_sensitivity[i4], (d4*segment_length)/d_mod3d->vp(i4), d4,  d_mod3d->vp(i4), d_mod3d->depth(i4)  );
+                //printf("sens i5: %d %lf %lf = %lf * l / %lf (dep: %lf)\n", i5, d_sensitivity[i5], (d5*segment_length)/d_mod3d->vp(i5), d5,  d_mod3d->vp(i5), d_mod3d->depth(i5)  );
+                //printf("sens i6: %d %lf %lf = %lf * l / %lf (dep: %lf)\n", i6, d_sensitivity[i6], (d6*segment_length)/d_mod3d->vp(i6), d6,  d_mod3d->vp(i6), d_mod3d->depth(i6)  );
+                //printf("sens i7: %d %lf %lf = %lf * l / %lf (dep: %lf)\n", i7, d_sensitivity[i7], (d7*segment_length)/d_mod3d->vp(i7), d7,  d_mod3d->vp(i7), d_mod3d->depth(i7)  );
+                //printf("%f\n", segment_length);
+                //printf("%d %d %d @@ %f %f %f %f %f %f %f %f \n", ilon, ilat, idep, d0, d1, d2, d3, d4, d5, d6, d7);
+
+            }
+            // interpolation for the end point pt2
+            if (true)
+            {
+                int ilon, ilat, idep;
+                d_mod3d->search_grd(*lon1, *lat1, *dep1, &ilon, &ilat, &idep);
+                int i0, i1, i2, i3, i4, i5, i6, i7;
+                i0 = d_mod3d->point_index(ilon,   ilat,   idep  );
+                i1 = d_mod3d->point_index(ilon+1, ilat,   idep  );
+                i2 = d_mod3d->point_index(ilon,   ilat+1, idep  );
+                i3 = d_mod3d->point_index(ilon+1, ilat+1, idep  );
+                i4 = d_mod3d->point_index(ilon,   ilat,   idep+1);
+                i5 = d_mod3d->point_index(ilon+1, ilat,   idep+1);
+                i6 = d_mod3d->point_index(ilon,   ilat+1, idep+1);
+                i7 = d_mod3d->point_index(ilon+1, ilat+1, idep+1);
+
+                double d0, d1, d2, d3, d4, d5, d6, d7;
+                d_mod3d->interpolate_grd3d(ilon, ilat, idep, *lon1, *lat1, *dep1,
+                                        &d0, &d1, &d2, &d3, &d4, &d5, &d6, &d7);
+                d_sensitivity[i0] += (d0*half_segment_length)*slowness[i0];
+                d_sensitivity[i1] += (d1*half_segment_length)*slowness[i1];
+                d_sensitivity[i2] += (d2*half_segment_length)*slowness[i2];
+                d_sensitivity[i3] += (d3*half_segment_length)*slowness[i3];
+                d_sensitivity[i4] += (d4*half_segment_length)*slowness[i4];
+                d_sensitivity[i5] += (d5*half_segment_length)*slowness[i5];
+                d_sensitivity[i6] += (d6*half_segment_length)*slowness[i6];
+                d_sensitivity[i7] += (d7*half_segment_length)*slowness[i7];
+                //
+                //printf("sens %lf %lf %lf  %d %d %d\n", lon, lat, depth, ilon, ilat, idep);
+                //printf("sens %lf %lf %lf \n", d_lon[pt2], d_lat[pt2], d_depth[pt2] );
+                //printf("sens i0: %d %lf %lf = %lf * l / %lf (dep: %lf)\n", i0, d_sensitivity[i0], (d0*segment_length)/d_mod3d->vp(i0), d0,  d_mod3d->vp(i0), d_mod3d->depth(i0)  );
+                //printf("sens i1: %d %lf %lf = %lf * l / %lf (dep: %lf)\n", i1, d_sensitivity[i1], (d1*segment_length)/d_mod3d->vp(i1), d1,  d_mod3d->vp(i1), d_mod3d->depth(i1)  );
+                //printf("sens i2: %d %lf %lf = %lf * l / %lf (dep: %lf)\n", i2, d_sensitivity[i2], (d2*segment_length)/d_mod3d->vp(i2), d2,  d_mod3d->vp(i2), d_mod3d->depth(i2)  );
+                //printf("sens i3: %d %lf %lf = %lf * l / %lf (dep: %lf)\n", i3, d_sensitivity[i3], (d3*segment_length)/d_mod3d->vp(i3), d3,  d_mod3d->vp(i3), d_mod3d->depth(i3)  );
+                //printf("sens i4: %d %lf %lf = %lf * l / %lf (dep: %lf)\n", i4, d_sensitivity[i4], (d4*segment_length)/d_mod3d->vp(i4), d4,  d_mod3d->vp(i4), d_mod3d->depth(i4)  );
+                //printf("sens i5: %d %lf %lf = %lf * l / %lf (dep: %lf)\n", i5, d_sensitivity[i5], (d5*segment_length)/d_mod3d->vp(i5), d5,  d_mod3d->vp(i5), d_mod3d->depth(i5)  );
+                //printf("sens i6: %d %lf %lf = %lf * l / %lf (dep: %lf)\n", i6, d_sensitivity[i6], (d6*segment_length)/d_mod3d->vp(i6), d6,  d_mod3d->vp(i6), d_mod3d->depth(i6)  );
+                //printf("sens i7: %d %lf %lf = %lf * l / %lf (dep: %lf)\n", i7, d_sensitivity[i7], (d7*segment_length)/d_mod3d->vp(i7), d7,  d_mod3d->vp(i7), d_mod3d->depth(i7)  );
+                //printf("%f\n", segment_length);
+                //printf("%d %d %d @@ %f %f %f %f %f %f %f %f \n", ilon, ilat, idep, d0, d1, d2, d3, d4, d5, d6, d7);
+            }
+        }
+        ///
+        d_reference_time = 0.0;
+        for(int idx=0; idx<d_mod3d->npts(); ++idx) {
+            if ( fabs(d_sensitivity[idx]) < 1.0e-6 ) continue;
+            //double tmp = d_sensitivity[idx] / d_mod3d->vp(idx);
+            double tmp = d_sensitivity[idx]; // * d_mod3d->slowness_p(idx);
+            //printf("dt: %d %f %f %f \n", idx, d_sensitivity[idx], d_mod3d->slowness_p(idx),  tmp );
+            d_reference_time += tmp;
+        }
+        //printf("%f\n", d_traveltime_1d);
+        return 0;
+    }
+    static double length(double x1, double y1, double z1, double x2, double y2, double z2) {
+        double dx = x1-x2;
+        double dy = y1-y2;
+        double dz = z1-z2;
+        return sqrt(dx*dx+dy*dy+dz*dz);
+    }
+private:
+    int adjust_avoid_discontinuity() {
+        // xyz and sph coordinates are not updated
+        earthmod1d *mod1d = d_mod3d->mod1d();
+        mod1d->adjust_raypath(d_lon_list, d_lat_list, d_depth_list);
+        return 0;
+    }
+    int geo2xyz() {
+        int npts= d_lon_list.size();
+        d_x.resize(npts);
+        d_y.resize(npts);
+        d_z.resize(npts);
+        double theta, phi, r;
+        std::list<double>::iterator itlon = d_lon_list.begin();
+        std::list<double>::iterator itlat = d_lat_list.begin();
+        std::list<double>::iterator itdep = d_depth_list.begin();
+        for(int idx=0; idx<npts; ++idx, ++itlon, ++itlat, ++itdep) {
+            d_mod3d->geo2sph(*itlon, *itlat, *itdep, &theta, &phi, &r );
+            d_mod3d->sph2xyz(theta, phi, r, &(d_x[idx]), &(d_y[idx]), &(d_z[idx]) );
+        }
+        return 0;
+    }
+private:
+    /*
+        3-D Ray-path for S or P wave
+    */
+    char d_type; // can be 'S/P'
+    std::list<double>   d_lon_list;
+    std::list<double>   d_lat_list;
+    std::list<double>   d_depth_list;
+    std::vector<double> d_x;
+    std::vector<double> d_y;
+    std::vector<double> d_z;
+    /*
+        Reference travel-time and sensitivity given the background 1-D model
+    */
+    earthmod3d *d_mod3d;
+    double d_reference_time;
+    std::vector<double> d_sensitivity;
+};
+
+class raypath3d {
+public:
+    raypath3d()  {}
+    ~raypath3d() {}
+private:
+    int set_boundary(double CMB= 2891.50, double ICB= 5153.50) {
+        d_CMB = CMB;
+        d_ICB = ICB;
+        return 0;
+    }
+    int init(const char * phase, int npts, double lons[], double lats[], double depths[] ) {
+        d_phase = phase;
+        std::list<double> lon_list(lons, lons+npts);
+        std::list<double> lat_list(lats, lons+npts);
+        std::list<double> dep_list(depths, lons+npts);
+        // Check and insert points on discontinuities.
+        const earthmod1d *mod1d =  d_mod3d->mod1d();
+        mod1d->adjust_raypath_across_boundary(lon_list, lat_list, dep_list); 
+        // Check whether there are mixture of P and S waves along the whole ray-path
+        bool flag_p = (d_phase.find('P') || d_phase.find('p') || d_phase.find('K') || d_phase.find('I') );
+        bool flag_s = (d_phase.find('S') || d_phase.find('s') || d_phase.find('J') );
+        if (flag_p  && (!flag_s) ) // that is purely a P wave related path
+        {
+            d_segments.resize(1);
+            d_segments[0].set_mod3d(d_mod3d);
+            d_segments[0].set_path_type('P');
+            d_segments[0].set_path(lon_list, lat_list, dep_list);
+        }
+        else if ( (!flag_p) && flag_s ) // that is purely a S wave relate path
+        {
+            d_segments.resize(1);
+            d_segments[0].set_mod3d(d_mod3d);
+            d_segments[0].set_path_type('S');
+            d_segments[0].set_path(lon_list, lat_list, dep_list);
+        }
+        else // that is a mixture of P and S waves in the ray-path.
+        {
+            // Search for the intersection between ray-paths and Earth boundaries that include 
+            // 1) free surface, 2) CMB and 3) ICB
+            std::list<std::list<double>::iterator> lon_boundaries; lon_boundaries.push_back(lon_list.begin() );
+            std::list<std::list<double>::iterator> lat_boundaries; lat_boundaries.push_back(lat_list.begin() );
+            std::list<std::list<double>::iterator> dep_boundaries; dep_boundaries.push_back(dep_list.begin() );
+            
+            std::list<double>::iterator itlon = lon_list.begin(); ++itlon;
+            std::list<double>::iterator itlat = lat_list.begin(); ++itlat;
+            std::list<double>::iterator itdep = dep_list.begin(); ++itdep;
+            for(; itlon != lon_list.end(); ++itlon, ++itlat, ++itdep) 
+            {
+                if ( ISEQUAL(*itdep, 0.0 ) || ISEQUAL(*itdep, d_CMB ) || ISEQUAL(*itdep, d_ICB ) )
+                {
+                    lon_boundaries.push_back( itlon );
+                    lat_boundaries.push_back( itlat );
+                    dep_boundaries.push_back( itdep );
+                }
+            }
+            lon_boundaries.push_back(lon_list.end() );
+            lat_boundaries.push_back(lat_list.end() );
+            dep_boundaries.push_back(dep_list.end() );
+            // Now to cut the ray-paths into segments
+            std::list<double> segment_lon;
+            std::list<double> segment_lat;
+            std::list<double> segment_dep;
+            // 
+            std::string::iterator    itphase = d_phase.begin();
+            std::list<int>::iterator it0 = index_boundaries.begin();
+            std::list<int>::iterator it1 = i0; ++idx1;
+            for(;;) {
+            }
+        }
+        return 0;
+    }
+private:
+    earthmod3d * d_mod3d;
+    double  d_CMB = 2891.50; // depth in km
+    double  d_ICB = 5153.50; // depth in km
+    std::string d_phase;
+    std::vector<raypath3d_segments> d_segments;
 };
 
 /*

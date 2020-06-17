@@ -92,6 +92,9 @@ int main(int argc, char const *argv[])
         // fprintf(stdout, "    %d: %.12lf %.12lf %.12lf\n", test_idx, lons[test_idx], lats[test_idx], deps[test_idx] );
         ray.init(c_phase, npts, lons.data(), lats.data(), deps.data(),time, rp, c_tag, 2);
 
+        if( !lons.empty() ) lons.clear();
+        if( !lats.empty() ) lats.clear();
+        if( !deps.empty() ) deps.clear();
         //
         int n_seg = ray.size();
         hid_t single_path = H5Gcreate2(grp_segments, sub_grp_name, H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);

@@ -264,113 +264,190 @@ int earthmod1d::output_profile(const char *filename) {
     fclose(fp);
     return 0;
 }
-int earthmod1d::adjust_raypath(std::list<double> & lon, std::list<double> & lat, std::list<double> & depth ) {
+int earthmod1d::adjust_raypath_across_boundary(std::list<double> & lons, std::list<double> & lats, std::list<double> & depths ) const {
     ////////////////////////////////////////////////////////////////////////// 
     // adjust the raypath to avoid line segments across the discontinuity   //
     //////////////////////////////////////////////////////////////////////////
-    std::list<double>::iterator itlon = lon.begin();
-    std::list<double>::iterator itlat = lat.begin();
-    std::list<double>::iterator itdep = depth.begin();
-    double dis_depth;
-    for( ; itdep != depth.end();  ) {
-        ++itdep;
-        if (itdep == depth.end() ) {
-            break;
-        }
-        double d1 = *(itdep);
-        double d0 = *(--itdep);
-        if ( is_depth_cross_discontinuity(d0, d1, &dis_depth) ) {
-            ++itdep;
-            double lon0 = *(itlon), lon1 = *(++itlon);
-            double lat0 = *(itlat), lat1 = *(++itlat);
-            double new_lon = (dis_depth-d0)/(d1-d0)* lon1 + (d1-dis_depth)/(d1-d0)* lon0; 
-            double new_lat = (dis_depth-d0)/(d1-d0)* lat1 + (d1-dis_depth)/(d1-d0)* lat0; 
-            depth.insert(itdep, dis_depth);
-            lon.insert(itlon, new_lon);
-            lat.insert(itlat, new_lat);
-
-            --itlon; --itlat; --itdep;
-        }
-        else
+    std::list<double>::iterator lon0, lat0, dep0;
+    std::list<double>::iterator lon1, lat1, dep1;
+    lon0 = lons.begin();
+    lat0 = lats.begin();
+    dep0 = depths.begin();
+    lon1 = lon0; ++lon1;
+    lat1 = lat0; ++lat1;
+    dep1 = dep0; ++dep1;
+    for( ;lon1!=lons.end(); ++lon0, ++lat0, ++dep0, ++lon1, ++lat1, ++dep1)
+    {
+        double depth_discontinuity;
+        // the ray segment between point 0 and point 1 should not cross more than two discontinuities.
+        if ( is_depth_cross_discontinuity(*dep0, *dep1, &depth_discontinuity) ) 
         {
-            ++itdep, ++itlon, ++itlat;
+            if( ((*dep0-depth_discontinuity)*(*dep1-depth_discontinuity) < 0) &&
+                (!ISEQUAL(*dep0, depth_discontinuity))  && 
+                (!ISEQUAL(*dep1, depth_discontinuity))        ) // the line segment cross the `depth_discontinuity`
+            {
+                //       0         1
+                //   ----*---------*----
+                //             ^ here to insert
+                double new_lon, new_lat;
+                interpolate3D(*lon0, *lat0, *dep0, *lon1, *lat1, *dep1, depth_discontinuity, &new_lon, &new_lat);
+                lons.insert(lon1, new_lon);
+                lats.insert(lat1, new_lat);
+                depths.insert(dep1, depth_discontinuity);
+                ++lon0;
+                ++lat0;
+                ++dep0;
+            }
         }
     }
+    return 0;
+}
+int earthmod1d::adjust_raypath_on_boundary(std::list<double> & lons, std::list<double> & lats, std::list<double> & depths ) const  {
     /////////////////////////////////////////////////////////////// 
     // adjust the raypath to avoid points on the discontinuity   //
     ///////////////////////////////////////////////////////////////
-    
-    static double derr = 1.0e-6; // 1.0e-6 is very good
+    static double derr = 1.0e-6; // 1.0e-6 present very good performence
     int junk1, junk2;
-    itlon = lon.begin();
-    itlat = lat.begin();
-    itdep = depth.begin();
+    std::list<double>::iterator itlon0 = lons.begin();
+    std::list<double>::iterator itlat0 = lats.begin();
+    std::list<double>::iterator itdep0 = depths.begin();
 
+    std::list<double>::iterator itlon1 = itlon0 ; ++itlon1;
+    std::list<double>::iterator itlat1 = itlat0 ; ++itlat1;
+    std::list<double>::iterator itdep1 = itdep0 ; ++itdep1;
+
+    std::list<double>::iterator itlon2 = itlon1 ; ++itlon2;
+    std::list<double>::iterator itlat2 = itlat1 ; ++itlat2;
+    std::list<double>::iterator itdep2 = itdep1 ; ++itdep2;
+
+    // Check the first point
+    if ( is_depth_on_discontinuity(*itdep0, &junk1, &junk2) ) {
+        if (*itdep0 < *itdep1)
+        {
+            ///
+            //   * x0    here we need to move x0 lowerward a little bit
+            //    \  
+            //     \ 
+            //      * x1
+            ///
+            *itdep0 += derr;
+        }
+        else
+        {
+            ///
+            //       * x1
+            //      /
+            //     /
+            //    * x0    here we need to move x0 upward a little bit
+            ///
+            *itdep0 -= derr;
+        }
+    }
+    // Check points in the middle
     double x0, x1, x2;
-    for( ; itdep != depth.end() ; ++itdep, ++itlon, ++itlat ) {
-        if ( is_depth_on_discontinuity(*itdep, &junk1, &junk2) ) {
-            x0 = *(--itdep);
-            x1 = *(++itdep);
-            x2 = *(++itdep);
-            --itdep;
+    for( ;  itdep2 != depths.end() ; 
+            ++itdep0, ++itlon0, ++itlat0, ++itdep1, ++itlon1, ++itlat1, ++itdep2, ++itlon2, ++itlat2 )
+    {
+        if ( is_depth_on_discontinuity(*itdep1, &junk1, &junk2) ) {
+            x0 = *itdep0;
+            x1 = *itdep1;
+            x2 = *itdep2;
             if (x0 < x1 && x2 <= x1) 
             {
                 ///
                 //   * x0  * x2 
                 //    \   /
                 //     \ /
-                //      * x1 (itdep)
+                //      * x1 (itdep1)
                 ///
-                *itdep -= derr;
+                *itdep1 -= derr;
             } 
             else if (x0 < x1 && x2 > x1) 
             { 
                 ///
-                //   * x0 
-                //    \   
-                //     * x1 (itdep)
-                //      \
-                //       * x2 
+                //   * x0 (itdep0)         * x0 (itdep0)        
+                //    \                     \                   
+                //     \                     *  <== insert point here
+                //      \                     \                 
+                //       * x1 (itdep1)         * x1 (itdep1)    
+                //        \                     \               
+                //         * x2 (itdep2)         * x2 (itdep2)  
                 ///
-                depth.insert(itdep, *itdep);
-                --itdep;
-                *itdep -= derr;
-                ++itdep;
-                *itdep += derr;
-                lon.insert(itlon, *itlon);
-                lat.insert(itlat, *itlat);
+                depths.insert(itdep1, *itdep1); // insert and move the itdep0 pointer
+                ++itdep0;
+                //
+                *itdep0 -= derr;
+                *itdep1 += derr;
+                lons.insert(itlon1, *itlon1);
+                lats.insert(itlat1, *itlat1);
 
             } 
             else if ( x0 > x1 && x2 >= x1) 
             {
                 ///
-                //      * x1 (itdep)
+                //      * x1 (itdep1)
                 //     / \
                 //    /   \
                 //   * x0  * x2 
                 ///
-                *itdep += derr;
+                *itdep1 += derr;
             } 
             else if ( x0 > x1 && x2 < x1) 
             {
                 ///
-                //        * x2 
-                //       /
-                //      * x1 (itdep)
-                //     / 
-                //    * x0
+                //          * x2 (itdep2)            * x2 (itdep2)  
+                //         /                        /               
+                //        * x1 (itdep1)            * x1 (itdep1)    
+                //       /                        /                 
+                //      /                        * <== insert point here
+                //     /                        /                   
+                //    * x0 (itdep0)            * x0 (itdep0)        
                 ///
-                depth.insert(itdep, *itdep);
-                --itdep;
-                *itdep += derr;
-                ++itdep;
-                *itdep -= derr;
-                lon.insert(itlon, *itlon);
-                lat.insert(itlat, *itlat);
+                depths.insert(itdep1, *itdep1);
+                ++itdep0;
+                //
+                *itdep0 += derr;
+                *itdep1 -= derr;
+                lons.insert(itlon1, *itlon1);
+                lats.insert(itlat1, *itlat1);
             }
         }
     }
-    
+    // Check the last point
+    itlon1 = lons.end(); --itlon1;
+    itlat1 = lats.end(); --itlat1;
+    itdep1 = depths.end(); --itdep1;
+
+    itlon2 = itlon1 ; --itlon2;
+    itlat2 = itlat1 ; --itlat2;
+    itdep2 = itdep1 ; --itdep2;
+    if ( is_depth_on_discontinuity(*itdep2, &junk1, &junk2) ) {
+        if (*itdep1 < *itdep2)
+        {
+            ///
+            //   * x1
+            //    \  
+            //     \ 
+            //      * x2   here we need to move x2 upward a little bit
+            ///
+            *itdep2 -= derr;
+        }
+        else
+        {
+            ///
+            //       * x2  here we need to move x2 lowerward a little bit
+            //      /
+            //     /
+            //    * x1 
+            ///
+            *itdep2 += derr;
+        }
+    }
+    return 0;
+}
+int earthmod1d::adjust_raypath(std::list<double> & lons, std::list<double> & lats, std::list<double> & depths ) const {
+    adjust_raypath_across_boundary(lons, lats, depths);
+    adjust_raypath_on_boundary(lons, lats, depths);
     return 0;
 }
 /* 
@@ -668,39 +745,9 @@ int earthmod3d::output_grd_pts(const char * filename, char type ) {
 /*
     raypath3d
 */
+
 int raypath3d::init(earthmod3d *mod3d, double evdp, double evlo, double evla, double stlo, double stla , char * phase) {
-    /*
-    d_mod3d = mod3d;
-    printf("start\n");
-    //
     
-    PyObject *pName, *pModule, *pDict, *pFunc, *pValue, *pArgs;
-    Py_Initialize();
-    pModule = PyImport_ImportModule("test");
-    pDict = PyModule_GetDict(pModule);
-    pFunc = PyDict_GetItemString(pDict, "run" );
-    if (PyCallable_Check(pFunc)) 
-    {
-        //PyObject_CallObject(pFunc, NULL);
-        pArgs = PyTuple_New(6);
-        pValue = PyFloat_FromDouble( evdp );
-        PyTuple_SetItem(pArgs, 0, pValue); 
-        pValue = PyFloat_FromDouble( evla );
-        PyTuple_SetItem(pArgs, 1, pValue); 
-        pValue = PyFloat_FromDouble( evlo );
-        PyTuple_SetItem(pArgs, 2, pValue); 
-        pValue = PyFloat_FromDouble( stla );
-        PyTuple_SetItem(pArgs, 3, pValue); 
-        pValue = PyFloat_FromDouble( stlo );
-        PyTuple_SetItem(pArgs, 4, pValue); 
-        pValue = PyUnicode_FromString( phase );
-        PyTuple_SetItem(pArgs, 5, pValue); 
-        pValue = PyObject_CallObject(pFunc, pArgs);
-    } else 
-    {
-        PyErr_Print();
-    }
-    */
     //pModule_taup = PyImport_ImportModule("obspy.taup"); 
     //pFunc = PyObject_GetAttrString(pModule_taup, "TauPyModel");    
     //pValue_mod_ak135 = PyDict_GetItemString(pFunc, "ak135");
@@ -824,16 +871,15 @@ int raypath3d::adjust_avoid_discontinuity() {
     return 0;
 }
 int raypath3d::old_adjust_avoid_discontinuity() {
-    /*
-    earthmod1d *mod1d = d_mod3d->mod1d();
-    int junk1, junk2;
-    for (int idx=0; idx<d_npts; ++idx) {
-        if( mod1d->is_depth_on_discontinuity(d_depth[idx], &junk1, &junk2) ) {
-            printf("Ray-path point on discontinuity %f \n", d_depth[idx] );
-            d_depth[idx] += 0.001;
-        }
-    }
-    */
+    //earthmod1d *mod1d = d_mod3d->mod1d();
+    //int junk1, junk2;
+    //for (int idx=0; idx<d_npts; ++idx) {
+    //    if( mod1d->is_depth_on_discontinuity(d_depth[idx], &junk1, &junk2) ) {
+    //        printf("Ray-path point on discontinuity %f \n", d_depth[idx] );
+    //        d_depth[idx] += 0.001;
+    //    }
+    //}
+    
     earthmod1d *mod1d = d_mod3d->mod1d();
     std::vector<int> pt_idx(256); // 256 seems enough here
     int sz = 0;
@@ -1145,7 +1191,7 @@ int raypath3d::output(const char * filename) {
     }
     fclose(fid);
 }
-
+*/
 
 /*
 int main(int argc, char *argv[])

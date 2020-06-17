@@ -104,6 +104,7 @@ int main(int argc, char *argv[])
     {
         verbose_print(0, "Start running for each raypath...\n");
     }
+    std::vector<double> lons, lats, deps;
     for (int idx=0; idx<nray; ++idx)
     {
         static char sub_grp_name[4096];
@@ -133,7 +134,9 @@ int main(int argc, char *argv[])
             verbose_print(1, verbose_msg);
         }
 
-        std::vector<double> lons(npts), lats(npts), deps(npts);
+        lons.resize(npts);
+        lats.resize(npts);
+        deps.resize(npts);
         std::string loc(sub_grp_name);
         std::string loclon = loc+"/lon";
         std::string loclat = loc+"/lat";  
@@ -145,7 +148,7 @@ int main(int argc, char *argv[])
         // check ray-path
         // int test_idx = 900;
         // fprintf(stdout, "    %d: %.12lf %.12lf %.12lf\n", test_idx, lons[test_idx], lats[test_idx], deps[test_idx] );
-        ray.init(c_phase, npts, lons.data(), lats.data(), deps.data(),time, rp, c_tag, 2);
+        ray.init(c_phase, npts, lons.data(), lats.data(), deps.data(), time, rp, c_tag, 2);
 
         if (verbose)
         {
@@ -155,9 +158,9 @@ int main(int argc, char *argv[])
         gmat.run(*mod3d, ray, 3);
         double t  = gmat.time_1d();
         double t0 = ray.traveltime_taup();
+        double t3d =gmat.time_3d();
         if (verbose)
         {    
-            double t3d =gmat.time_3d();
             double relative_err = fabs((t0-t)/t)*100;
             double dt = t3d-t;
 
@@ -168,8 +171,14 @@ int main(int argc, char *argv[])
         
         // set sensitivity
         hid_t single_sens = H5Gcreate2(grp_sens, sub_grp_name, H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
+        H5LTset_attribute_int(single_sens, ".", "id", &id, 1);
+        H5LTset_attribute_double(single_sens, ".", "ray_param", &rp, 1);
+        H5LTset_attribute_string(single_sens, ".", "phase", c_phase);
+        H5LTset_attribute_string(single_sens, ".", "tag",   c_tag);
+
         H5LTset_attribute_double(single_sens, ".", "time1d", &t, 1);
         H5LTset_attribute_double(single_sens, ".", "time1d_taup", &t0, 1);
+        H5LTset_attribute_double(single_sens, ".", "time3d", &t3d, 1);
         std::vector<int> row_index;
         std::vector<double> row_value;
 
@@ -188,8 +197,14 @@ int main(int argc, char *argv[])
         H5LTmake_dataset_int(single_sens,    "index_S", 1, dim, row_index.data() );
         H5LTmake_dataset_double(single_sens, "value_S", 1, dim, row_value.data() );
         
+        if (!row_index.empty() ) row_index.clear();
+        if (!row_value.empty() ) row_value.clear();
+
         H5Gclose(single_sens);
     }
+    if( !lons.empty() ) lons.clear();
+    if( !lats.empty() ) lats.clear();
+    if( !deps.empty() ) deps.clear();
     H5Gclose(grp_raypath);
     H5Fclose(fid);
     H5Gclose(grp_sens);

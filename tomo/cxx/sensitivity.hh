@@ -3,7 +3,7 @@
 
 #include "raypath.hh"
 #include "earthmodel.hh"
-
+#include <string>
 /*
 class sensitivity : public std::pair<std::vector<double> , std::vector<double>  > // .first is P wave sensitivity and ,second is S wave sensitivity
 {
@@ -194,20 +194,32 @@ class sensitivity_zip : std::pair<row_element, row_element >
 {
 public:
     sensitivity_zip() {}
+    sensitivity_zip(int psize, const int *pid, const double *pv, int ssize, const int *sid, const double *sv) 
+    {
+        set(psize, pid, pv, ssize, sid, sv);
+    }
     ~sensitivity_zip() { clear(); }
-    int clear()
+    virtual int clear()
     {
         row_element & tmp1 = p_sensitivity();
         if (!tmp1.empty() ) tmp1.clear();
         row_element & tmp2 = s_sensitivity();
         if (!tmp2.empty() ) tmp2.clear();
 
+        if( !d_phase.empty() ) d_phase.clear();
+        d_id = -1;
+        if( !d_tag.empty() ) d_tag.clear();
+
+        d_ray_param = -12345.0;
+
+        d_time_1d_taup = 0.0;
         d_time_1d = 0.0;
         d_time_3d = 0.0;
         return 0;
     }
     row_element & p_sensitivity() { return this->first; }
     row_element & s_sensitivity() { return this->second; }
+    // Compute sensitivity given a raypath and a parameterised 3D Earth model.
     int run(earthmod3d & mod3d, raypath3d & ray, int verbose_level)
     {
         clear();
@@ -266,8 +278,55 @@ public:
         }
         return 0;
     }
+    
+    // Set sensitivity given arrays
+    int set(int psize, const int *pid, const double *pv, int ssize, const int *sid, const double *sv)
+    {
+        clear();
+        row_element & p = this->p_sensitivity();
+        row_element & s = this->s_sensitivity();
+        for(int idx=0; idx<psize; ++idx)
+        {
+            int id = pid[idx];
+            double v = pv[idx];
+            if (p.find(id) !=p.end() ) 
+            {
+                fprintf(stderr, "Err in sensitivity_zip:set(...). Duplicated sensitivity index.\n");
+                exit(-1);
+            }
+            p[id] = v;
+        }
+        for(int idx=0; idx<ssize; ++idx)
+        {
+            int id = sid[idx];
+            double v = sv[idx];
+            if (s.find(id) != s.end() )
+            {
+                fprintf(stderr, "Err in sensitivity_zip:set(...). Duplicated sensitivity index.\n");
+                exit(-1);
+            }
+            s[id] = v;
+        }
+        return 0;
+    }
+    
+    int set_phase(const char * phase) { d_phase = phase; return 0; }
+    int set_id(int id) { d_id=id; }
+    inline int set_time_1d_taup(double t) { d_time_1d_taup = t; return 0; }
+    inline int set_time_1d(double t) { d_time_1d = t; return 0; }
+    inline int set_time_3d(double t) { d_time_3d = t; return 0; }
+    inline int set_tag(const char *tag) { d_tag = tag; return 0; }
+    inline int set_rayparam(double v) { d_ray_param = v; return 0; }
+
+    // Access data
+    inline int id() { return d_id; }
+    virtual std::string & phase() { return d_phase; }
+    double time_1d_taup() { return d_time_1d_taup; }
     double time_1d() { return d_time_1d; }
     double time_3d() { return d_time_3d; }
+    std::string & tag() { return d_tag; }
+    double rayparam() { return d_ray_param; }
+
     int obtain_sensitivity(std::vector<int> & index, std::vector<double> & value, char type )
     {
         row_element & sens = (type == 'P' ) ?  p_sensitivity() : s_sensitivity() ;
@@ -432,8 +491,91 @@ private:
         if ( !u.empty() ) { u.clear(); }
         return 0;
     }
+    std::string d_phase;
+    int d_id;
+    std::string d_tag;
+    double d_ray_param;
+protected:
+    double d_time_1d_taup;
     double d_time_1d; // this is in fact the sum of all sensitivities.
     double d_time_3d; // apply peturbations
+};
+
+class cc_sensitivity_zip : public sensitivity_zip
+{
+public:
+    cc_sensitivity_zip() {}
+    cc_sensitivity_zip(int psize, const int *pid, const double *pv, int ssize, const int *sid, const double *sv) 
+    {
+        set(psize, pid, pv, ssize, sid, sv);
+    }
+    ~cc_sensitivity_zip() { clear(); }
+    // Compute sensitivity of a cross-term, that is the difference between two body-wave sensitivities, here s1-s2.
+    int run_crossterm(sensitivity_zip & sen1, sensitivity_zip & sen2)
+    {
+        clear();
+        // p wave
+        row_element & p1 = sen1.p_sensitivity();
+        row_element & p2 = sen2.p_sensitivity();
+        row_element & dp = this->p_sensitivity();
+        dp = p1;
+        for(row_element::iterator it=p2.begin(); it!=p2.end(); ++it )
+        {
+            int id = it->first;
+            double v = it->second;
+            dp[id] =  (dp.find(id) == dp.end() ) ? ( -v ) : ( dp[id]-v ) ;
+        }
+        // s wave
+        row_element & s1 = sen1.s_sensitivity();
+        row_element & s2 = sen2.s_sensitivity();
+        row_element & ds = this->s_sensitivity();
+        ds = s1;
+        for(row_element::iterator it=s2.begin(); it!=s2.end(); ++it )
+        {
+            int id = it->first;
+            double v = it->second;
+            ds[id] = (ds.find(id) == ds.end() ) ? ( -v ) : ( ds[id]-v );
+        }
+
+        //
+        d_time_1d_taup = sen1.time_1d_taup() - sen2.time_1d_taup();
+        d_time_1d = sen1.time_1d() - sen2.time_1d();
+        d_time_3d = sen1.time_3d() - sen2.time_3d();
+        d_phase1 = sen1.phase();
+        d_phase2 = sen2.phase();
+        d_id1 = sen1.id();
+        d_id2 = sen2.id();
+        d_tag1 = sen1.tag();
+        d_tag2 = sen2.tag();
+        d_rayparam1 = sen1.rayparam();
+        d_rayparam2 = sen2.rayparam();
+        return 0;
+    }
+    inline std::string & phase1() { return d_phase1; }
+    inline std::string & phase2() { return d_phase2; }
+
+    virtual int clear()
+    { 
+        sensitivity_zip::clear();
+        d_id1 = -1;
+        d_id2 = -1;
+        d_ccid = -1;
+        if( !d_phase1.empty() ) d_phase1.clear();
+        if( !d_phase2.empty() ) d_phase2.clear();
+        if( !d_tag1.empty() ) d_tag1.clear();
+        if( !d_tag2.empty() ) d_tag2.clear();
+        d_rayparam1 = -12345.0;
+        d_rayparam2 = -12345.0;
+        return 0;
+    }
+private:
+    int d_id1, d_id2;
+    int d_ccid;
+    std::string d_phase1, d_phase2;
+    std::string d_tag1, d_tag2;
+    double d_rayparam1, d_rayparam2;
+private:
+    using sensitivity_zip::phase;
 };
 
 #endif
