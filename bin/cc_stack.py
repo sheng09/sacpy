@@ -449,9 +449,11 @@ class cc_stack_rcv_pairs:
                     continue
                 ### select max az difference
                 az2 = az[idx2]
-                daz = az1-az2
+                daz = np.abs(az1-az2)
+                if daz > 90.0:
+                    daz = 180.0-daz
                 if self.global_select_stack_az_diff:
-                    if (self.global_select_stack_az_diff_deg_min <= np.abs(daz) <= self.global_select_stack_az_diff_deg_max) == self.global_select_stack_az_reverse:
+                    if (self.global_select_stack_az_diff_deg_min <= daz <= self.global_select_stack_az_diff_deg_max) == self.global_select_stack_az_reverse:
                         msg = self.select_stack_msg_template % ('NA', evlo, evla, stlo1, stla1, stlo2, stla2, distance, -12345, -12345, az1, az2, daz, -12345 )
                         mpi_print_log(msg, 2, self.local_log_fp, True )
                         continue
