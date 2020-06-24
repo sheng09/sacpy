@@ -16,7 +16,7 @@ from glob import glob
 def make_h5_from_sac(sac_fnm_template, h5_fnm, cut_marker=None, cut_range=None, h5_grp_name='raw_sac', user_message=''):
     """
     Generate an HDF5 file from many sac files.
-    
+
     Return an object of `alignedSac2Hdf5`.
     """
     app = alignedSac2Hdf5(getpass.getuser(), user_message)
@@ -104,7 +104,9 @@ class alignedSac2Hdf5:
             t1, t2 = cut_range
             for idx, fnm in enumerate(self.sac_fnm_lst):
                 tmp = sac.rd_sac_2(fnm, cut_marker, t1, t2)
-                dset[idx,:tmp['npts']] = tmp['dat']
+                min_npts = npts if npts < tmp['npts'] else tmp['npts']
+                #print(npts, tmp['npts'], min_npts )
+                dset[idx,:min_npts] = tmp['dat'][:min_npts]
                 g['npts'][idx] = tmp['npts']
                 g['b'][idx] = tmp['b']
                 g['e'][idx] = tmp['e']
@@ -124,7 +126,7 @@ class alignedSac2Hdf5:
         """
         Return a list of SACTRACE objects.
         """
-        
+
         ###
         grp_hdr = self.h5[h5_grp_name]['hdr']
         grp_mat = self.h5[h5_grp_name]['data'][:]
@@ -170,7 +172,7 @@ class alignedSac2Hdf5:
         Useless functions.
 
         Make a new dataset to store the spectra.
-        nfft_mode: 
+        nfft_mode:
             1) 'keep': use npts as nfft;
             2) 'cc:    pad zero to npts*2-1, that is used for crosscorrelation;
             3) an integer: abtritray number that is greater than npts
@@ -200,7 +202,7 @@ class alignedSac2Hdf5:
         ###
         for idx, row in enumerate(grp['data']):
             dset[idx,:] = pyfftw.interfaces.numpy_fft.fft(row, nfft)
-        return fft_dname 
+        return fft_dname
     #def make_cc_spec(self, fft_dataset_name):
     #    """
     #    fft_dataset_name: dataset name in h5
@@ -254,7 +256,7 @@ class Sac2ResampleHdf5:
             #print(key)
             g.create_dataset(key, data=np.array([h[key] for h in hdrs], dtype='S8') ) # fixed 8 length string
         ###
-        #  time-series 
+        #  time-series
         ###
         time_range= np.min( [it['npts']*it['delta'] for it in hdrs] )
         new_npts = int( np.round(time_range / delta) )
