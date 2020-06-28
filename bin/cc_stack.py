@@ -285,7 +285,9 @@ class cc_stack_rcv_pairs:
             self.global_f2 = f2
             self.global_fwin = fwin
             self.global_twin_len = int( np.ceil(twin/self.global_dt) )
-            self.global_fwin_len = int( np.ceil(fwin/self.global_df) )
+            #self.global_fwin_len = int( np.ceil(fwin/self.global_df) )
+            whiten_df = 1.0/(self.global_dt * self.global_npts)
+            self.global_fwin_len = int( np.ceil(fwin/whiten_df ) )
             ###
             msg = '>>> Init and bcast whitening parameter sent from RANK0. twin(%f, %d) f1f2(%f,%f) fwin(%f,%d)' % (
                     self.global_twin, self.global_twin_len, self.global_f1, self.global_f2,
@@ -388,7 +390,9 @@ class cc_stack_rcv_pairs:
             if True in ( np.isnan(row) ) or True in (np.isinf(row) ):
                 continue
             tr = processing.temporal_normalization(row, self.global_sampling_rate, self.global_twin_len, self.global_f1, self.global_f2)
-            spectra[idx] = processing.frequency_whiten_spec(tr, self.global_sampling_rate, self.global_fwin_len, self.global_npts_cc)
+            #spectra[idx] = processing.frequency_whiten_spec(tr, self.global_sampling_rate, self.global_fwin_len, self.global_npts_cc)
+            tr = processing.frequency_whiten_spec(tr, self.global_sampling_rate, self.global_fwin_len)
+            spectra[idx] = pyfftw.interfaces.numpy_fft.rfft(tr, self.global_npts_cc)
         ### cross correlation
         for idx1 in range(ntr):
             stlo1, stla1 = stlo[idx1], stla[idx1]
@@ -434,7 +438,9 @@ class cc_stack_rcv_pairs:
             if True in ( np.isnan(row) ) or True in (np.isinf(row) ):
                 continue
             tr = processing.temporal_normalization(row, self.global_sampling_rate, self.global_twin_len, self.global_f1, self.global_f2)
-            spectra[idx] = processing.frequency_whiten_spec(tr, self.global_sampling_rate, self.global_fwin_len, self.global_npts_cc)
+            #spectra[idx] = processing.frequency_whiten_spec(tr, self.global_sampling_rate, self.global_fwin_len, self.global_npts_cc)
+            tr = processing.frequency_whiten_spec(tr, self.global_sampling_rate, self.global_fwin_len)
+            spectra[idx] = pyfftw.interfaces.numpy_fft.rfft(tr, self.global_npts_cc)
         ### cross correlation
         for idx1 in range(ntr):
             stlo1, stla1 = stlo[idx1], stla[idx1]
