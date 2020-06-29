@@ -391,7 +391,7 @@ class cc_stack_rcv_pairs:
                 continue
             tr = processing.temporal_normalization(row, self.global_sampling_rate, self.global_twin_len, self.global_f1, self.global_f2)
             #spectra[idx] = processing.frequency_whiten_spec(tr, self.global_sampling_rate, self.global_fwin_len, self.global_npts_cc)
-            tr = processing.frequency_whiten_spec(tr, self.global_sampling_rate, self.global_fwin_len)
+            tr = processing.frequency_whiten(tr, self.global_sampling_rate, self.global_fwin_len)
             spectra[idx] = pyfftw.interfaces.numpy_fft.rfft(tr, self.global_npts_cc)
         ### cross correlation
         for idx1 in range(ntr):
@@ -439,7 +439,7 @@ class cc_stack_rcv_pairs:
                 continue
             tr = processing.temporal_normalization(row, self.global_sampling_rate, self.global_twin_len, self.global_f1, self.global_f2)
             #spectra[idx] = processing.frequency_whiten_spec(tr, self.global_sampling_rate, self.global_fwin_len, self.global_npts_cc)
-            tr = processing.frequency_whiten_spec(tr, self.global_sampling_rate, self.global_fwin_len)
+            tr = processing.frequency_whiten(tr, self.global_sampling_rate, self.global_fwin_len)
             spectra[idx] = pyfftw.interfaces.numpy_fft.rfft(tr, self.global_npts_cc)
         ### cross correlation
         for idx1 in range(ntr):
