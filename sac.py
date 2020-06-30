@@ -464,6 +464,9 @@ class sactrace:
             self.dat = np.fromfile(fid, dtype=np.float32, count=self.hdr['npts'])
             if not small_endian_tag:
                 self.dat = self.dat.byteswap() #.newbyteorder()
+            if self.is_nan_inf():
+                print("Warning. Inf or Nan values in %s. All values set to ZEROs.", filename, flush=True )
+                self.dat[:] = 0.0
     def write(self, filename):
         """
         Write data into specified file.
@@ -617,6 +620,9 @@ class sactrace:
         """
         Resample the time-series using Fourier method.
         """
+        if (delta % self['delta'] == 0.0):
+            factor = int(delta // self['delta'])
+            return self.decimate(factor)
         new_npts = int( round(delta/self['delta']* self['npts']) )
         self['dat'] = signal.resample(self['dat'], new_npts)
         self['npts'] = new_npts
@@ -667,6 +673,12 @@ class sactrace:
         else:
             iabs = imax if self['dat'][imax] > -self['dat'][imin] else imin
             return iabs*self['delta']+self['b'], self['dat'][iabs]
+    def is_nan_inf(self):
+        if (True in np.isnan(self.dat) or True in np.isinf(self.dat) ):
+            return True
+        return False
+    def set_zero(self):
+        self.dat[:] = 0.0
     ### plotf
     def plot_ax(self, ax, **kwargs):
         """
