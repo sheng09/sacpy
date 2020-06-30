@@ -458,7 +458,7 @@ class cc_stack_rcv_pairs:
                     continue
                 ### select max az difference
                 az2 = az[idx2]
-                daz = np.abs(az1-az2)
+                daz = np.abs(az1-az2) % 180
                 if daz > 90.0:
                     daz = 180.0-daz
                 if self.global_select_stack_az_diff:
