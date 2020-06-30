@@ -342,7 +342,10 @@ class cc_stack_rcv_pairs:
         ######
         chunksize = 0
         if self.rank == 0:
-            chunksize = (len(self.all_fnm_lst_alignedSac2Hdf5) // self.ncpu) + 1
+            if len(self.all_fnm_lst_alignedSac2Hdf5) % self.ncpu != 0:
+                chunksize = (len(self.all_fnm_lst_alignedSac2Hdf5) // self.ncpu) + 1
+            else:
+                chunksize = (len(self.all_fnm_lst_alignedSac2Hdf5) // self.ncpu)
         ###
         self.comm.Barrier()
         ###
