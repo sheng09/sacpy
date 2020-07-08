@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 import numpy as np
 
-evdp, evla, evlo = 50, 60, 150
+evdp, evla, evlo = 50, 20, 45
 fid = open("ev-sta.txt", "w")
 fid.write("#id evdp evla evlo stla stlo phase_name tag\n")
 id = 0
-for stla in np.arange(-30, -10, 2):
-    for stlo in np.arange(120, 140, 2):
+for stla in np.arange(-15, 16, 2):
+    for stlo in np.arange(0, 46, 2):
         for nI in range(5, 17, 2):
             phase1 = "PKIKP" * nI + "PKIKS"
             phase2 = "PKIKP" * nI + "PKIKP"
