@@ -7,7 +7,7 @@ static char HMSG[] = "\
 Compute traveltime sensitivity given a background model.\n\
 \n\
 %s --model3d=p/fnm --raypath=fnm --output_sensitivity=fnm.bin   [--zip]\n\
-    --output_raypath_segments=fnm.txt --verbose=0\n\
+    --verbose=0\n\
 \n\
 Arg details:\n\
     --model3d= : `p/fnm` to init the 3-D model from an external file.\n\
@@ -27,7 +27,6 @@ Arg details:\n\
             2) zipped non-zero sensitivity values:\n\
                 t0(float64) npts(int32) idx1(int32) idx2 ... idxM v1(float64) v2 ... vM\n\
 \n\
-    --output_raypath_segments= : use this arg to output raypath segments according to phase name.\n\
 ";
 int main(int argc, char *argv[])
 {
@@ -75,16 +74,16 @@ int main(int argc, char *argv[])
         fprintf(stderr, "Err. please provide raypath file.\n");
         exit(-1);
     }
-    std::string output_raypath_segments = getarg("", "--output_raypath_segments");
-    if (output_raypath_segments.empty() )
+    std::string output_sens = getarg("", "--output_sensitivity");
+    if (output_sens.empty() )
     {
-        fprintf(stderr, "Err. please provide output_raypath_segments file.\n");
+        fprintf(stderr, "Err. please provide output sensitivity file.\n");
         exit(-1);
     }
     if (verbose)
     {
         std::memset(verbose_msg, 0, MAXMSG_LEN);
-        sprintf(verbose_msg, "Set input raypth file (%s) and output sensitivity file (%s)\n",  ray_fnm.c_str(), output_raypath_segments.c_str() );
+        sprintf(verbose_msg, "Set input raypth file (%s) and output sensitivity file (%s)\n",  ray_fnm.c_str(), output_sens.c_str() );
         verbose_print(0, verbose_msg);
     }
     // input HDF5
@@ -93,7 +92,7 @@ int main(int argc, char *argv[])
     hid_t  grp_raypath = H5Gopen2(fid, "raypath", H5P_DEFAULT);
     H5LTget_attribute_int(grp_raypath, ".", "size", &nray);
     // output HDF5
-    hid_t out_fid  = H5Fcreate(output_raypath_segments.c_str(), H5F_ACC_TRUNC, H5P_DEFAULT, H5P_DEFAULT);
+    hid_t out_fid  = H5Fcreate(output_sens.c_str(), H5F_ACC_TRUNC, H5P_DEFAULT, H5P_DEFAULT);
     hid_t grp_sens = H5Gcreate2(out_fid, "sensitivity_zip", H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
     H5LTset_attribute_int(grp_sens, ".", "size", &nray, 1);
     H5LTset_attribute_string(grp_sens, ".", "info", "The sensitivity is based on 1D earth model");

@@ -132,7 +132,7 @@ int main(int argc, char *argv[])
     for(int iav=1; iav<argc; ++iav) 
     {
         if (obtain_single_plume(argv[iav], &lon, &lat, &radius, &d0, &d1, &dvp, &dvs) ) {
-            mod3d->set_mod3d_cylinder(d0, d1, lon, lat, radius, dvp-1.0, dvs);
+            mod3d->set_mod3d_cylinder(d0, d1, lon, lat, radius, dvp-1.0, dvs-1.0);
             ++nplume;
             fprintf(stdout, ">>> Adding plume [%d]. %s\n", nplume, argv[iav] );
         }
