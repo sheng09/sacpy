@@ -6,15 +6,15 @@ import h5py
 import matplotlib.cm
 import numpy as np
 
-cmap = matplotlib.cm.get_cmap('Spectral')
+cmap = matplotlib.cm.get_cmap('gist_earth_r')
 ##
 # plot raypath
 ##
 fid = h5py.File("03_workspace/raypath.h5", "r")
 nray = fid['raypath'].attrs['size']
 for idx, it in enumerate(fid['raypath']):
-    #if idx % 2 != 0:
-    #    continue
+    if idx % 5 != 0:
+        continue
     grp = fid['raypath'][it]
     id  = grp.attrs['id']
     lon = grp['lon'][:]
@@ -42,7 +42,7 @@ stlo = np.array( [it[1] for it in st] )
 stdp = np.zeros(stlo.size)
 
 PT.plot_point_sphere(evlo, evla, evdp, color=(1, 0, 0 ) )
-PT.plot_point_sphere(stlo, stla, stdp, color=(0, 0, 1 ) )
+PT.plot_point_sphere(stlo, stla, stdp, color=(0, 1, 0 ) )
 
 fid.close()
 

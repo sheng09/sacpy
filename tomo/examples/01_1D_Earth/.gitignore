@@ -13,3 +13,9 @@
 01_workspace/plume.grd.txt
 01_workspace/plume.mod.txt
 06.log
+01_workspace/pics_plume/
+01_workspace/plume.mp4
+**/**.png
+**/*.png
+08_workspace/cScP.txt
+07_workspace/
