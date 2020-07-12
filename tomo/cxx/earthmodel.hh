@@ -387,8 +387,8 @@ public:
         int ilon0 = search_grd_lon(p.lon);
         int ilat0 = search_grd_lat(p.lat);
         int idep0 = search_grd_dep(p.depth);
-        int ilon7 = round_depth_index(ilon0+1);
-        int ilat7 = round_depth_index(ilat0+1);
+        int ilon7 = round_lon_index(ilon0+1);
+        int ilat7 = round_lat_index(ilat0+1);
         int idep7 =  round_depth_index(idep0+1);
         double x0, y0, z0, x7, y7, z7;
         x0 = d_lat[ilat0]; y0 = d_lon[ilon0]; z0 = d_depth[idep0];

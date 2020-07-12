@@ -17,8 +17,8 @@
 #define DEG2RAD(x) ( (x)/180.0*3.1415926535 )
 #define RAD2DEG(x) ( (x)*180.0/3.1415926535 )
 //#define DEG360(x)  ( (x) < 0.0 ? ((x)+360) : (x) )
-#define ROUND_DEG360(x) ( fmod((x), 360.0) )       // return angle in [0, 360) degree
-#define ROUND_DEG180(x) ( fmod((x), 360.0)-180.0 ) // return angle in [-180, 180) degree
+#define ROUND_DEG360(x) ( fmod((fmod((x), 360.0)+360.0), 360.0) )       // return angle in [0, 360) degree
+#define ROUND_DEG180(x) ( ROUND_DEG360(x) -180.0 ) // return angle in [-180, 180) degree
 //#define ISEQUAL(x, y) (fabsf((x)-(y)) < fabsf((x)+(y))*1.0e-20+1.0e-20 ? 1 : 0 ) // check if x and y equals or not
 template<typename T>
 bool ISEQUAL(T x, T y) {
@@ -607,6 +607,9 @@ public:
         d_traveltime_taup = time;
         d_rayparam_taup = rp;
         d_tag.assign(tag);
+        for(int idx=0; idx<npts; ++idx) {
+            lon[idx] = ROUND_DEG360(lon[idx]);
+        }
         d_whole_path.set_path(npts, lon, lat, dep);
         decipher_phase_path(verbose_level);
         return 0;
