@@ -180,21 +180,24 @@ int main(int argc, char *argv[])
         H5LTset_attribute_double(single_sens, ".", "time3d", &t3d, 1);
         std::vector<int> row_index;
         std::vector<double> row_value;
+        std::vector<double> row_value_raylength;
 
-        gmat.obtain_sensitivity(row_index, row_value, 'P');
+        gmat.obtain_sensitivity(row_index, row_value, row_value_raylength, 'P');
         int size = row_index.size();
         hsize_t dim[1];
         dim[0] = size;
         H5LTset_attribute_int(single_sens, ".", "sizep", &size, 1);
         H5LTmake_dataset_int(single_sens,    "index_P", 1, dim, row_index.data() );
         H5LTmake_dataset_double(single_sens, "value_P", 1, dim, row_value.data() );
+        H5LTmake_dataset_double(single_sens, "value_P_raylegnth", 1, dim, row_value_raylength.data() );
 
-        gmat.obtain_sensitivity(row_index, row_value, 'S');
+        gmat.obtain_sensitivity(row_index, row_value, row_value_raylength, 'S');
         size = row_index.size();
         dim[0] = size;
         H5LTset_attribute_int(single_sens, ".", "sizes", &size, 1);
         H5LTmake_dataset_int(single_sens,    "index_S", 1, dim, row_index.data() );
         H5LTmake_dataset_double(single_sens, "value_S", 1, dim, row_value.data() );
+        H5LTmake_dataset_double(single_sens, "value_S_raylegnth", 1, dim, row_value_raylength.data() );
         
         if (!row_index.empty() ) row_index.clear();
         if (!row_value.empty() ) row_value.clear();

@@ -83,6 +83,7 @@ int main(int ac, char *av[] )
     std::unordered_map<int, sensitivity_zip> map_body_wave_sens;
     std::vector<int>    index_p, index_s;
     std::vector<double> value_p, value_s;
+    std::vector<double> value_p_raylength, value_s_raylength;
     for(int idx=0; idx<nray; ++idx)
     {
         // if (verbose)
@@ -116,23 +117,31 @@ int main(int ac, char *av[] )
         
         index_p.resize(sizep);
         value_p.resize(sizep);
+        value_p_raylength.resize(sizep);
         index_s.resize(sizes);
         value_s.resize(sizes);
+        value_s_raylength.resize(sizes);
 
         std::string loc(sub_grp_name);
         std::string loc_ip = loc+"/index_P";
         std::string loc_is = loc+"/index_S";
         std::string loc_vp = loc+"/value_P";
         std::string loc_vs = loc+"/value_S";
+        std::string loc_vp_raylength = loc+"/value_P_raylegnth";
+        std::string loc_vs_raylength = loc+"/value_S_raylegnth";
+
 
         H5LTread_dataset_int(   grp_sens, loc_ip.c_str(), index_p.data() );
         H5LTread_dataset_int(   grp_sens, loc_is.c_str(), index_s.data() );
         H5LTread_dataset_double(grp_sens, loc_vp.c_str(), value_p.data() );
         H5LTread_dataset_double(grp_sens, loc_vs.c_str(), value_s.data() );
+        H5LTread_dataset_double(grp_sens, loc_vp_raylength.c_str(), value_p_raylength.data() );
+        H5LTread_dataset_double(grp_sens, loc_vs_raylength.c_str(), value_s_raylength.data() );
 
         //body_wave_sens[idx].set(sizep, index_p.data(), value_p.data(), sizes, index_s.data(), value_s.data() );
         //map_body_wave_sens[id] = &(body_wave_sens[idx]);
-        map_body_wave_sens[id] = sensitivity_zip(sizep, index_p.data(), value_p.data(), sizes, index_s.data(), value_s.data() );
+        map_body_wave_sens[id] = sensitivity_zip(sizep, index_p.data(), value_p.data(), value_p_raylength.data(),
+                                                 sizes, index_s.data(), value_s.data(), value_s_raylength.data() );
         map_body_wave_sens[id].set_id(id);
         map_body_wave_sens[id].set_phase(c_phase);
         map_body_wave_sens[id].set_time_1d_taup(t1d_taup);
@@ -197,20 +206,23 @@ int main(int ac, char *av[] )
         hsize_t dim[1];
         std::vector<int> row_index;
         std::vector<double> row_value;
+        std::vector<double> row_value_raylength;
 
-        sen_diff.obtain_sensitivity(row_index, row_value, 'P');
+        sen_diff.obtain_sensitivity(row_index, row_value, row_value_raylength, 'P');
         size = row_index.size();
         dim[0] = size;
         H5LTset_attribute_int(single_sens, ".", "sizep", &size, 1);
         H5LTmake_dataset_int(single_sens,    "index_P", 1, dim, row_index.data() );
         H5LTmake_dataset_double(single_sens, "value_P", 1, dim, row_value.data() );
+        H5LTmake_dataset_double(single_sens, "value_P_raylegnth", 1, dim, row_value_raylength.data() );
 
-        sen_diff.obtain_sensitivity(row_index, row_value, 'S');
+        sen_diff.obtain_sensitivity(row_index, row_value, row_value_raylength, 'S');
         size = row_index.size();
         dim[0] = size;
         H5LTset_attribute_int(single_sens, ".", "sizes", &size, 1);
         H5LTmake_dataset_int(single_sens,    "index_S", 1, dim, row_index.data() );
         H5LTmake_dataset_double(single_sens, "value_S", 1, dim, row_value.data() );
+        H5LTmake_dataset_double(single_sens, "value_S_raylegnth", 1, dim, row_value_raylength.data() );
         // 
         if (!row_index.empty() ) row_index.clear();
         if (!row_value.empty() ) row_value.clear();

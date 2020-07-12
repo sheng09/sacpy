@@ -189,14 +189,42 @@ private:
 };
 */
 
-typedef std::unordered_map<int, double> row_element;
+
+class sens_element {
+public:
+    double time; // Total travel-time = SUM (time * perturbertation ratio)
+    double raylength;  // Total travel-time = SUM (raylength * Slowness_0 * perturbertation ratio)
+
+public:
+    sens_element & operator=(const sens_element &other)
+    {
+        time = other.time;
+        raylength = other.raylength;
+        return *this;
+    }
+    sens_element & operator-=(const sens_element &other)
+    {
+        time -= other.time;
+        raylength -= other.raylength;
+        return *this;
+    }
+    const sens_element operator-(const sens_element & other)
+    {
+        sens_element junk = *this;
+        junk -= other;
+        return junk;
+    }
+};
+typedef std::unordered_map<int, sens_element> row_element;
+
 class sensitivity_zip : std::pair<row_element, row_element >
 {
 public:
     sensitivity_zip() {}
-    sensitivity_zip(int psize, const int *pid, const double *pv, int ssize, const int *sid, const double *sv) 
+    sensitivity_zip(int psize, const int *pid, const double *pv, const double *p_raylength,
+                    int ssize, const int *sid, const double *sv, const double *s_raylength )
     {
-        set(psize, pid, pv, ssize, sid, sv);
+        set(psize, pid, pv, p_raylength, ssize, sid, sv, s_raylength);
     }
     ~sensitivity_zip() { clear(); }
     virtual int clear()
@@ -252,13 +280,13 @@ public:
         d_time_1d = 0.0;
         for(auto it=P_sens.begin(); it!=P_sens.end(); ++it  )
         {
-            it->second *= p_slowness[it->first];
-            d_time_1d += it->second;
+            it->second.time *= p_slowness[it->first];
+            d_time_1d += it->second.time;
         }
         for(auto it=S_sens.begin(); it!=S_sens.end(); ++it  )
         {
-            it->second *= s_slowness[it->first];
-            d_time_1d += it->second;
+            it->second.time *= s_slowness[it->first];
+            d_time_1d += it->second.time;
             // fprintf(stderr, "TEST %lf %lf %lf\n", d_time_1d, it->second, s_slowness[it->first] );
         }
         
@@ -270,17 +298,18 @@ public:
         d_time_3d = 0.0;
         for(auto it=P_sens.begin(); it!=P_sens.end(); ++it  )
         {
-            d_time_3d += it->second * dp[it->first];
+            d_time_3d += it->second.time * dp[it->first];
         }
         for(auto it=S_sens.begin(); it!=S_sens.end(); ++it  )
         {
-            d_time_3d += it->second * ds[it->first];
+            d_time_3d += it->second.time * ds[it->first];
         }
         return 0;
     }
     
     // Set sensitivity given arrays
-    int set(int psize, const int *pid, const double *pv, int ssize, const int *sid, const double *sv)
+    int set(int psize, const int *pid, const double *pv, const double *p_raylength, 
+            int ssize, const int *sid, const double *sv, const double *s_raylength )
     {
         clear();
         row_element & p = this->p_sensitivity();
@@ -294,7 +323,8 @@ public:
                 fprintf(stderr, "Err in sensitivity_zip:set(...). Duplicated sensitivity index.\n");
                 exit(-1);
             }
-            p[id] = v;
+            p[id].time      = v;
+            p[id].raylength = p_raylength[idx];
         }
         for(int idx=0; idx<ssize; ++idx)
         {
@@ -305,7 +335,8 @@ public:
                 fprintf(stderr, "Err in sensitivity_zip:set(...). Duplicated sensitivity index.\n");
                 exit(-1);
             }
-            s[id] = v;
+            s[id].time = v;
+            s[id].raylength = s_raylength[idx];
         }
         return 0;
     }
@@ -327,16 +358,27 @@ public:
     std::string & tag() { return d_tag; }
     double rayparam() { return d_ray_param; }
 
-    int obtain_sensitivity(std::vector<int> & index, std::vector<double> & value, char type )
+    int obtain_sensitivity(std::vector<int> & index, std::vector<double> & value, std::vector<double> & value_ray_length, char type )
     {
         row_element & sens = (type == 'P' ) ?  p_sensitivity() : s_sensitivity() ;
-        index.resize(sens.size() ); index.assign(index.size(), 0   );
-        value.resize(sens.size() ); value.assign(index.size(), 0.0 );
+        index.assign(sens.size(), 0   );
+        value.assign(sens.size(), 0.0 );
+        value_ray_length.assign(sens.size(), 0.0 );
+        // index.resize(sens.size() );           
+        // std::memset(index.data(), 0, index.size()*sizeof(double) );
+        // 
+        // value.resize(sens.size() );            
+        // std::memset(value.data(), 0, value.size()*sizeof(double) );
+        // 
+        // value_ray_length.resize(sens.size() );
+        // std::memset(value_ray_length.data(), 0, value_ray_length.size()*sizeof(double) );
+
         int j = 0;
         for(auto it=sens.begin(); it!=sens.end(); ++it)
         {
             index[j] = it->first;
-            value[j] = it->second;
+            value[j] = it->second.time;
+            value_ray_length[j] = it->second.raylength;
             ++j;
         }
         return 0;
@@ -418,6 +460,7 @@ private:
         for(int idx=1; pt2!=segment.end(); ++pt0, ++pt1, ++pt2, ++idx)
         {
             u[idx] = 0.5* (distance(*pt0, *pt1) + distance(*pt1, *pt2) );
+            // fprintf(stderr, "%lf\n", u[idx]);
         }
         u[u.size()-1] = 0.5*distance(*pt0, *pt1);
         // A loop over all points. 
@@ -431,26 +474,32 @@ private:
             mod3d.interpolate3D_coef(*pt, &c0, &c1, &c2, &c3, &c4, &c5, &c6, &c7, 
                                           &i0, &i1, &i2, &i3, &i4, &i5, &i6, &i7 );
             sum = c0+c1+c2+c3+c4+c5+c6+c7;
+            if (c0<0.0 || c1<0.0 || c2<0.0 || c3<0.0 || c4<0.0 || c5<0.0 || c6<0.0 || c7<0.0) {
+                fprintf(stderr, "Negative values (%.2f %.2f %.2f): c0(%lf), c1(%lf), c2(%lf), c3(%lf), c3(%lf), c5(%lf), c6(%lf), c7(%lf) \n", 
+                                    pt->lon, pt->lat, pt->depth,
+                                    c0, c1, c2, c3, c4, c5, c6, c7);
+            }
             if ( fabs(sum-1.0)>1.0e-6 ) {
                 fprintf(stderr, "sum %lf\n", sum);
             }
-            if ( sens.find(i0) == sens.end() ) { sens[i0] = u[idx] * c0; } else { sens[i0] += (u[idx] * c0); }
-            if ( sens.find(i1) == sens.end() ) { sens[i1] = u[idx] * c1; } else { sens[i1] += (u[idx] * c1); }
-            if ( sens.find(i2) == sens.end() ) { sens[i2] = u[idx] * c2; } else { sens[i2] += (u[idx] * c2); }
-            if ( sens.find(i3) == sens.end() ) { sens[i3] = u[idx] * c3; } else { sens[i3] += (u[idx] * c3); }
-            if ( sens.find(i4) == sens.end() ) { sens[i4] = u[idx] * c4; } else { sens[i4] += (u[idx] * c4); }
-            if ( sens.find(i5) == sens.end() ) { sens[i5] = u[idx] * c5; } else { sens[i5] += (u[idx] * c5); }
-            if ( sens.find(i6) == sens.end() ) { sens[i6] = u[idx] * c6; } else { sens[i6] += (u[idx] * c6); }
-            if ( sens.find(i7) == sens.end() ) { sens[i7] = u[idx] * c7; } else { sens[i7] += (u[idx] * c7); }
+            // Here, we haven't apply the slowness
+            if ( sens.find(i0) == sens.end() ) { sens[i0].time = u[idx] * c0;   sens[i0].raylength = sens[i0].time;  } else { sens[i0].time += (u[idx] * c0);     sens[i0].raylength = sens[i0].time;  }
+            if ( sens.find(i1) == sens.end() ) { sens[i1].time = u[idx] * c1;   sens[i1].raylength = sens[i1].time;  } else { sens[i1].time += (u[idx] * c1);     sens[i1].raylength = sens[i1].time;  }
+            if ( sens.find(i2) == sens.end() ) { sens[i2].time = u[idx] * c2;   sens[i2].raylength = sens[i2].time;  } else { sens[i2].time += (u[idx] * c2);     sens[i2].raylength = sens[i2].time;  }
+            if ( sens.find(i3) == sens.end() ) { sens[i3].time = u[idx] * c3;   sens[i3].raylength = sens[i3].time;  } else { sens[i3].time += (u[idx] * c3);     sens[i3].raylength = sens[i3].time;  }
+            if ( sens.find(i4) == sens.end() ) { sens[i4].time = u[idx] * c4;   sens[i4].raylength = sens[i4].time;  } else { sens[i4].time += (u[idx] * c4);     sens[i4].raylength = sens[i4].time;  }
+            if ( sens.find(i5) == sens.end() ) { sens[i5].time = u[idx] * c5;   sens[i5].raylength = sens[i5].time;  } else { sens[i5].time += (u[idx] * c5);     sens[i5].raylength = sens[i5].time;  }
+            if ( sens.find(i6) == sens.end() ) { sens[i6].time = u[idx] * c6;   sens[i6].raylength = sens[i6].time;  } else { sens[i6].time += (u[idx] * c6);     sens[i6].raylength = sens[i6].time;  }
+            if ( sens.find(i7) == sens.end() ) { sens[i7].time = u[idx] * c7;   sens[i7].raylength = sens[i7].time;  } else { sens[i7].time += (u[idx] * c7);     sens[i7].raylength = sens[i7].time;  }
 
-            single_time += (u[idx]*c0*slowness[i0] );
-            single_time += (u[idx]*c1*slowness[i1] );
-            single_time += (u[idx]*c2*slowness[i2] );
-            single_time += (u[idx]*c3*slowness[i3] );
-            single_time += (u[idx]*c4*slowness[i4] );
-            single_time += (u[idx]*c5*slowness[i5] );
-            single_time += (u[idx]*c6*slowness[i6] );
-            single_time += (u[idx]*c7*slowness[i7] );
+            // single_time += (u[idx]*c0*slowness[i0] );
+            // single_time += (u[idx]*c1*slowness[i1] );
+            // single_time += (u[idx]*c2*slowness[i2] );
+            // single_time += (u[idx]*c3*slowness[i3] );
+            // single_time += (u[idx]*c4*slowness[i4] );
+            // single_time += (u[idx]*c5*slowness[i5] );
+            // single_time += (u[idx]*c6*slowness[i6] );
+            // single_time += (u[idx]*c7*slowness[i7] );
             //sens[i0] += u[idx] * c0;
             //sens[i1] += u[idx] * c1;
             //sens[i2] += u[idx] * c2;
@@ -505,9 +554,10 @@ class cc_sensitivity_zip : public sensitivity_zip
 {
 public:
     cc_sensitivity_zip() {}
-    cc_sensitivity_zip(int psize, const int *pid, const double *pv, int ssize, const int *sid, const double *sv) 
+    cc_sensitivity_zip( int psize, const int *pid, const double *pv, const double *p_raylength,
+                        int ssize, const int *sid, const double *sv, const double *s_raylength ) 
     {
-        set(psize, pid, pv, ssize, sid, sv);
+        set(psize, pid, pv, p_raylength, ssize, sid, sv, s_raylength);
     }
     ~cc_sensitivity_zip() { clear(); }
     // Compute sensitivity of a cross-term, that is the difference between two body-wave sensitivities, here s1-s2.
@@ -522,8 +572,11 @@ public:
         for(row_element::iterator it=p2.begin(); it!=p2.end(); ++it )
         {
             int id = it->first;
-            double v = it->second;
-            dp[id] =  (dp.find(id) == dp.end() ) ? ( -v ) : ( dp[id]-v ) ;
+            if (dp.find(id) == dp.end() ) {
+                dp[id] -= it->second;
+            } else {
+                dp[id] = it->second;
+            }
         }
         // s wave
         row_element & s1 = sen1.s_sensitivity();
@@ -533,8 +586,13 @@ public:
         for(row_element::iterator it=s2.begin(); it!=s2.end(); ++it )
         {
             int id = it->first;
-            double v = it->second;
-            ds[id] = (ds.find(id) == ds.end() ) ? ( -v ) : ( ds[id]-v );
+            if (ds.find(id) == ds.end() ) {
+                ds[id] -= it->second;
+            } else {
+                ds[id] = it->second;
+            }
+            //double v = it->second.time;
+            //ds[id].time = (ds.find(id) == ds.end() ) ? ( -v ) : ( ds[id].time-v );
         }
 
         //
