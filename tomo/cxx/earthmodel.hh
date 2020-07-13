@@ -297,36 +297,34 @@ public:
     // double depth(int pt_idx) const { return d_pts[pt_idx].depth;  }
     
     // search for the location given a 3-D point
-    inline int round_lon_index(int ilon)  { return ilon % d_lon.size(); }
+    inline int round_lon_index(int ilon)  { return ((ilon % d_nlon) + d_nlon) % d_nlon ; }
     inline int round_lat_index(int ilat) {
         if (ilat<0) 
         {
             return 0;
         } 
-        else if (ilat >= d_lat.size() ) 
+        else if (ilat >= d_nlat ) 
         {
-            return d_lat.size()-1;
+            return d_nlat-1;
         }
         else
         {
             return ilat;
         }
-        //return (ilat >= d_lat.size() ) ? (d_lat.size()-1) : ilat;
     }
     inline int round_depth_index(int idep) {
         if (idep <0) 
         {
             return 0;
         }
-        else if (idep >= d_depth.size() )
+        else if (idep >= d_ndep )
         {
-            return d_depth.size()-1;
+            return d_ndep-1;
         }
         else
         {
             return idep;
         }
-        //return (idep >= d_depth.size() ) ? (d_depth.size()-1) : idep;
     }
     inline int point_index(int ilon, int ilat, int idep) {
         return round_depth_index(idep) * d_nlonlat + round_lat_index(ilat)*d_nlon + round_lon_index(ilon);
@@ -463,7 +461,7 @@ public:
                         d_slowness_p_pert[idx] = s0;
                         d_slowness_s_pert[idx] = s1;
                     }
-                    for (int ilon=ilon0; ilon<d_lon.size(); ++ilon) 
+                    for (int ilon=ilon0; ilon<d_nlon; ++ilon) 
                     {
                         int idx = point_index(ilon, ilat, idep);
                         d_vp_pert[idx] = v0;
@@ -487,6 +485,9 @@ public:
             pt3d & pt = d_pts[idx];
             if (great_circle_distance(lon, lat, pt.lon, pt.lat) <= radius )
             {
+                // if (pt.lon < 19.0) {
+                //     fprintf(stderr, "lon(%lf) lat(%lf)\n", pt.lon, pt.lat);
+                // }
                 if (pt.depth >= d0 && pt.depth <= d1) {
                     //printf("%f %f %f %f %d\n",  lon, lat, pt.d_lon, pt.d_lat, idx);
                     d_vp_pert[idx] = v0;
@@ -516,20 +517,20 @@ public:
         std::vector<double> new_dvp(d_npts, 0.0);
         std::vector<double> new_dvs(d_npts, 0.0);
         double alpha = 1.0/(2.0*step+1.0)/(2.0*step+1.0);
-        for (int idep=0; idep<d_depth.size(); ++idep) 
+        for (int idep=0; idep<d_ndep; ++idep) 
         {
-            for (int ilat=0; ilat<d_lat.size(); ++ilat) 
+            for (int ilat=0; ilat<d_nlat; ++ilat) 
             {
-                for (int ilon=0; ilon<d_lon.size(); ++ilon)
+                for (int ilon=0; ilon<d_nlon; ++ilon)
                 {
                     int ipt = point_index(ilon, ilat, idep);
                     // internal summing
                     for (int loop_lat=-step; loop_lat<=step; ++loop_lat) 
                     {
+                        int it_lat = round_lat_index(ilat+loop_lat);
                         for (int loop_lon=-step; loop_lon<=step; ++loop_lon)
                         {
                             int it_lon = round_lon_index(ilon+loop_lon);
-                            int it_lat = round_lat_index(ilat+loop_lat);
                             int it_ipt = point_index(it_lon, it_lat, idep);
                             new_dvp[ipt] += d_vp_pert[it_ipt];
                             new_dvs[ipt] += d_vs_pert[it_ipt];

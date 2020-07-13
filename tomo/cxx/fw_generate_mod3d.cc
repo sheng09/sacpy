@@ -117,11 +117,11 @@ int main(int argc, char *argv[])
     if (dlon>0.0 && dlat>0.0) {
         int ndep = ak135::dep_grd_size;
         double *dep = ak135::dep_grd;
-        fprintf(stderr, ">>> Init 3-D model from internal ak135. dlon: %lf, dlat: %lf\n", dlon, dlat);
+        fprintf(stdout, ">>> Init 3-D model from internal ak135. dlon: %lf, dlat: %lf\n", dlon, dlat);
         mod3d = new earthmod3d(&ak135::model, dlon, dlat, dep, ndep);
     }
     else if (!fnm_model_in.empty() ) {
-        fprintf(stderr, ">>> Init 3-D model from external file (%s)\n", fnm_model_in.c_str());
+        fprintf(stdout, ">>> Init 3-D model from external file (%s)\n", fnm_model_in.c_str());
         mod3d = new earthmod3d(&ak135::model, fnm_model_in.c_str(), fnm_model_in_mod);
     }
     /*

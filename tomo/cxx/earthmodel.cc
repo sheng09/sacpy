@@ -426,28 +426,25 @@ int earthmod3d::output_model(const char * fnm, char mode) {
     {
         FILE *fid = fopen(fnm, "w");
         // part 1
-        int ndep = d_depth.size();
-        int nlat =  d_lat.size();
-        int nlon =  d_lon.size();
-        junk = fprintf(fid, "%d %d %d\n", ndep, nlat, nlon );
+        junk = fprintf(fid, "%d %d %d\n", d_ndep, d_nlat, d_nlon );
         // part 2
-        for(int idx=0; idx<d_depth.size(); ++idx) {
+        for(int idx=0; idx<d_ndep; ++idx) {
             junk = fprintf(fid, "%.12lf ", d_depth[idx] );
         }
         fprintf(fid, "\n");
-        for(int idx=0; idx<d_lat.size(); ++idx) {
+        for(int idx=0; idx<d_nlat; ++idx) {
             junk = fprintf(fid, "%.4lf ", d_lat[idx] );
         }
         fprintf(fid, "\n");
-        for(int idx=0; idx<d_lon.size(); ++idx) {
+        for(int idx=0; idx<d_nlon; ++idx) {
             junk = fprintf(fid, "%.4lf ", d_lon[idx] );
         }
         fprintf(fid, "\n");
         // part 3
         int ipt =0;
-        for(int idep=0; idep<d_depth.size(); ++idep) {
-            for(int ilat=0;ilat<d_lat.size(); ++ilat) {
-                for(int ilon=0;ilon<d_lon.size(); ++ilon) {
+        for(int idep=0; idep<d_ndep; ++idep) {
+            for(int ilat=0;ilat<d_nlat; ++ilat) {
+                for(int ilon=0;ilon<d_nlon; ++ilon) {
                     junk = fprintf(fid, "%lf ", d_vp_pert[ipt]);
                     ++ipt;
                 }
@@ -455,9 +452,9 @@ int earthmod3d::output_model(const char * fnm, char mode) {
             }
         }
         ipt =0;
-        for(int idep=0; idep<d_depth.size(); ++idep) {
-            for(int ilat=0;ilat<d_lat.size(); ++ilat) {
-                for(int ilon=0;ilon<d_lon.size(); ++ilon) {
+        for(int idep=0; idep<d_ndep; ++idep) {
+            for(int ilat=0;ilat<d_nlat; ++ilat) {
+                for(int ilon=0;ilon<d_nlon; ++ilon) {
                     junk = fprintf(fid, "%lf ", d_vs_pert[ipt]);
                     ++ipt;
                 }
@@ -471,16 +468,13 @@ int earthmod3d::output_model(const char * fnm, char mode) {
     {
         FILE *fid = fopen(fnm, "wb");
         // part 1
-        int ndep = d_depth.size();
-        int nlat =  d_lat.size();
-        int nlon =  d_lon.size();
-        junk = fwrite(&ndep, sizeof(int), 1, fid);
-        junk = fwrite(&nlat, sizeof(int), 1, fid);
-        junk = fwrite(&nlon, sizeof(int), 1, fid);
+        junk = fwrite(&d_ndep, sizeof(int), 1, fid);
+        junk = fwrite(&d_nlat, sizeof(int), 1, fid);
+        junk = fwrite(&d_nlon, sizeof(int), 1, fid);
         // part 2
-        junk = fwrite(d_depth.data(), sizeof(double), ndep, fid);
-        junk = fwrite(d_lat.data(),   sizeof(double), nlat, fid);
-        junk = fwrite(d_lon.data(),   sizeof(double), nlon, fid);
+        junk = fwrite(d_depth.data(), sizeof(double), d_ndep, fid);
+        junk = fwrite(d_lat.data(),   sizeof(double), d_nlat, fid);
+        junk = fwrite(d_lon.data(),   sizeof(double), d_nlon, fid);
         // part 3
         junk = fread(d_vp_pert.data(), sizeof(double), d_vp_pert.size(), fid);
         junk = fread(d_vs_pert.data(), sizeof(double), d_vs_pert.size(), fid);
