@@ -36,7 +36,7 @@ class cc_feature_time:
             ###
             drp = rpb-rpa
             #print(dista, distb, a1.name, b1.name, rpa, rpb)
-            print(drp, ev2)
+            #print(drp, ev2)
             #print( '%6.2f %5s %5s %6.2f %6.2f %6.2f %6.2f' % (ev2, a2.name, b2.name, a2.distance, b2.distance,  a2.ray_param, b2.ray_param ) )
             ###
             if abs(drp[1]) < 1.0e-18:
@@ -74,4 +74,4 @@ if __name__ == "__main__":
         sys.exit(-1)
     app = cc_feature_time()
     v1, v2, v3 = app.get_feature_time(ph1, ph2, dist, ev1, ev2)
-    print('%f %f %f'% (v1, v2, v3) )
+    print('%f %f %f %f'% (dist, v1, v2, v3) )
