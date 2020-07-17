@@ -2,3 +2,5 @@ tmp/in.txt tmp/log_serial_log.txt tmp/run_in_pairlst.txt tmp/stcc__2000_008_16_4
 tmp/
 dt.png
 dt_sa.png
+bin/dataset/cc_feature_time.pkl
+dataset/**
