@@ -371,7 +371,7 @@ if __name__ == "__main__":
         else:
             print('invalid options: %s' % (opt) )
     if ph1 == None or ph2 == None or dist == None:
-        print('e.g.: %s -F PcS-PcP -D 10 [-S out.png]' % (sys.argv[0]) )
+        print('e.g.: %s -F PcS-PcP -D 10 [-L out.png] [-S]' % (sys.argv[0]) )
         sys.exit(-1)
     app = cc_feature_time()
     dist1, dist2, rp, time1, time2, cc_time = app.get_feature_time(ph1, ph2, dist, show=show, figname= figname)

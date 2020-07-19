@@ -14,8 +14,11 @@ import matplotlib.pyplot as plt
 import scipy.signal as signal
 
 class cc_stack_plot:
-    def __init__(self, fnm, t_range=[-3000, 3000], sym=False, half_taper_length_sec= 10.0, single_norm= True, freq_range=(0.02, 0.0666) ):
+    def __init__(self, fnm, t_range=[-3000, 3000], sym=False, 
+                    show_dist_range=(0, 180), 
+                    half_taper_length_sec= 10.0, single_norm= True, freq_range=(0.02, 0.0666) ):
         self.mat, self.dt, self.dist, self.stacked_count, self.t_range = self.__obtain_cc_time__(fnm, t_range, sym, half_taper_length_sec, single_norm, freq_range)
+        self.show_dist_range = show_dist_range
     def __obtain_cc_time__(self, fnm, t_range=[-3000, 3000], sym=False, half_taper_length_sec= 0.0, single_norm= True, freq_range=(0.02, 0.0666) ):
         fid = h5py.File(fnm, 'r')
         dt  = fid['cc_stacked_time'].attrs['dt']
@@ -79,7 +82,7 @@ class cc_stack_plot:
         ###
         return mat, dt, dist, stacked_count, (new_t0, new_t1)
 
-    def plot(self, fnm_img):
+    def plot(self, fnm_img=None):
         fig, (ax0, ax) = plt.subplots(2, 1, figsize=(6, 13), gridspec_kw={'height_ratios': [2, 11] } )
         
         max_cc = 0.8
@@ -88,19 +91,20 @@ class cc_stack_plot:
         d0, d1 = self.dist[0]-dist_step*0.5, self.dist[-1]+dist_step*0.5
         ext = [d0, d1, t0, t1]
         #print(ext)
-        ax.imshow(np.transpose(self.mat[:,::10]), vmin=-max_cc, vmax=max_cc, cmap='gray_r', interpolation='bessel',  extent=ext, origin='lower', aspect='auto' )
+        ax.imshow(np.transpose(self.mat[:,::2]), vmin=-max_cc, vmax=max_cc, cmap='gray_r', interpolation=None,  extent=ext, origin='lower', aspect='auto' )
         ax.set_ylim(self.t_range)
         ax.set_ylabel('Time (second)')
-        ax.set_xlim([d0, d1])
+        ax.set_xlim(self.show_dist_range  )
         ax.set_xlabel('Inter-receiver distance (Degree)')
         ##
         ax0.plot(self.dist, self.stacked_count, 'k', linewidth=2 )
-        ax0.set_xlim()
-        ax0.set_xlim([d0, d1])
+        ax0.set_xlim(self.show_dist_range )
         ax0.set_xlabel('Inter-receiver distance (Degree)')
         ax0.set_ylabel('Number of pairs')
         ##
-        plt.savefig(fnm_img, bbox_inches = 'tight', pad_inches = 0.2)    
+        if fnm_img != None:
+            plt.savefig(fnm_img, bbox_inches = 'tight', pad_inches = 0.2)  
+        return fig, (ax0, ax)  
 
     def toSac(self, fnm_prefix):
         nrow, ncol = self.mat.shape
@@ -109,7 +113,7 @@ class cc_stack_plot:
             sac.wrt_sac_2(fnm, self.mat[irow, :], self.dt, self.t_range[0] )
 
 if __name__ == "__main__":
-    HMSG = '%s -I fnm.h5 -P img.png -T t1/t2 -S prefix_fnm' % (sys.argv[0] )
+    HMSG = '%s -I fnm.h5 -P img.png -T t1/t2 -D d1/d2 -S prefix_fnm [-M]' % (sys.argv[0] )
     if len(sys.argv) < 2:
         print(HMSG)
         sys.exit(0)
@@ -120,7 +124,7 @@ if __name__ == "__main__":
     t1, t2 = 0, 3600
     sym = False
     ###
-    options, remainder = getopt.getopt(sys.argv[1:], 'I:P:T:S:M' )
+    options, remainder = getopt.getopt(sys.argv[1:], 'I:P:T:D:S:M' )
     for opt, arg in options:
         if opt in ('-I'):
             h5_fnm = arg
@@ -130,6 +134,10 @@ if __name__ == "__main__":
             cut_t1, cut_t2 = arg.split('/')
             t1 = float(cut_t1)
             t2 = float(cut_t2)
+        elif opt in ('-D'):
+            d1, d2 = arg.split('/')
+            d1 = float(d1)
+            d2 = float(d2)
         elif opt in ('-S'):
             sac_prefnm = arg
         elif opt in ('-M'):
@@ -139,7 +147,7 @@ if __name__ == "__main__":
             print(HMSG)
             sys.exit(0)
     ###
-    app = cc_stack_plot(h5_fnm, (t1, t2), sym=sym )
+    app = cc_stack_plot(h5_fnm, (t1, t2), sym=sym, show_dist_range= (d1, d2) )
     if (img_fnm != ''):
         app.plot(img_fnm)
     if (sac_prefnm != ''):
