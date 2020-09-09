@@ -406,7 +406,7 @@ class sachdr:
         update npts, and associated e.
         """
         self.d_arch['npts'] = npts
-        self.d_arch['e'] = (npts-1) * self.d_arch['delta'] * self.d_arch['delta']
+        self.d_arch['e'] = (npts-1) * self.d_arch['delta'] + self.d_arch['b']
     def __update_b__(self, b):
         """
         Update b, and dependent e.
