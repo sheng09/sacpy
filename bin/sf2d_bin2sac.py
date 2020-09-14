@@ -63,13 +63,18 @@ def run_out2sac(src_xz, rcv_fnm, delta, t0, ux_fnm, uz_fnm, data_type, prefilena
         sac_radial   = sac.make_sactrace_v(u_radial,   delta, t0, stlo=np.rad2deg(r_lon), stla=0.0, evlo=np.rad2deg(s_lon), evla=0.0)
         ## output
         cmp_out = 'all'
+        sac_cmp_out = [sac_x, sac_z, sac_vertical, sac_radial]
         if cmp == 'XZ':
             cmp_out = ['X', 'Z']
+            sac_cmp_out = [sac_x, sac_z]
         elif cmp == 'RV':
-            cmp_out = ['R', 'V']
+            cmp_out = ['V', 'R']
+            sac_cmp_out = [sac_vertical, sac_radial]
         else:
             cmp_out = ['X', 'Z', 'V', 'R']
-        for append, st in zip( cmp_out, [sac_x, sac_z, sac_vertical, sac_radial] ):
+            sac_cmp_out = [sac_x, sac_z, sac_vertical, sac_radial]
+        ###
+        for append, st in zip( cmp_out, sac_cmp_out ):
             fnm = '%s.%s.%s.%s.sac' % (prefilename, rcv['netwk'].decode('utf8'), rcv['stnm'].decode('utf8'), append)
             st.write(fnm)
     ####
