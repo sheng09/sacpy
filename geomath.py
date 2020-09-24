@@ -96,6 +96,9 @@ def point_distance_to_great_circle_plane(ptlon, ptlat, lon1, lat1, lon2, lat2):
         a13 is (initial) bearing from start point to third point
         a12 is (initial) bearing from start point to end point
     """
+    if np.abs(lon1-lon2) < 1.0e-4 and np.abs(lat1-lat2) < 1.0e-4:
+        # pt1 and pt2 are the same point.
+        return 0.0
     d13 = np.deg2rad( haversine(lon1, lat1, ptlon, ptlat) )
     a13 = np.deg2rad( azimuth(lon1, lat1, ptlon, ptlat) )
     a12 = np.deg2rad( azimuth(lon1, lat1, lon2, lat2) )
