@@ -483,7 +483,7 @@ class sactrace:
     def read_2(self, filename, tmark, t1, t2):
         """
         Read sac data given filename and time window.
-        tmark: 'b', 'e', 'o', 'a', 't0', 't1', ... 't9';
+        tmark: '0', 'b', 'e', 'o', 'a', 't0', 't1', ... 't9';
         t1, t2: float;
         """
         self.read(filename)
@@ -508,6 +508,9 @@ class sactrace:
         """
         Given t, get the closest index.
         """
+        if tmark == '0':
+            tmark = 'b'
+            t = t - self['b']
         if tmark in self:
             t_ref = self[tmark]
             if t_ref == -12345.0:
