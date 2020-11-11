@@ -388,7 +388,7 @@ class sachdr:
         """
         if type == 'filename':
             self.d_arch['filename'] = copy.deepcopy(f)
-            f = open(f, 'rb')
+        f = open(f, 'rb')
         hdrvol = f.read(632)
         #print(sachdr.little_endian_format)
         info = struct.unpack(sachdr.little_endian_format, hdrvol)
@@ -562,6 +562,12 @@ class sactrace:
             if rj1 >0:
                 fid.read(rj1*4)
             self.dat[dj1:dj1+(rj2-rj1) ] = np.fromfile(fid, dtype=np.float32, count= (rj2-rj1)  )
+            if not small_endian_tag:
+                self.dat = self.dat.byteswap() #.newbyteorder()
+            if self.is_nan_inf():
+                print("Warning. Inf or Nan values in %s. All values set to ZEROs.", filename, flush=True )
+                self.dat[:] = 0.0
+            #####
             self['npts'] = new_npts
             self['b'] = self['b'] + i1*self['delta']
             self['e'] = self['b'] + new_npts*self['delta']
