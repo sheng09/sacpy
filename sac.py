@@ -510,7 +510,12 @@ class sactrace:
         with open(filename, 'rb') as fid:
             small_endian_tag = self.hdr.read(fid)
             self.hdr['filename'] = filename
-            self.dat = np.fromfile(fid, dtype=np.float32, count=self.hdr['npts'])
+            self.dat = np.fromfile(fid, dtype=np.float32)
+            if self.dat.size != self.hdr['npts']:
+                print('Warning: mismatch NPTS (%d != %d) `%s`. NPTS in sachdr is updated with time series size ' % (
+                            self.dat.size, self.hdr['npts'], filename ), file=sys.stderr, flush=True )
+                self.hdr['npts'] = self.dat.size
+                self.hdr['e'] = self.hdr['b'] + self.dat.size * self.hdr['delta']
             if not small_endian_tag:
                 self.dat = self.dat.byteswap() #.newbyteorder()
             if self.is_nan_inf():
@@ -535,8 +540,31 @@ class sactrace:
         tmark: '0', 'b', 'e', 'o', 'a', 't0', 't1', ... 't9';
         t1, t2: float;
         """
-        self.read(filename)
-        self.truncate(tmark, t1, t2)
+        with open(filename, 'rb') as fid:
+            small_endian_tag = self.hdr.read(fid)
+            #####
+            self.hdr['filename'] = filename
+            i1 = self.__get_t_idx_absolute__(tmark, t1)
+            i2 = self.__get_t_idx_absolute__(tmark, t2) + 1
+            old_npts = self['npts']
+            new_npts = i2-i1
+            self.dat = np.zeros( new_npts, dtype=np.float32 )
+            #####
+            dj1 = 0
+            rj1, rj2 = 0, old_npts
+            if i1 > 0:
+                rj1 = i1
+            else:
+                dj1 = -i1
+            if i2 < old_npts:
+                rj2 = i2
+            #####
+            if rj1 >0:
+                fid.read(rj1*4)
+            self.dat[dj1:dj1+(rj2-rj1) ] = np.fromfile(fid, dtype=np.float32, count= (rj2-rj1)  )
+            self['npts'] = new_npts
+            self['b'] = self['b'] + i1*self['delta']
+            self['e'] = self['b'] + new_npts*self['delta']
     ### hdr methods
     def update_hdr(self, **kwargs):
         """
@@ -831,7 +859,7 @@ class sactrace:
         """
         Plot and show, with **kwargs used by pyplot.plot(...).
         """
-        plt.plot(self.t(), self.dat, **kwargs)
+        plt.plot(self.get_time_axis(), self.dat, **kwargs)
         #plt.close()
     ###
     def rfft(self, zeropad = 0):
@@ -1556,18 +1584,35 @@ class sachdr_pair_ev_list(list):
 ###
 #  high-level `sachdr_pair_ev_list` container
 ###
-#class 
+#class
 
 ##########################
 ##########################
 ##########################
 if __name__ == "__main__":
-    tr = rd_sac_2('test_tmp/2.sac', '0', -100, 1500)
+    ax = plt.subplot(111)
+
+    tr = rd_sac('test_tmp/2.sac')
     print(tr['b'], tr['e'], tr['npts'], tr.dat.size )
-    tr.plot()
+    tr.plot_ax(ax, alpha= 0.6, color='k', linewidth= 2)
+
+    tr = rd_sac_2('test_tmp/2.sac', '0', 200, 900)
+    print(tr['b'], tr['e'], tr['npts'], tr.dat.size )
+    tr.plot_ax(ax, alpha= 0.6, color='C0')
+
+    tr = rd_sac_2('test_tmp/2.sac', '0', -300, 900)
+    print(tr['b'], tr['e'], tr['npts'], tr.dat.size )
+    tr.plot_ax(ax, alpha= 0.6, color='C1')
+
+    tr = rd_sac_2('test_tmp/2.sac', '0', -500, 1600)
+    print(tr['b'], tr['e'], tr['npts'], tr.dat.size )
+    tr.plot_ax(ax, alpha= 0.6, color='r')
+
+
+
     idx, t, y = tr.max_amplitude_time('neg', '0', (100, 400) )
     print(t, y)
-    plt.plot(t, y, 'rx')
+    ax.plot(t, y, 'rx')
 
     plt.show()
     sys.exit(0)
