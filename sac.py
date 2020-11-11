@@ -74,7 +74,6 @@ Massive data IO and processing
 
 
 """
-import scipy.signal as signal
 import matplotlib.pyplot as plt
 import copy
 import numpy as np
@@ -87,6 +86,7 @@ import h5py
 import sacpy.geomath as geomath
 import sacpy.processing as processing
 import copy
+from os.path import exists as os_path_exists
 ###
 #  dependend methods
 ###
@@ -113,6 +113,55 @@ def rd_sachdr(filename):
     tmp = sachdr()
     tmp.read(filename, 'filename')
     return tmp
+def rd_sac_mat(sacfnm_lst, tmark, t1, t2, norm_each='pos', bp_range=None, warning_msg=True ):
+    """
+    Read a list of sac files, and form 2D matrix for those time series.
+
+    tmark, t1, t2:
+    norm_each: 'pos' to normalize each time series with the max positive amplitude. (default)
+               'neg' ...                                        negative ...
+               'abs' ...                                        absolute ...
+
+    bp_range:  None(default) or (f1, f2) for bandpass filter.
+    warning_msg: True or False to output warning message due to non-existence of sac files.
+
+    Return (hdr_lst, tr_lst, mat).
+
+    Note, if any of sac file does not exist, the corresponding item in the `hdr_lst` and the `tr_lst` will be None,
+    and the row in the `mat` will be filled with ZEROs.
+    """
+    tr_lst = list()
+    hdr_lst = list()
+    ncol = 1
+    for sacfnm in sacfnm_lst:
+        if os_path_exists(sacfnm):
+            tr = rd_sac(sacfnm)
+            if bp_range != None:
+                tr.detrend()
+                tr.taper()
+                tr.bandpass(bp_range[0], bp_range[1], 2, 2)
+            tr = truncate_sac(tr, tmark, t1, t2)
+            ####
+            if norm_each != None:
+                tr.norm(norm_each)
+            ####
+            tr_lst.append( tr )
+            hdr_lst.append( tr.hdr )
+            ncol = max(tr.dat.size, ncol)
+        else:
+            if warning_msg:
+                print('Warnning, file does not exist! ', sacfnm)
+            tr_lst.append(None)
+    ######
+    nrow = len(tr_lst)
+    mat  = np.zeros((nrow, ncol), dtype=np.float32 )
+    for irow in range(nrow):
+        if tr_lst[irow] == None:
+            continue
+        else:
+            npts = tr_lst[irow].dat.size
+            mat[irow,:npts] = tr_lst[irow].dat
+    return hdr_lst, tr_lst, mat
 def make_sachdr(delta, npts, b, **kwargs):
     """
     Generate sac header, and return an object of `sachdr`.
@@ -506,8 +555,10 @@ class sactrace:
     ### internel methods
     def __get_t_idx__(self, tmark, t):
         """
+        !!! Deprecated methods !!!
         Given t, get the closest index.
         """
+        print('Warnning `sactrace.__get_t_idx__` will be deprecated soon. Please use `sactrace.__get_t_idx_valid__` instead.', flush=True, file=sys.stderr)
         if tmark == '0':
             tmark = 'b'
             t = t - self['b']
@@ -518,6 +569,33 @@ class sactrace:
                 sys.exit(0)
             idx = int(np.round( (t_ref+t-self['b'])/self['delta'] ) )
             idx = min(max(idx, 0), self['npts']-1 )
+            idx = max(0, idx)
+            return idx
+        else:
+            print('Unrecognized tmark for sactrace.read_sac_2(...) ', tmark)
+            sys.exit(0)
+    def __get_t_idx_valid__(self, tmark, t):
+        """
+        Given t, get the closest and valid index [0, npts-1].
+        """
+        idx = self.__get_t_idx_absolute__(tmark, t)
+        idx = min(max(idx, 0), self['npts']-1 )
+        idx = max(0, idx)
+        return idx
+    def __get_t_idx_absolute__(self, tmark, t):
+        """
+        Given t, return the index in current time axis.
+        The returned index can be out of [0, npts-1].
+        """
+        if tmark == '0':
+            tmark = 'b'
+            t = t - self['b']
+        if tmark in self:
+            t_ref = self[tmark]
+            if t_ref == -12345.0:
+                print('unset header for tmark: %s %f', tmark, t_ref)
+                sys.exit(0)
+            idx = int(np.round( (t_ref+t-self['b'])/self['delta'] ) )
             return idx
         else:
             print('Unrecognized tmark for sactrace.read_sac_2(...) ', tmark)
@@ -556,11 +634,21 @@ class sactrace:
         self.dat = dat
         self.hdr.__update_npts__(np.size(dat) )
     ### numerical methods
-    def norm(self):
+    def norm(self, method='abs'):
         """
         Norm max amplitude to 1
+        norm: 'pos' to normalize the max positive amplitude.
+              'neg' ...                  negative ...
+              'abs' ...                  absolute ... (default)
         """
-        self.dat *= (1.0/max( self.dat.max(), -1.0*self.dat.min() ) )
+        max_pos = self.dat.max()
+        max_neg = -self.dat.min()
+        if method  == 'pos':
+            self.dat *= (1.0/max_pos)
+        elif method == 'neg':
+            self.dat *= (1.0/max_neg)
+        else:
+            self.dat *= (1.0/ max(max_pos, max_neg) )
     def get_time_axis(self):
         """
         Get time axis.
@@ -577,10 +665,27 @@ class sactrace:
             tmark = 'b'
             t1 = t1 - self['b']
             t2 = t2 - self['b']
-        i1 = self.__get_t_idx__(tmark, t1)
-        i2 = self.__get_t_idx__(tmark, t2) + 1
+        i1 = self.__get_t_idx_absolute__(tmark, t1)
+        i2 = self.__get_t_idx_absolute__(tmark, t2) + 1
+        #
         # update data and header info
-        self.dat= self.dat[i1:i2][:]
+        if i1 >= 0 and i2 <= self.dat.size:
+            self.dat= self.dat[i1:i2][:]
+        else:
+            #####
+            old_i1   = i1 if i1>=0 else 0
+            old_i2   = i2 if i2<=self.dat.size else self.dat.size
+            #print(old_i1, old_i2)
+            old_npts = old_i2 - old_i1
+            #####
+            new_npts = i2-i1
+            new_dat = np.zeros(new_npts, dtype=np.float32 )
+            new_i1 = 0 if i1 >= 0 else -i1
+            new_i2 = new_i1+old_npts
+            #####
+            new_dat[new_i1: new_i2] = self.dat[old_i1:old_i2][:]
+            self.dat = new_dat
+        #########
         self['npts'] = i2-i1
         self['b'] = self['b'] + i1*self['delta']
         self['e'] = self['b'] + (self['npts']-1)*self['delta']
@@ -658,13 +763,13 @@ class sactrace:
         """
         self['b'] = self['b'] + tshift_sec
         self['e'] = self['e'] + tshift_sec
-    def max_amplitude_time(self, amp= 'abs'):
+    def max_amplitude_time_old(self, amp= 'abs'):
         """
         Obtain the (time, amplitude) for the max amplitude point. 
         amp:'abs' to search for the max absolute amplitude point.
             'pos' to search for the max positive amplitude point.
             'neg' to search for the max negative amplitude point.
-            'neg' cannot problematic if the whole time series is positive.
+            'neg' can be problematic if the whole time series is positive.
         Return: (time, amplitude)
         """
         imax = np.argmax(self['dat'])
@@ -676,6 +781,33 @@ class sactrace:
         else:
             iabs = imax if self['dat'][imax] > -self['dat'][imin] else imin
             return iabs*self['delta']+self['b'], self['dat'][iabs]
+    def max_amplitude_time(self, amp= 'abs', tmark=None, time_range = None):
+        """
+        Obtain the (time, amplitude) for the max amplitude point. 
+        amp:'abs' to search for the max absolute amplitude point.
+            'pos' to search for the max positive amplitude point.
+            'neg' to search for the max negative amplitude point.
+        Return: (time, amplitude)
+        """
+        i0, i1 = 0, self.dat.size
+        if tmark != None and time_range != None:
+            t0, t1 = time_range
+            i0 = self.__get_t_idx_valid__(tmark, t0)
+            i1 = self.__get_t_idx_valid__(tmark, t1) + 1
+        ####
+        if amp == 'pos':
+            idx = np.argmax( self.dat[i0:i1] ) + i0
+            t = idx*self['delta'] + self['b']
+            return idx, t, self.dat[idx]
+        elif amp == 'neg':
+            idx = np.argmin( self.dat[i0:i1] ) + i0
+            t = idx*self['delta'] + self['b']
+            return idx, t, self.dat[idx]
+        else:
+            idx = np.argmax( np.abs(self.dat[i0:i1]) ) + i0
+            t = idx*self['delta'] + self['b']
+            return idx, t, self.dat[idx]
+
     def is_nan_inf(self):
         if (True in np.isnan(self.dat) or True in np.isinf(self.dat) ):
             return True
@@ -699,7 +831,7 @@ class sactrace:
         """
         Plot and show, with **kwargs used by pyplot.plot(...).
         """
-        plt.plot(self.get_time_axis(), self.dat, **kwargs)
+        plt.plot(self.t(), self.dat, **kwargs)
         #plt.close()
     ###
     def rfft(self, zeropad = 0):
@@ -1430,6 +1562,16 @@ class sachdr_pair_ev_list(list):
 ##########################
 ##########################
 if __name__ == "__main__":
+    tr = rd_sac_2('test_tmp/2.sac', '0', -100, 1500)
+    print(tr['b'], tr['e'], tr['npts'], tr.dat.size )
+    tr.plot()
+    idx, t, y = tr.max_amplitude_time('neg', '0', (100, 400) )
+    print(t, y)
+    plt.plot(t, y, 'rx')
+
+    plt.show()
+    sys.exit(0)
+
     import glob
     vol = sachdr_ev_dict()
     id = 1
