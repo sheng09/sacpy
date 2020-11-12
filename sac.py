@@ -90,28 +90,28 @@ from os.path import exists as os_path_exists
 ###
 #  dependend methods
 ###
-def rd_sac(filename):
+def rd_sac(filename, lcalda=False):
     """
     Read sac given `filename`, and return an object ot sactrace.
     """
     tmp = sactrace()
-    tmp.read(filename)
+    tmp.read(filename, lcalda=lcalda)
     return tmp
-def rd_sac_2(filename, tmark, t1, t2):
+def rd_sac_2(filename, tmark, t1, t2, lcalda=False):
     """
     Read sac data given filename and time window, and return an object ot sactrace.
     tmakr: 'b', 'e', 'o', 'a', 't0', 't1', ... 't9';
     t1, t2: float
     """
     tmp = sactrace()
-    tmp.read_2(filename, tmark, t1, t2)
+    tmp.read_2(filename, tmark, t1, t2, lcalda=lcalda)
     return tmp
-def rd_sachdr(filename):
+def rd_sachdr(filename, lcalda=False):
     """
     Read sac header given `filename`, and return an object ot sachdr.
     """
     tmp = sachdr()
-    tmp.read(filename, 'filename')
+    tmp.read(filename, 'filename', lcalda=lcalda)
     return tmp
 def rd_sac_mat(sacfnm_lst, tmark, t1, t2, norm_each='pos', bp_range=None, warning_msg=True ):
     """
@@ -379,7 +379,7 @@ class sachdr:
         self.d_arch['iftype'] = 1
         self.d_arch['nvhdr'] = 6
     ###
-    def read(self, f, type='fid'):
+    def read(self, f, type='fid', lcalda=False):
         """
         Read sac header given `f` as string, or file object.
         f:
@@ -388,7 +388,7 @@ class sachdr:
         """
         if type == 'filename':
             self.d_arch['filename'] = copy.deepcopy(f)
-        f = open(f, 'rb')
+            f = open(f, 'rb')
         hdrvol = f.read(632)
         #print(sachdr.little_endian_format)
         info = struct.unpack(sachdr.little_endian_format, hdrvol)
@@ -408,6 +408,14 @@ class sachdr:
             dict_s[k] = tmp[idx*8+24: idx*8+32]
         ###
         self.d_arch.update( {**dict_f, **dict_i, **dict_s} )
+        ###
+        if lcalda and self.d_arch['lcalda'] == -12345:
+            stlo, stla = self.d_arch['stlo'], self.d_arch['stla']
+            evlo, evla = self.d_arch['evlo'], self.d_arch['evla']
+            self.d_arch['lcalda'] = 1
+            self.d_arch['gcarc'] = geomath.haversine(stlo, stla, evlo, evla)
+            self.d_arch['baz'] = geomath.azimuth(stlo, stla, evlo, evla)
+            self.d_arch['az'] = geomath.azimuth(evlo, evla, stlo, stla)
         return small_endian_tag
     def init(self, delta, npts, b, **kwargs):
         """
@@ -503,12 +511,12 @@ class sactrace:
             self.dat = dat
         self['npts'] = np.size(dat)
     ### file io
-    def read(self, filename):
+    def read(self, filename, lcalda=False):
         """
         Read sac data given filename.
         """
         with open(filename, 'rb') as fid:
-            small_endian_tag = self.hdr.read(fid)
+            small_endian_tag = self.hdr.read(fid, lcalda=lcalda )
             self.hdr['filename'] = filename
             self.dat = np.fromfile(fid, dtype=np.float32)
             if self.dat.size != self.hdr['npts']:
@@ -534,14 +542,14 @@ class sactrace:
         with open(filename, 'wb') as fid:
             fid.write(self.hdr.pack() )
             self.dat.astype(np.float32).tofile(fid)
-    def read_2(self, filename, tmark, t1, t2):
+    def read_2(self, filename, tmark, t1, t2, lcalda=False):
         """
         Read sac data given filename and time window.
         tmark: '0', 'b', 'e', 'o', 'a', 't0', 't1', ... 't9';
         t1, t2: float;
         """
         with open(filename, 'rb') as fid:
-            small_endian_tag = self.hdr.read(fid)
+            small_endian_tag = self.hdr.read(fid, lcalda= lcalda)
             #####
             self.hdr['filename'] = filename
             i1 = self.__get_t_idx_absolute__(tmark, t1)
@@ -854,6 +862,7 @@ class sactrace:
         Plot into specified axis, with **kwargs used by pyplot.plot(...).
         """
         ax.plot(self.get_time_axis(), self.dat, **kwargs)
+        ax.set_xlim([self['b'], self['e'] ] )
         max_amp, min_amp = self.dat.max(), self.dat.min()
         for key in ['t0', 't1', 't2', 't3', 't4', 't5', 't6', 't7', 't8', 't9']:
             #print(key, self[key])
@@ -866,6 +875,7 @@ class sactrace:
         Plot and show, with **kwargs used by pyplot.plot(...).
         """
         plt.plot(self.get_time_axis(), self.dat, **kwargs)
+        plt.xlim([self['b'], self['e'] ])
         #plt.close()
     ###
     def rfft(self, zeropad = 0):
@@ -1596,6 +1606,16 @@ class sachdr_pair_ev_list(list):
 ##########################
 ##########################
 if __name__ == "__main__":
+    #print(moving_average(xs, 5) )
+    tr1 = rd_sac('test_tmp/test.sac')
+    ax1 = plt.subplot(211)
+    ax2 = plt.subplot(211)
+    tr1.plot_ax(ax2)
+    #tr2.plot_ax(ax1)
+    #tr3.plot_ax(ax1)
+    plt.show()
+    sys.exit(0)
+
     ax = plt.subplot(111)
 
     tr = rd_sac('test_tmp/2.sac')
