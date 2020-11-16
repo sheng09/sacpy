@@ -112,6 +112,7 @@ def moving_average_abs(xs, wdn_sz=3, average=False):
 def temporal_normalize(tr, sampling_rate, twin_len, f1, f2, water_level_ratio= 1.0e-5, taper_length=0):
     """
     Temporal normalization of input trace `tr` with `sampling rate`.
+
     twin_len:          an integer to delcare the  moving window size.
     f1, f2:            frequency band that will be used to from the weight.
     water_level_ratio: default is 1.0e-5.
@@ -132,9 +133,13 @@ def temporal_normalize(tr, sampling_rate, twin_len, f1, f2, water_level_ratio= 1
 def frequency_whiten_spec(tr, fwin_len, nfft, water_level_ratio= 1.0e-5):
     """
     Return the whitened spectrum other than the time series.
-    tr:       
-    fwin_len: 
-    nfft:     fft size.
+
+    tr:       the trace to be whitend.
+    fwin_len: an integer to declare the moving window size.
+    nfft:     fft size. `nfft` will be used to compute the spectrum for whitening.
+    water_level_ratio: default is 1.0e-5.
+
+    Note: `rfft` will be used, and hence the return spectrum npts is `nfft//2+1`.
     """
     spec = pyfftw.interfaces.numpy_fft.rfft(tr, nfft)
     amp = np.abs(spec)
@@ -149,10 +154,17 @@ def frequency_whiten_spec(tr, fwin_len, nfft, water_level_ratio= 1.0e-5):
     return  spec
 def frequency_whiten(tr, fwin_len, water_level_ratio= 1.0e-5, taper_length=0):
     """
+    Return the whitened time series.
+
+    fwin_len:          an integer to declare the moving window size.
+    water_level_ratio: default is 1.0e-5.
+    taper_length:      taper size in each end after the division.
     """
     N = 2 * ((len(tr)+1) // 2) # EVET points make faster FFT than ODD points
     spec = frequency_whiten_spec(tr, fwin_len, N, water_level_ratio)
-    ys = pyfftw.interfaces.numpy_fft.irfft( spec , len(tr) )
+    ys = pyfftw.interfaces.numpy_fft.irfft( spec , N )
+    if N != len(tr):
+        ys = ys[:len(tr) ]
     if taper_length > 0 :
         ys = taper(ys, taper_length)
     return ys
@@ -160,6 +172,36 @@ def frequency_whiten(tr, fwin_len, water_level_ratio= 1.0e-5, taper_length=0):
 ###
 #  taper
 ###
+
+@jit(float64[:](int64, float64), nopython=True, nogil=True)
+def tukey_jit(window_length, ratio):
+    """
+    Return a tukey time window.
+
+    window_length: total length of the window.
+    double_ratio:  the ratio between 0 and 0.5.
+    """
+    # Normal case
+    w = np.ones(window_length)
+    if ratio <= 0.0:
+        return w
+    elif ratio >= 0.5:
+        ratio = 0.5
+    x = np.linspace(0, 1, window_length)
+
+    alpha = ratio*2.0
+    # first condition 0 <= x < alpha/2
+    first_condition = x<ratio
+    w[first_condition] = 0.5 * (1 + np.cos(2*np.pi/alpha * (x[first_condition] - alpha/2) ))
+
+    # second condition already taken care of
+
+    # third condition 1 - alpha / 2 <= x <= 1
+    third_condition = x>=(1 -ratio)
+    w[third_condition] = 0.5 * (1 + np.cos(2*np.pi/alpha * (x[third_condition] - 1 + alpha/2)))
+
+    return w
+
 __dict_taper_window_func = dict()
 def taper(tr, n):
     """
@@ -167,9 +209,15 @@ def taper(tr, n):
     0 <= n <= len(tr)/2
     """
     npts = len(tr)
+    w = None
     if (npts, n) not in __dict_taper_window_func:
-        __dict_taper_window_func[(npts, n)] = signal.tukey(npts, float(n)/npts)
-    return __dict_taper_window_func[(npts, n)] * tr
+        w = tukey_jit(npts, float(n)/npts)
+        __dict_taper_window_func[(npts, n)] = w
+    else:
+        w = __dict_taper_window_func[(npts, n)]
+    return w * tr
+    #w = tukey_jit(npts, float(n)/npts)
+    #return tr*w
 
 if __name__ == "__main__":
     import copy
@@ -180,6 +228,11 @@ if __name__ == "__main__":
     #sys.exit(0)
 
     tr1= sac.rd_sac_2('test_tmp/test.sac', '0', 10800, 32400)
+    tr1.plot()
+    tr1.dat = taper(tr1.dat, tr1.dat.size//100 )
+    tr1.plot(color='C1')
+    plt.show()
+    sys.exit()
     #tr1= sac.rd_sac('test_tmp/test.sac') #, '0', 10800, 32400)
     tr1.detrend()
     tr1.bandpass(0.02, 0.066666, 2, 2)
