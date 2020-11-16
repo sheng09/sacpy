@@ -152,6 +152,7 @@ def rd_sac_mat(sacfnm_lst, tmark, t1, t2, norm_each='pos', bp_range=None, warnin
             if warning_msg:
                 print('Warnning, file does not exist! ', sacfnm)
             tr_lst.append(None)
+            hdr_lst.append(None)
     ######
     nrow = len(tr_lst)
     mat  = np.zeros((nrow, ncol), dtype=np.float32 )
@@ -1608,6 +1609,9 @@ class sachdr_pair_ev_list(list):
 if __name__ == "__main__":
     #print(moving_average(xs, 5) )
     tr1 = rd_sac('test_tmp/test.sac')
+    print(tr1)
+    sys.exit(0)
+    
     ax1 = plt.subplot(211)
     ax2 = plt.subplot(211)
     tr1.plot_ax(ax2)
