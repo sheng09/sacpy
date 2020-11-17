@@ -127,7 +127,7 @@ def main(   fnm_wildcard, tmark, t1, t2, delta, pre_detrend=True, pre_taper_rati
     if mpi_rank == 0:
         global_spec_stack_mat = np.zeros( (dist.size, nrfft), dtype= np.complex64 )
         global_stack_count = np.zeros( dist.size, dtype=np.int32 )
-        stack_mat = np.zeros((dist.size, npts), dtype=np.float32 )
+        stack_mat = np.zeros((dist.size, fftsize-1), dtype=np.float32 )
 
     # logging
     if True: # user-defined parameters
@@ -208,7 +208,7 @@ def main(   fnm_wildcard, tmark, t1, t2, delta, pre_detrend=True, pre_taper_rati
         rollsize = npts-1
         for irow in range(dist.size):
             x = pyfftw.interfaces.numpy_fft.irfft(spec_stack_mat[irow], fftsize)
-            x = np.roll(x)
+            x = np.roll(x, rollsize)
             stack_mat[irow] = x[:-1]
     
     ### 4. post processing
@@ -219,7 +219,7 @@ def main(   fnm_wildcard, tmark, t1, t2, delta, pre_detrend=True, pre_taper_rati
         # 4.1 post folding
         if post_folding:
             for irow in range(dist.size):
-                stack_mat[irow] += stack_mat[irow][:-1]
+                stack_mat[irow] += stack_mat[irow][::-1]
             stack_mat = stack_mat[:,rollsize:]
             cc_t0, cc_t1 = 0, rollsize*delta
         # 4.2 post filtering
@@ -229,7 +229,7 @@ def main(   fnm_wildcard, tmark, t1, t2, delta, pre_detrend=True, pre_taper_rati
             for irow in range(dist.size):
                 stack_mat[irow] = signal.detrend( stack_mat[irow] )
                 stack_mat[irow] *= w
-                stack_mat[irow] = processing.filter(stack_mat[irow], 'bandpass', (f1, f2), 2, 2 )
+                stack_mat[irow] = processing.filter(stack_mat[irow], sampling_rate, 'bandpass', (f1, f2), 2, 2 )
         # 4.3 post norm
         if post_norm:
             for irow in range(dist.size):
@@ -263,7 +263,7 @@ def main(   fnm_wildcard, tmark, t1, t2, delta, pre_detrend=True, pre_taper_rati
     ##### Done
     t_end = timeit.timeit()
     if True:
-        mpi_print_log('Done (%.1f sec)' % (output_format, t_end-t_main_start) , 0, mpi_log_fid, True)
+        mpi_print_log('Done (%.1f sec)' % (t_end-t_main_start) , 0, mpi_log_fid, True)
     mpi_log_fid.close()
 
 def mpi_print_log(msg, n_pre, file=sys.stdout, flush=False):
