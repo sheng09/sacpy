@@ -197,14 +197,15 @@ def main(   fnm_wildcard, tmark, t1, t2, delta, pre_detrend=True, pre_taper_rati
         mpi_print_log('MPI collecting...', 0, mpi_log_fid, True)
     mpi_comm.Reduce([spec_stack_mat, MPI.C_FLOAT_COMPLEX], [global_spec_stack_mat, MPI.C_FLOAT_COMPLEX], MPI.SUM, root= 0)
     mpi_comm.Reduce([stack_count, MPI.INT32_T], [global_stack_count, MPI.INT32_T], MPI.SUM, root= 0 )
-    
+    mpi_comm.Barrier()
+
     ### 3.2 ifft
     if mpi_rank == 0: 
         if True:
             mpi_print_log('Ifft', 0, mpi_log_fid, True)
         rollsize = npts-1
         for irow in range(dist.size):
-            x = pyfftw.interfaces.numpy_fft.irfft(spec_stack_mat[irow], fftsize)
+            x = pyfftw.interfaces.numpy_fft.irfft(global_spec_stack_mat[irow], fftsize)
             x = np.roll(x, rollsize)
             stack_mat[irow] = x[:-1]
     
@@ -248,7 +249,7 @@ def main(   fnm_wildcard, tmark, t1, t2, delta, pre_detrend=True, pre_taper_rati
             dset = f.create_dataset('ccstack', data=stack_mat )
             dset.attrs['cc_t0'] = cc_t0
             dset.attrs['cc_t1'] = cc_t1
-            f.create_dataset('stack_count', data= stack_count )
+            f.create_dataset('stack_count', data= global_stack_count )
             f.close()
         elif output_format == 'sac' or output_format == 'SAC':
             if True:
