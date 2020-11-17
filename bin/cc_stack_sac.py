@@ -134,7 +134,10 @@ def main(   fnm_wildcard, tmark, t1, t2, delta, pre_detrend=True, pre_taper_rati
         mpi_print_log('Set ccstack parameters', 0, mpi_log_fid, True)
         mpi_print_log('dist_range: [%f,%f]' % (dist_range[0], dist_range[1]), 1, mpi_log_fid, True)
         mpi_print_log('dist_step:   %f' % (dist_step), 1, mpi_log_fid, True)
-        mpi_print_log('[%s...%s] (size=%d)' % (', '.join(dist[:3]),  ', '.join(dist[-2:]), len(dist) ), 1, mpi_log_fid, True)
+        msg = '[%s...%s] (size=%d)' % (', '.join(['%.1f' % it for it in dist[:3] ] ),  
+                                       ', '.join(['%.1f' % it for it in dist[-1:] ]), 
+                                       len(dist) )
+        mpi_print_log(msg, 1, mpi_log_fid, True)
     
     ### 4. post-processing
     # dependent parameters
@@ -455,6 +458,7 @@ if __name__ == "__main__":
     HMSG = """\n
     %s  -I "in*/*.sac" -T 0/10800/32400 -D 0.1 -O cc_stack --out_format hdf5
         [--pre_detrend] [--pre_taper 0.005] [--pre_filter bandpass/0.005/0.1] 
+        [--stack_dist 0/180/1]
         [--w_temporal 128.0/0.02/0.06667] [--w_spec 0.02] 
         [--post_fold] [--post_taper 0.05] [--post_filter bandpass/0.02/0.0666] [--post_norm] 
          --log cc_log  
@@ -474,13 +478,16 @@ Args:
     [--w_temporal] : temporal normalization. (default is disabled)
     [--w_spec] : spectral whitening. (default is disabled)
 
-    #3. post-processing parameters:
+    #3. stacking method
+    --stack_dist :
+
+    #4. post-processing parameters:
     [--post_fold]
     [--post_taper]
     [--post_filter]
     [--post_norm]
 
-    #4. log:
+    #5. log:
     --log : log filename prefix.
 
 E.g.,
@@ -548,4 +555,3 @@ E.g.,
     ########
 
 
-    
