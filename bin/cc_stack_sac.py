@@ -189,14 +189,16 @@ def main(   fnm_wildcard, tmark, t1, t2, delta, pre_detrend=True, pre_taper_rati
         t_ccstack = t_ccstack + (t_end-t_start)
     if True:
         total_loop_time = t_rd + t_whiten + t_ccstack
-        msg = 'Time consumption summation: (rd: %.1f(%d%)， whiten: %.1f(%d%), ccstack %.1f(%d%))' % (t_rd, t_whiten, t_ccstack,
-                        t_rd/total_loop_time*100, t_whiten/total_loop_time*100, t_ccstack/total_loop_time*100)
+        msg = 'Time consumption summation: (rd: %.1f(%d%%)， whiten: %.1f(%d%%), ccstack %.1f(%d%%))' % (
+                        t_rd, t_rd/total_loop_time*100, 
+                        t_whiten, t_whiten/total_loop_time*100, 
+                        t_ccstack, t_ccstack/total_loop_time*100 )
         mpi_print_log(msg, 1, mpi_log_fid, True)
     
     ### 3.1.2 MPI collecting
     if True:
         mpi_print_log('MPI collecting...', 0, mpi_log_fid, True)
-    mpi_comm.Reduce([spectral_whiten, MPI.C_FLOAT_COMPLEX], [global_spec_stack_mat, MPI.C_FLOAT_COMPLEX], MPI.SUM, root= 0)
+    mpi_comm.Reduce([spec_stack_mat, MPI.C_FLOAT_COMPLEX], [global_spec_stack_mat, MPI.C_FLOAT_COMPLEX], MPI.SUM, root= 0)
     mpi_comm.Reduce([stack_count, MPI.INT32_T], [global_stack_count, MPI.INT32_T], MPI.SUM, root= 0 )
     
     ### 3.2 ifft
@@ -494,6 +496,7 @@ E.g.,
     %s -I "in*/*.sac" -T 0/10800/32400 -D 0.1 -O cc --out_format hdf5
         --pre_detrend --pre_taper 0.005 
         --w_temporal 128.0/0.02/0.06667 --w_spec 0.02
+        --stack_dist 0/180/1
         --post_fold --post_taper 0.005 --post_filter bandpass/0.001/0.06667 --post_norm 
         --log cc_log  
     
