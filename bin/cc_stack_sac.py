@@ -6,7 +6,7 @@ from numpy.core.numeric import roll
 from operator import pos
 from sacpy.processing import filter, taper
 from sacpy.sac import rd_sac_2
-import timeit
+import time
 import sacpy.sac as sac
 import sacpy.processing as processing
 import sacpy.geomath as geomath
@@ -67,7 +67,7 @@ def main(   fnm_wildcard, tmark, t1, t2, delta, pre_detrend=True, pre_taper_rati
     mpi_log_fid = open('%s_%03d.txt' % (log_prefnm, mpi_rank), 'w' )
     
     mpi_print_log('Start!', 0, mpi_log_fid, True)
-    t_main_start = timeit.timeit()
+    t_main_start = time.time()
 
     ### 1. read sac files and pre-processing
     # dependent parameters
@@ -171,22 +171,19 @@ def main(   fnm_wildcard, tmark, t1, t2, delta, pre_detrend=True, pre_taper_rati
         if True:
             mpi_print_log(wildcards, 1, mpi_log_fid, True)
         ### 1. read and pre-processing
-        t_start = timeit.timeit()
+        t_start = time.time()
         mat, sampling_rate, stlo, stla, evlo, evla, az, baz = rd_preproc_single(wildcards, tmark, t1, t2, pre_detrend, pre_taper_ratio, pre_filter)
-        t_end = timeit.timeit()
-        t_rd = t_rd + (t_end-t_start)
+        t_rd = t_rd + (time.time()-t_start)
         
         ### 2. whitening
-        t_start = timeit.timeit()
+        t_start = time.time()
         whitened_spectra_mat = whiten_spec(mat, sampling_rate, wt_size, wt_f1, wt_f2, wf_size, fftsize, taper_size)
-        t_end = timeit.timeit()
-        t_whiten = t_whiten + (t_end-t_start)
+        t_rd = t_rd + (time.time()-t_start)
         
         ### 3.1 cc and stack
-        t_start = timeit.timeit()
+        t_start = time.time()
         ccstack(whitened_spectra_mat, stack_count, stlo, stla, spec_stack_mat, dist_step, cc_index_range, dist_range[0] )
-        t_end = timeit.timeit()
-        t_ccstack = t_ccstack + (t_end-t_start)
+        t_rd = t_rd + (time.time()-t_start)
     if True:
         total_loop_time = t_rd + t_whiten + t_ccstack
         msg = 'Time consumption summation: (rd: %.1f(%d%%)， whiten: %.1f(%d%%), ccstack %.1f(%d%%))' % (
@@ -261,9 +258,8 @@ def main(   fnm_wildcard, tmark, t1, t2, delta, pre_detrend=True, pre_taper_rati
                 sac.wrt_sac_2(fnm, stack_mat[irow], delta, cc_t0, user3= stack_count[irow] )
     
     ##### Done
-    t_end = timeit.timeit()
     if True:
-        mpi_print_log('Done (%.1f sec)' % (t_end-t_main_start) , 0, mpi_log_fid, True)
+        mpi_print_log('Done (%.1f sec)' % (time.time()-t_main_start) , 0, mpi_log_fid, True)
     mpi_log_fid.close()
 
 def mpi_print_log(msg, n_pre, file=sys.stdout, flush=False):
