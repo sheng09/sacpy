@@ -6,7 +6,7 @@ This is for data processing.
 
 import scipy.signal as signal
 import numpy as np
-import pyfftw
+import pyfftw, sys
 from numba import jit, int64, float64
 
 ###
@@ -127,46 +127,34 @@ def temporal_normalize(tr, sampling_rate, twin_len, f1, f2, water_level_ratio= 1
         weight = tr / weight
     #####
     if  taper_length > 0:
-        print(taper_length)
         weight = taper(weight, taper_length)
     return weight
-def frequency_whiten_spec(tr, fwin_len, nfft, water_level_ratio= 1.0e-5):
-    """
-    Return the whitened spectrum other than the time series.
 
-    tr:       the trace to be whitend.
-    fwin_len: an integer to declare the moving window size.
-    nfft:     fft size. `nfft` will be used to compute the spectrum for whitening.
-    water_level_ratio: default is 1.0e-5.
-
-    Note: `rfft` will be used, and hence the return spectrum npts is `nfft//2+1`.
-    """
-    spec = pyfftw.interfaces.numpy_fft.rfft(tr, nfft)
-    amp = np.abs(spec)
-    weight = moving_average(amp, fwin_len, False)
-    weight += (weight.max() * water_level_ratio)
-    #####
-    if True in np.isnan(weight) or True in np.isinf(weight) or np.count_nonzero(weight) == 0 :
-        spec[:]  = 0.0
-    else :
-        spec /=  weight
-    #####
-    return  spec
 def frequency_whiten(tr, fwin_len, water_level_ratio= 1.0e-5, taper_length=0):
     """
-    Return the whitened time series.
+    Return the whitened time series in time domain.
 
     fwin_len:          an integer to declare the moving window size.
     water_level_ratio: default is 1.0e-5.
     taper_length:      taper size in each end after the division.
     """
-    N = 2 * ((len(tr)+1) // 2) # EVET points make faster FFT than ODD points
-    spec = frequency_whiten_spec(tr, fwin_len, N, water_level_ratio)
-    ys = pyfftw.interfaces.numpy_fft.irfft( spec , N )
-    if N != len(tr):
-        ys = ys[:len(tr) ]
-    if taper_length > 0 :
-        ys = taper(ys, taper_length)
+    fftsize = len(tr)
+    if fftsize % 2 != 0: # EVET points make faster FFT than ODD points
+        fftsize = fftsize + 1
+
+    spec = pyfftw.interfaces.numpy_fft.rfft(tr, fftsize)
+    amp = np.abs(spec)
+    weight = moving_average(amp, fwin_len, False)
+    weight += (weight.max() * water_level_ratio)
+    if True in np.isnan(weight) or True in np.isinf(weight) or np.count_nonzero(weight) == 0 :
+        spec[:] = 0
+    else:
+        spec /=  weight
+
+    ys = pyfftw.interfaces.numpy_fft.irfft(spec, fftsize )
+    if len(tr) != fftsize:
+        ys = ys[:-1]
+    ys = taper(ys, taper_length)
     return ys
 
 ###
