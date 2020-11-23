@@ -993,7 +993,7 @@ def c_dup_sachdr(hdr):
     libsac.copy_sachdr(hdr, hdr2)
     return hdr2
 
-def c_rd_sac(filename, tmark, t1, t2, lcalda=False):
+def c_rd_sac(filename, tmark=None, t1=None, t2=None, lcalda=False):
     """
     Read sac given `filename`, and return an object ot sactrace.
     """
@@ -1880,16 +1880,19 @@ if __name__ == "__main__":
     #print(hdr2, hdr2.delta)
     ##
     #c_wrt_sac('junk.sac', x, hdr1)
-    #hdr= rd_sachdr_struct('test_tmp/1.sac', True)
-    #print(hdr, hdr.stlo, hdr.stla, hdr.b, hdr.e, hdr.npts, hdr.delta )
-#
+    st= c_rd_sac('test_tmp/1.sac')
+    hdr = st.hdr
+    print(hdr, hdr.stlo, hdr.stla, hdr.b, hdr.e, hdr.npts, hdr.delta, ffi.string(hdr.kstnm) )
+    hdr.kstnm = b'test'
+    print(hdr, hdr.stlo, hdr.stla, hdr.b, hdr.e, hdr.npts, hdr.delta, ffi.string(hdr.kstnm) )
+    st.write('junk.sac')
     #hdr = cp_sachdr_struct(hdr)
     #print(hdr.stlo, hdr.stla, hdr.b, hdr.e, hdr.npts, hdr.delta )
-    st = c_rd_sac('test_tmp/1.sac', -5, 100, 3000, True)
-    st.truncate(200, 2000)
+    #st = c_rd_sac('test_tmp/1.sac', -5, 100, 3000, True)
+    #st.truncate(200, 2000)
     #st.plot()
     #print(st.dat.dtype )
-    st.write('junk.sac')
+    #st.write('junk.sac')
     #st.dat = st.dat[:100]
     #st.taper(0.2)
     #hdr = st.hdr
