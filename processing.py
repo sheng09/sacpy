@@ -4,11 +4,11 @@
 This is for data processing.
 """
 
-import scipy.signal as signal
+from scipy.signal import butter, lfilter, filtfilt, fftconvolve
 import numpy as np
-import pyfftw, sys
+from pyfftw.interfaces.numpy_fft import rfft, irfft
 from numba import jit, int64, float64
-
+from copy import deepcopy
 ###
 #  linear processing
 ###
@@ -30,11 +30,11 @@ def filter(tr, sampling_rate, btype, frequency_band, order, npass= 2):
     """
     norm_frequency_band = (frequency_band[0]/sampling_rate * 2.0,  frequency_band[1]/sampling_rate * 2.0 )
     if norm_frequency_band not in __dict_filter_proc__:
-        b, a = signal.butter(order, norm_frequency_band, btype)
+        b, a = butter(order, norm_frequency_band, btype)
         __dict_filter_proc__[norm_frequency_band] = b, a
     b, a = __dict_filter_proc__[norm_frequency_band]
     #print(b, a)
-    filter_methods = signal.lfilter if npass ==1 else signal.filtfilt
+    filter_methods = lfilter if npass ==1 else filtfilt
     return filter_methods(b, a, tr)
 ###
 #  whitening
@@ -51,7 +51,7 @@ def moving_average_fft(xs, wdn_sz=1, average=False):
     wdn = np.ones(wdn_sz)
     if average:
         wdn *= (1.0/wdn_sz)
-    return signal.fftconvolve(xs, wdn, 'same')
+    return fftconvolve(xs, wdn, 'same')
 
 @jit(nopython=True, nogil=True)
 def moving_average(xs, wdn_sz=1, average=False):
@@ -142,7 +142,7 @@ def frequency_whiten(tr, fwin_len, water_level_ratio= 1.0e-5, taper_length=0):
     if fftsize % 2 != 0: # EVET points make faster FFT than ODD points
         fftsize = fftsize + 1
 
-    spec = pyfftw.interfaces.numpy_fft.rfft(tr, fftsize)
+    spec = rfft(tr, fftsize)
     amp = np.abs(spec)
     weight = moving_average(amp, fwin_len, False)
     weight += (weight.max() * water_level_ratio)
@@ -151,7 +151,7 @@ def frequency_whiten(tr, fwin_len, water_level_ratio= 1.0e-5, taper_length=0):
     else:
         spec /=  weight
 
-    ys = pyfftw.interfaces.numpy_fft.irfft(spec, fftsize )
+    ys = irfft(spec, fftsize )
     if len(tr) != fftsize:
         ys = ys[:-1]
     ys = taper(ys, taper_length)
@@ -203,9 +203,10 @@ def taper(tr, n):
         __dict_taper_window_func[(npts, n)] = w
     else:
         w = __dict_taper_window_func[(npts, n)]
-    return w * tr
-    #w = tukey_jit(npts, float(n)/npts)
-    #return tr*w
+    x = deepcopy(tr)
+    x[:n] *= w[:n]
+    x[-n:] *= w[-n:]
+    return x
 
 if __name__ == "__main__":
     import copy
