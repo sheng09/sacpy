@@ -4,7 +4,6 @@
 This contain sets of geometric methods, especially for spherical coordinates.
 """
 
-import shutil
 import os
 import numpy as np
 from math import radians #, cos, sin, asin, sqrt
@@ -15,7 +14,8 @@ from numba import jit, float64, types
 @jit(types.UniTuple(float64, 2)(float64, float64), nopython=True, nogil=True)
 def antipode(lon, lat):
     """
-    calculate antipode of a point.
+    Calculate antipode of a point.
+    Return (lon, lat) of the new point in degree.
     """
     new_lon = (lon + 180) % 360
     new_lat = -lat
@@ -36,7 +36,7 @@ def rlola_to_xyz(radius, lo, la):
     """
     Given (radius, lo, la), return (x,y,z) coordinates.
     """
-    lam, phi = np.deg2rad(lo), np.deg2rad(la)
+    lam, phi = radians(lo), radians(la)
     x = np.cos(phi)*np.cos(lam)*radius
     y = np.cos(phi)*np.sin(lam)*radius
     z = np.sin(phi)*radius
@@ -45,11 +45,10 @@ def rlola_to_xyz(radius, lo, la):
 @jit(float64(float64, float64, float64, float64), nopython=True, nogil=True)
 def haversine(lon1, lat1, lon2, lat2):
     """
-    Calculate the great circle distance between two points
-    on the earth (specified in decimal degrees)
+    Return the great circle distance (degree) between two points.
     """
     # convert decimal degrees to radians
-    lon1, lat1, lon2, lat2 = np.deg2rad(lon1), np.deg2rad(lat1), np.deg2rad(lon2), np.deg2rad(lat2)
+    lon1, lat1, lon2, lat2 = radians(lon1), radians(lat1), radians(lon2), radians(lat2)
     # haversine formula
     dlon = lon2 - lon1
     dlat = lat2 - lat1
@@ -62,17 +61,17 @@ def haversine(lon1, lat1, lon2, lat2):
 @jit(float64(float64, float64, float64, float64), nopython=True, nogil=True)
 def azimuth(evlo, evla, stlo, stla):
     """
-    Get the azimuth angle (degree) from (evlo, evla) to (stlo, stla)
+    Return the azimuth angle (degree) from (evlo, evla) to (stlo, stla)
     """
-    phi1, phi2 = np.deg2rad(evla), np.deg2rad(stla)
-    dlamda     = np.deg2rad(stlo - evlo)
+    phi1, phi2 = radians(evla), radians(stla)
+    dlamda     = radians(stlo - evlo)
     a = np.arctan2(np.cos(phi2) * np.sin(dlamda),  np.cos(phi1)*np.sin(phi2) - np.sin(phi1)*np.cos(phi2)*np.cos(dlamda) )
     return np.rad2deg(a) % 360.0
 
 @jit(float64(float64, float64, float64, float64, float64, float64), nopython=True, nogil=True)
 def point_distance_to_great_circle_plane(ptlon, ptlat, lon1, lat1, lon2, lat2):
     """
-    Calculate the distance from a point (ptlon, ptlat) to the great circle plane formed by two points
+    Return the distance (can be positive or negative) from a point (ptlon, ptlat) to the great circle plane formed by two points
     of (lon1, lat1) and (lon2, lat2).
     #
     dxt = asin( sin(d13) ⋅ sin(a13−a12) )
@@ -84,17 +83,17 @@ def point_distance_to_great_circle_plane(ptlon, ptlat, lon1, lat1, lon2, lat2):
     if np.abs(lon1-lon2) < 1.0e-4 and np.abs(lat1-lat2) < 1.0e-4:
         # pt1 and pt2 are the same point.
         return 0.0
-    d13 = np.deg2rad( haversine(lon1, lat1, ptlon, ptlat) )
-    a13 = np.deg2rad( azimuth(lon1, lat1, ptlon, ptlat) )
-    a12 = np.deg2rad( azimuth(lon1, lat1, lon2, lat2) )
+    d13 = radians( haversine(lon1, lat1, ptlon, ptlat) )
+    a13 = radians( azimuth(lon1, lat1, ptlon, ptlat) )
+    a12 = radians( azimuth(lon1, lat1, lon2, lat2) )
     dis = np.arcsin(np.sin(d13) * np.sin(a13-a12) )
     return np.rad2deg(dis)
 
 @jit(types.UniTuple(types.UniTuple(float64, 2), 2)(float64, float64, float64, float64), nopython=True, nogil=True)
 def great_circle_plane_center(lon1, lat1, lon2, lat2):
     """
-    Calculate the center point coordinate (lon, lat) for the great circle plane.
-    Note, two points will be returned.
+    Return two center points coordinate (clon1, clat1), (clon2, clat2) for the great circle plane formed by
+    the two input points (lon1, lat1) and (lon2, lat2).
     """
     #lon1, lat1, lon2, lat2 = radians(lon1), radians(lat1), radians(lon2), radians(lat2)
     x1, y1, z1 = rlola_to_xyz(1.0, lon1, lat1) #np.cos(lat1)*np.cos(lon1), np.cos(lat1)*np.sin(lon1), np.sin(lat1)
@@ -109,6 +108,13 @@ def great_circle_plane_center(lon1, lat1, lon2, lat2):
     else:
         return antipode(lon, lat), (lon, lat)
 
+
+
+
+
+##################################################################################################################
+# Functions/methods below are for special purpose
+##################################################################################################################
 ### frame rotation
 @jit(nopython=True, nogil=True)
 def sphere_rotate_axis(lo1, la1, lo2, la2):
@@ -126,7 +132,7 @@ def sphere_rotate_axis(lo1, la1, lo2, la2):
     lo2, junk = antipode(lo1, 0.0)
     return_value = []
     for lo in [lo1, lo2]:
-        lam_tmp = np.deg2rad(lo + 90)
+        lam_tmp = radians(lo + 90)
         c_1 = np.tan(phi1)/np.sin(lam1-lam_tmp) - np.tan(phi2)/np.sin(lam2-lam_tmp)
         c_2 = 1.0/np.tan(lam1-lam_tmp) - 1.0/np.tan(lam2-lam_tmp)
         rotate_angle = -np.rad2deg( np.arctan2(c_1, c_2) )
@@ -143,7 +149,7 @@ def sphere_rotate(lo, la, axis_lo, axis_la, axis_angle_deg):
     """
     v = np.array( rlola_to_xyz(1.0, lo, la))
     k = np.array( rlola_to_xyz(1.0, axis_lo, axis_la) )
-    a = np.deg2rad(axis_angle_deg)
+    a = radians(axis_angle_deg)
     c, s = np.cos(a), np.sin(a)
     v_r = v * c + np.cross(k, v) * s + k * np.dot(k, v) * (1.0-c)
     x, y, z = v_r
@@ -181,7 +187,7 @@ def __internel_line_same_daz_xy(x1, x2, angle_deg):
     npts = 128
     if np.abs(angle_deg) <= 1.0e-6:
         angle_deg = 10
-        c_tan = np.tan( np.deg2rad(angle_deg) )
+        c_tan = np.tan( radians(angle_deg) )
         c_l   = x2 - x1
         c_l_tan = c_l / c_tan
         x_min = (1 - np.sqrt(1.0+1.0/c_tan/c_tan) )* c_l * 0.5 * 0.999
@@ -189,7 +195,7 @@ def __internel_line_same_daz_xy(x1, x2, angle_deg):
         xs = np.linspace(x_min, x_max, npts) + x1
         ys = xs * 0.0
         return (xs, ys), (np.array(0), np.array(0) )
-    c_tan = np.tan( np.deg2rad(angle_deg) )
+    c_tan = np.tan( radians(angle_deg) )
     c_l   = x2 - x1
     c_l_tan = c_l / c_tan
     x_min = (1 - np.sqrt(1.0+1.0/c_tan/c_tan) )* c_l * 0.5 * 0.999
@@ -249,8 +255,8 @@ def __internel_line_same_daz_sphere(lo1, lo2, angle_deg):
         lo_lst = np.linspace(-180, 180, npts)
         la_lst = lo_lst * 0.0
         return lo_lst.tolist(), la_lst.tolist()
-    c_tan = np.tan(np.deg2rad(angle_deg) )
-    rad1, rad2 = np.deg2rad(lo1), np.deg2rad(lo2)
+    c_tan = np.tan(radians(angle_deg) )
+    rad1, rad2 = radians(lo1), radians(lo2)
     lo_lst, la_lst = [], []
     for lo in np.linspace(-np.pi, np.pi, npts):
         tmp = np.rad2deg(lo)
