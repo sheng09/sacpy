@@ -82,11 +82,11 @@ import struct
 import sys
 import glob
 import pickle
-import h5py
 import sacpy.geomath as geomath
 import sacpy.processing as processing
-import copy
 from os.path import exists as os_path_exists
+from c_src._sac_io import lib as libsac
+from c_src._sac_io import ffi as ffi
 ###
 #  dependend methods
 ###
@@ -301,6 +301,155 @@ def plot_sac_lst(st_lst, ax=None):
         junk['dat'] = junk['dat']*0.4 + isac
         junk.plot_ax(ax, color='k', linewidth= 0.6)
     return ax
+
+###
+#  dependend methods based on C libraries
+###
+def c_rd_sachdr(filename=None, lcalda=False):
+    """
+    Read and return a sac header struct given the filename.
+    """
+    hdr = ffi.new('SACHDR *')
+    libsac.read_sachead(filename.encode('utf8'), hdr )
+    hdr.e = hdr.b + hdr.delta*(hdr.npts-1)
+    if lcalda == True and hdr.lcalda == 0:
+        hdr.lcalda = 1
+        hdr.gcarc = geomath.haversine(hdr.stlo, hdr.stla, hdr.evlo, hdr.evla)
+        hdr.baz   = geomath.azimuth(  hdr.stlo, hdr.stla, hdr.evlo, hdr.evla)
+        hdr.az    = geomath.azimuth(  hdr.evlo, hdr.evla, hdr.stlo, hdr.stla)
+    return hdr
+def c_mk_sachdr(b, delta, npts):
+    """
+    Make a new sac header object given several tiem related parameters.
+    """
+    hdr = ffi.new('SACHDR *')
+    hdr.b = b
+    hdr.delta = delta
+    hdr.npts  = npts
+    return hdr
+def c_cp_sachdr(hdr):
+    """
+    Return a copy of the existing hdr.
+    """
+    hdr2 = ffi.new('SACHDR *')
+    libsac.copy_sachdr(hdr, hdr2)
+    return hdr2
+
+def c_rd_sac(filename, tmark, t1, t2, lcalda=False):
+    """
+    Read sac given `filename`, and return an object ot sactrace.
+    """
+    return c_sactrace(filename, tmark=tmark, t1=t1, t2=t2, lcalda=lcalda)
+def c_rd_sac_mat(fnms, tmark, t1, t2, lcalda=False):
+    """
+    Return (hdrs, mat), where `hdrs` is a list of sachdr and mat is the matrix of data.
+    """
+    buf = [c_sactrace(it, tmark=tmark, t1=t1, t2=t2, lcalda=lcalda) if os_path_exists(it) else None  for it in fnms ]
+    npts = np.max( [it.hdr.npts for it in buf if it !=None ] )
+    ###
+    hdrs = [it.hdr if it !=None else None for it in buf  ]
+    ###
+    mat = np.zeros( (len(fnms), npts), dtype=np.float32 )
+    for irow, it in enumerate(buf):
+        mat[irow][:it.dat.size] = it.dat
+    return hdrs, mat
+def c_wrt_sac(filename, xs, hdr):
+    """
+    Write.
+    """
+    np_arr = np.array(xs, dtype= np.float32 )
+    hdr.npts = np_arr.size
+    hdr.e = hdr.b + hdr.delta * (np_arr.size - 1)
+    ###
+    cffi_arr = ffi.cast('float*', np_arr.ctypes.data )
+    libsac.write_sac(filename.encode('utf8'), hdr, cffi_arr)
+def c_wrt_sac(filename, xs, b, delta):
+    """
+    Write.
+    """
+    np_arr = np.array(xs, dtype= np.float32 )
+    ###
+    cffi_arr = ffi.cast('float*', np_arr.ctypes.data )
+    libsac.write_sac2(filename.encode('utf8'), np_arr.size, b, delta, cffi_arr )
+
+###
+#  classes based on libraries
+###
+class c_sactrace:
+    def __init__(self, fnm=None, tmark=None, t1=None, t2=None, lcalda=False):
+        """
+        """
+        self.hdr = ffi.new('SACHDR *')
+        self._buf = None
+        self.dat = None
+        if fnm:
+            if tmark == None or t1 == None and t2 == None:
+                self.read(fnm)
+            else:
+                self.read2(fnm, tmark, t1, t2)
+    def __del__(self):
+        """
+        """
+        if self._buf != None:
+            ffi.gc(self._buf, libsac.free)
+    def read(self, fnm, lcalda=False):
+        self._buf = libsac.read_sac(fnm.encode('utf8'), self.hdr)
+        self.dat = np.frombuffer(ffi.buffer(self._buf, 4*self.hdr.npts), dtype=np.float32 )
+        ###
+        hdr = self.hdr
+        hdr.e = hdr.b + hdr.delta * (hdr.npts - 1)
+        if lcalda and self.hdr.lcalda == 0:
+            hdr.lcalda = 1
+            hdr.gcarc = geomath.haversine(hdr.stlo, hdr.stla, hdr.evlo, hdr.evla)
+            hdr.baz   = geomath.azimuth(  hdr.stlo, hdr.stla, hdr.evlo, hdr.evla)
+            hdr.az    = geomath.azimuth(  hdr.evlo, hdr.evla, hdr.stlo, hdr.stla)
+    def read2(self, fnm, tmark, t1, t2, lcalda=False):
+        """
+        tmark can be -5, -3, 0, 1,...9 for 'b', 'o', 't0', 't1',...,'t9'.
+        """
+        self._buf = libsac.read_sac2(fnm.encode('utf8'), self.hdr, tmark, t1, t2)
+        self.dat = np.frombuffer(ffi.buffer(self._buf, 4*self.hdr.npts), dtype=np.float32 )
+        ###
+        hdr = self.hdr
+        hdr.e = hdr.b + hdr.delta * (hdr.npts - 1)
+        if lcalda and self.hdr.lcalda == 0:
+            hdr.lcalda = 1
+            hdr.gcarc = geomath.haversine(hdr.stlo, hdr.stla, hdr.evlo, hdr.evla)
+            hdr.baz   = geomath.azimuth(  hdr.stlo, hdr.stla, hdr.evlo, hdr.evla)
+            hdr.az    = geomath.azimuth(  hdr.evlo, hdr.evla, hdr.stlo, hdr.stla)
+    def write(self, fnm):
+        """
+        """
+        hdr = self.hdr
+        hdr.e = hdr.b + hdr.delta * (hdr.npts - 1)
+        cffi_arr = ffi.cast('float*', self.dat.ctypes.data )
+        libsac.write_sac(fnm.encode('utf8'), self.hdr, cffi_arr)
+    def get_time_axis(self):
+        return np.arange(self.hdr.npts) * self.hdr.delta + self.hdr.b
+    def plot(self, ax=None, show=True, **kwargs):
+        if ax != None:
+            ax.plot(self.get_time_axis(), self.dat, **kwargs )
+        else:
+            plt.plot(self.get_time_axis(), self.dat, **kwargs )
+
+        if show:
+            plt.show()
+    def norm(self, method='abs'):
+        """
+        Norm max amplitude to 1
+        norm: 'pos' to normalize the max positive amplitude.
+              'neg' ...                  negative ...
+              'abs' ...                  absolute ... (default)
+        """
+        max_pos = self.dat.max()
+        max_neg = -self.dat.min()
+        if method  == 'pos':
+            self.dat *= (1.0/max_pos)
+        elif method == 'neg':
+            self.dat *= (1.0/max_neg)
+        else:
+            self.dat *= (1.0/ max(max_pos, max_neg) )
+
 ###
 #  classes
 ###
@@ -1608,175 +1757,14 @@ class sachdr_pair_ev_list(list):
 ##########################
 ##########################
 if __name__ == "__main__":
-    #print(moving_average(xs, 5) )
-    tr1 = rd_sac('test_tmp/test.sac')
-    print(tr1)
+    #hdr= rd_sachdr_struct('test_tmp/1.sac', True)
+    #print(hdr, hdr.stlo, hdr.stla, hdr.b, hdr.e, hdr.npts, hdr.delta )
+#
+    #hdr = cp_sachdr_struct(hdr)
+    #print(hdr.stlo, hdr.stla, hdr.b, hdr.e, hdr.npts, hdr.delta )
+    #st = rd_sac_struct('test_tmp/1.sac', -5, 100, 3000, True)
+    #hdr = st.hdr
+    #print(hdr.stlo, hdr.stla, hdr.b, hdr.e, hdr.npts, hdr.delta )
+    #st.plot(color='k')
+    hdrs, mat = c_rd_sac_mat(['test_tmp/1.sac', 'test_tmp/1.sac'], -5, -100, 100, True)
     sys.exit(0)
-    
-    ax1 = plt.subplot(211)
-    ax2 = plt.subplot(211)
-    tr1.plot_ax(ax2)
-    #tr2.plot_ax(ax1)
-    #tr3.plot_ax(ax1)
-    plt.show()
-    sys.exit(0)
-
-    ax = plt.subplot(111)
-
-    tr = rd_sac('test_tmp/2.sac')
-    print(tr['b'], tr['e'], tr['npts'], tr.dat.size )
-    tr.plot_ax(ax, alpha= 0.6, color='k', linewidth= 2)
-
-    tr = rd_sac_2('test_tmp/2.sac', '0', 200, 900)
-    print(tr['b'], tr['e'], tr['npts'], tr.dat.size )
-    tr.plot_ax(ax, alpha= 0.6, color='C0')
-
-    tr = rd_sac_2('test_tmp/2.sac', '0', -300, 900)
-    print(tr['b'], tr['e'], tr['npts'], tr.dat.size )
-    tr.plot_ax(ax, alpha= 0.6, color='C1')
-
-    tr = rd_sac_2('test_tmp/2.sac', '0', -500, 1600)
-    print(tr['b'], tr['e'], tr['npts'], tr.dat.size )
-    tr.plot_ax(ax, alpha= 0.6, color='r')
-
-
-
-    idx, t, y = tr.max_amplitude_time('neg', '0', (100, 400) )
-    print(t, y)
-    ax.plot(t, y, 'rx')
-
-    plt.show()
-    sys.exit(0)
-
-    import glob
-    vol = sachdr_ev_dict()
-    id = 1
-    for evdir in glob.glob('/mnt/Tdata/.ccPhysics/10_real_data/04/whitened_bp_data_1_12/2010*'):
-        evkey = evdir.split('/')[-1]
-        fnmlst = glob.glob(evdir+'/*BHZ.SAC')
-        tmp = sachdr_list()
-        tmp.read_fnm_lst(fnmlst)
-        vol.add(evkey, tmp )
-    vol.set_id(1)
-    print(vol.keys() ) 
-    pair_vol = vol.to_sachdr_pair_ev_list()
-    pair_vol.select('daz', ( -5, 5) )
-    print(len(pair_vol) )
-    pair_vol.write_table('test.txt', ['id'], ['daz'] )
-    sub_vol = pair_vol.to_sachdr_dict()
-    sub_vol.write_table('test.2.txt', ['filename', 'id'] )
-    print(len(sub_vol) )
-    sys.exit(0)
-    ####################
-    ###
-    vol = sachdr_list()
-    vol.read_fnm_lst(glob.glob('/mnt/Tdata/.ccPhysics/10_real_data/04/whitened_bp_data_1_12/2010*/*.BHZ.SAC') )
-    ### select
-    vol.select('mag', (6.9, 9999) )
-    ###
-    sys.exit(0)
-    ###
-    vol = sachdr_list()
-    vol.read_fnm_lst(['test2.sac', 'test.sac', 'test.sac'])
-    vol.write_table('junk.txt', ['b', 'e', 'npts', 'delta', 'kstnm', 'filename'])
-    v2 = vol.deepcopy()
-    v2.clear()
-    print(len(vol), len(v2) )
-    print(vol, v2)
-    d = vol.to_sachdr_dict()
-    print(d)
-    print(vol)
-    vol.rm_duplication()
-    print(vol)
-    ###
-    p = sachdr_pair_ev(vol[0], vol[1])
-    p2 =sachdr_pair(vol[0], vol[1])
-    print(p)
-    print(p2)
-    sys.exit(0)
-    sys.exit()
-    wrt_sac_2('test.sac', np.array([1,2,3,4,5,6,7] ), 1.0, 0.0, **{'kstnm': 'aaaaaaaaaaaaaaaaaa', 'kevnm': 'bbbbbbbbbbbbbbbbbbbb'} )
-    s = rd_sac('test.sac')
-    print(s)
-    s['dat'] = np.array([1,2] )
-    print(s)
-    s.write('test2.sac')
-    s2 = rd_sac('test2.sac')
-    print(s)
-    #print([s['kt0'] ] )
-    ##
-    
-    vol  = sactrace_list()
-    vol.read_fnm_lst(['1.sac', '2.sac', '3.sac'])
-    vol.sort('mag', 'descend')
-    vol.plot2()
-    #sys.exit(0)
-    #for it in vol:
-    #    print( it['nzjday'])
-    #sys.exit(0)
-    # io and basic processing
-    s = rd_sac('1.sac')
-    s.plot()       
-    s.detrend()    
-    s.taper(0.02) # ratio can be 0 ~ 0.5
-    s.bandpass(0.5, 2.0, order= 4, npass= 2)
-    s.write('1_new.sac')
-    # cut and read
-    s = rd_sac_2('1.sac', 'e', -50, -20)
-    s.detrend()    
-    # some other processing...
-    s.write('1_truncated.sac')
-    ###
-    #
-    ###
-
-    dat = np.random.random(1000)
-    delta, b = 0.05, 50.0
-    # writing method 1
-    wrt_sac_2('junk.sac', dat, delta, b, **{'kstnm': 'syn', 'stlo': 0.0, 'stla': 0.0} )
-    #
-    # writing method 2, with processings
-    s = make_sactrace_v(dat, delta, b, **{'kstnm': 'syn', 'stlo': 0.0, 'stla': 0.0} )
-    s.taper()
-    s.bandpass(0.5, 2.0, order= 4, npass= 2)
-    s.write('junk2.sac')
-    ###
-    #
-    ###
-    import copy
-    s = rd_sac('1.sac')
-    new_hdr = copy.deepcopy(s.hdr)
-    new_hdr['t1'] = 2.0
-    new_hdr['t2'] = 4.0
-    new_hdr.update( **{'stlo': -10.0, 'stla': 10.0, 'delta': 0.2 } )
-    s_new = make_sactrace_hdr(s['dat'], new_hdr)
-    s_new.write('1_new.sac')
-    print(s_new)
-    ###
-    #
-    ###
-    # read, process, and write a bunch of sac files in 3 lines
-    fnm_lst = ['1.sac', '2.sac', '3.sac']
-    for fnm in fnm_lst:
-        s = rd_sac(fnm)
-        s.detrend()
-        s.taper()
-        s.lowpass(1.2, order= 2, npass= 2)
-        s.write(s['filename'].replace('.sac', '_proced.sac') )
-    #[ s.write(s['filename'].replace('.sac', '_proced.sac') ) for s in vol ]
-    #import matplotlib.pyplot as plt
-    #tr1 = np.array([0, 0, 0, 1, 2, 3, 2, 1, 0, 0, 0])
-    #tr2 = np.array([0, 1, 2, 3, 2, 1, 0, 0, 0, 0, 0])
-    #i = idx_shift_res(tr1, tr2, -4, 4)
-    #print(i)
-    #sactrace.benchmark()
-    #s1 = rd_sac('1.sac')
-    #s2 = rd_sac_2('1.sac', 'e', -5000, 0)
-    #s3 = copy.deepcopy(s1)
-    #s3.bandpass(0.02, 0.0666, 2, 2)
-    #s2.write('2.sac')
-    #ax = plt.subplot(111)
-    #s1.plot_ax(ax, label='raw')
-    #s3.plot_ax(ax, label='bp')
-    #plt.legend()
-    #plt.show()
