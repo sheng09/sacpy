@@ -76,11 +76,12 @@ Massive data IO and processing
 """
 import matplotlib.pyplot as plt
 import copy
+from copy import deepcopy
 import numpy as np
 import scipy.signal as signal
 import struct
 import sys
-import glob
+from glob import glob
 import pickle
 import sacpy.geomath as geomath
 import sacpy.processing as processing
@@ -301,155 +302,6 @@ def plot_sac_lst(st_lst, ax=None):
         junk['dat'] = junk['dat']*0.4 + isac
         junk.plot_ax(ax, color='k', linewidth= 0.6)
     return ax
-
-###
-#  dependend methods based on C libraries
-###
-def c_rd_sachdr(filename=None, lcalda=False):
-    """
-    Read and return a sac header struct given the filename.
-    """
-    hdr = ffi.new('SACHDR *')
-    libsac.read_sachead(filename.encode('utf8'), hdr )
-    hdr.e = hdr.b + hdr.delta*(hdr.npts-1)
-    if lcalda == True and hdr.lcalda == 0:
-        hdr.lcalda = 1
-        hdr.gcarc = geomath.haversine(hdr.stlo, hdr.stla, hdr.evlo, hdr.evla)
-        hdr.baz   = geomath.azimuth(  hdr.stlo, hdr.stla, hdr.evlo, hdr.evla)
-        hdr.az    = geomath.azimuth(  hdr.evlo, hdr.evla, hdr.stlo, hdr.stla)
-    return hdr
-def c_mk_sachdr(b, delta, npts):
-    """
-    Make a new sac header object given several tiem related parameters.
-    """
-    hdr = ffi.new('SACHDR *')
-    hdr.b = b
-    hdr.delta = delta
-    hdr.npts  = npts
-    return hdr
-def c_cp_sachdr(hdr):
-    """
-    Return a copy of the existing hdr.
-    """
-    hdr2 = ffi.new('SACHDR *')
-    libsac.copy_sachdr(hdr, hdr2)
-    return hdr2
-
-def c_rd_sac(filename, tmark, t1, t2, lcalda=False):
-    """
-    Read sac given `filename`, and return an object ot sactrace.
-    """
-    return c_sactrace(filename, tmark=tmark, t1=t1, t2=t2, lcalda=lcalda)
-def c_rd_sac_mat(fnms, tmark, t1, t2, lcalda=False):
-    """
-    Return (hdrs, mat), where `hdrs` is a list of sachdr and mat is the matrix of data.
-    """
-    buf = [c_sactrace(it, tmark=tmark, t1=t1, t2=t2, lcalda=lcalda) if os_path_exists(it) else None  for it in fnms ]
-    npts = np.max( [it.hdr.npts for it in buf if it !=None ] )
-    ###
-    hdrs = [it.hdr if it !=None else None for it in buf  ]
-    ###
-    mat = np.zeros( (len(fnms), npts), dtype=np.float32 )
-    for irow, it in enumerate(buf):
-        mat[irow][:it.dat.size] = it.dat
-    return hdrs, mat
-def c_wrt_sac(filename, xs, hdr):
-    """
-    Write.
-    """
-    np_arr = np.array(xs, dtype= np.float32 )
-    hdr.npts = np_arr.size
-    hdr.e = hdr.b + hdr.delta * (np_arr.size - 1)
-    ###
-    cffi_arr = ffi.cast('float*', np_arr.ctypes.data )
-    libsac.write_sac(filename.encode('utf8'), hdr, cffi_arr)
-def c_wrt_sac(filename, xs, b, delta):
-    """
-    Write.
-    """
-    np_arr = np.array(xs, dtype= np.float32 )
-    ###
-    cffi_arr = ffi.cast('float*', np_arr.ctypes.data )
-    libsac.write_sac2(filename.encode('utf8'), np_arr.size, b, delta, cffi_arr )
-
-###
-#  classes based on libraries
-###
-class c_sactrace:
-    def __init__(self, fnm=None, tmark=None, t1=None, t2=None, lcalda=False):
-        """
-        """
-        self.hdr = ffi.new('SACHDR *')
-        self._buf = None
-        self.dat = None
-        if fnm:
-            if tmark == None or t1 == None and t2 == None:
-                self.read(fnm)
-            else:
-                self.read2(fnm, tmark, t1, t2)
-    def __del__(self):
-        """
-        """
-        if self._buf != None:
-            ffi.gc(self._buf, libsac.free)
-    def read(self, fnm, lcalda=False):
-        self._buf = libsac.read_sac(fnm.encode('utf8'), self.hdr)
-        self.dat = np.frombuffer(ffi.buffer(self._buf, 4*self.hdr.npts), dtype=np.float32 )
-        ###
-        hdr = self.hdr
-        hdr.e = hdr.b + hdr.delta * (hdr.npts - 1)
-        if lcalda and self.hdr.lcalda == 0:
-            hdr.lcalda = 1
-            hdr.gcarc = geomath.haversine(hdr.stlo, hdr.stla, hdr.evlo, hdr.evla)
-            hdr.baz   = geomath.azimuth(  hdr.stlo, hdr.stla, hdr.evlo, hdr.evla)
-            hdr.az    = geomath.azimuth(  hdr.evlo, hdr.evla, hdr.stlo, hdr.stla)
-    def read2(self, fnm, tmark, t1, t2, lcalda=False):
-        """
-        tmark can be -5, -3, 0, 1,...9 for 'b', 'o', 't0', 't1',...,'t9'.
-        """
-        self._buf = libsac.read_sac2(fnm.encode('utf8'), self.hdr, tmark, t1, t2)
-        self.dat = np.frombuffer(ffi.buffer(self._buf, 4*self.hdr.npts), dtype=np.float32 )
-        ###
-        hdr = self.hdr
-        hdr.e = hdr.b + hdr.delta * (hdr.npts - 1)
-        if lcalda and self.hdr.lcalda == 0:
-            hdr.lcalda = 1
-            hdr.gcarc = geomath.haversine(hdr.stlo, hdr.stla, hdr.evlo, hdr.evla)
-            hdr.baz   = geomath.azimuth(  hdr.stlo, hdr.stla, hdr.evlo, hdr.evla)
-            hdr.az    = geomath.azimuth(  hdr.evlo, hdr.evla, hdr.stlo, hdr.stla)
-    def write(self, fnm):
-        """
-        """
-        hdr = self.hdr
-        hdr.e = hdr.b + hdr.delta * (hdr.npts - 1)
-        cffi_arr = ffi.cast('float*', self.dat.ctypes.data )
-        libsac.write_sac(fnm.encode('utf8'), self.hdr, cffi_arr)
-    def get_time_axis(self):
-        return np.arange(self.hdr.npts) * self.hdr.delta + self.hdr.b
-    def plot(self, ax=None, show=True, **kwargs):
-        if ax != None:
-            ax.plot(self.get_time_axis(), self.dat, **kwargs )
-        else:
-            plt.plot(self.get_time_axis(), self.dat, **kwargs )
-
-        if show:
-            plt.show()
-    def norm(self, method='abs'):
-        """
-        Norm max amplitude to 1
-        norm: 'pos' to normalize the max positive amplitude.
-              'neg' ...                  negative ...
-              'abs' ...                  absolute ... (default)
-        """
-        max_pos = self.dat.max()
-        max_neg = -self.dat.min()
-        if method  == 'pos':
-            self.dat *= (1.0/max_pos)
-        elif method == 'neg':
-            self.dat *= (1.0/max_neg)
-        else:
-            self.dat *= (1.0/ max(max_pos, max_neg) )
-
 ###
 #  classes
 ###
@@ -1083,6 +935,267 @@ class sactrace:
         #
         ###
 
+
+
+###
+#  dependend methods based on C libraries
+###
+def c_rd_sachdr(filename=None, lcalda=False):
+    """
+    Read and return a sac header struct given the filename.
+
+    The returned object is stored as a C Struct in the memory, and hence it doesn't support `copy.deepcopy(...)`.
+    You can use the methods `new_hdr = c_dup_sachdr(old_hdr)` to copy/duplicate and generate a new object.
+    """
+    hdr = ffi.new('SACHDR *')
+    libsac.read_sachead(filename.encode('utf8'), hdr )
+    hdr.e = hdr.b + hdr.delta*(hdr.npts-1)
+    if lcalda == True and hdr.lcalda == 0:
+        hdr.lcalda = 1
+        hdr.gcarc = geomath.haversine(hdr.stlo, hdr.stla, hdr.evlo, hdr.evla)
+        hdr.baz   = geomath.azimuth(  hdr.stlo, hdr.stla, hdr.evlo, hdr.evla)
+        hdr.az    = geomath.azimuth(  hdr.evlo, hdr.evla, hdr.stlo, hdr.stla)
+    return hdr
+def c_mk_sachdr_time(b, delta, npts):
+    """
+    Make a new sac header object for time series given several time related parameters.
+
+    The returned object is stored as a C Struct in the memory, and hence it doesn't support `copy.deepcopy(...)`.
+    You can use the methods `new_hdr = c_dup_sachdr(old_hdr)` to copy/duplicate and generate a new object.
+    """
+    ###
+    hdr = c_mk_empty_sachdr()
+    ###
+    hdr.b = b
+    hdr.delta = delta
+    hdr.npts = npts
+    ###
+    hdr.e = b+(npts-1)*hdr.delta
+    hdr.iztype = libsac.IO
+    hdr.iftype = libsac.ITIME
+    hdr.leven  = 1
+    return hdr
+def c_mk_empty_sachdr():
+    """
+    Return an empty hdr.
+
+    The returned object is stored as a C Struct in the memory, and hence it doesn't support `copy.deepcopy(...)`.
+    You can use the methods `new_hdr = c_dup_sachdr(old_hdr)` to copy/duplicate and generate a new object.
+    """
+    return c_dup_sachdr( ffi.addressof(libsac.sachdr_null) )
+def c_dup_sachdr(hdr):
+    """
+    Return a deepcopy of the existing hdr.
+
+    Please use this method to copy an existing `hdr` object instead of `copy.deepcopy(...)` that is not supported.
+    """
+    hdr2 = ffi.new('SACHDR *')
+    libsac.copy_sachdr(hdr, hdr2)
+    return hdr2
+
+def c_rd_sac(filename, tmark, t1, t2, lcalda=False):
+    """
+    Read sac given `filename`, and return an object ot sactrace.
+    """
+    return c_sactrace(filename, tmark=tmark, t1=t1, t2=t2, lcalda=lcalda)
+def c_rd_sac_mat(fnms, tmark, t1, t2, lcalda=False, norm=None, filter=None):
+    """
+    Return (hdrs, mat), where `hdrs` is a list of sachdr and mat is the matrix of data.
+    If a sac file does not exist, then zeros will be used to fill the row in the matrix `mat`,
+    and None will be used for the element in the `hdrs`.
+    """
+    buf = [c_sactrace(it, tmark=tmark, t1=t1, t2=t2, lcalda=lcalda) if os_path_exists(it) else None for it in fnms ]
+    ###
+    if filter:
+        btype, f1, f2 = filter
+        for it in buf:
+            if it != None:
+                it.rmean()
+                it.detrend()
+                it.filter(btype, (f1, f2), 2, 2)
+    ###
+    if norm != None:
+        for it in buf:
+            if it != None:
+                it.norm(norm) 
+    ###
+    hdrs = [it.hdr if it !=None else None for it in buf  ]
+    ###
+    npts = np.max( [it.hdr.npts for it in buf if it !=None ] )
+    mat = np.zeros( (len(fnms), npts), dtype=np.float32 )
+    for irow, it in enumerate(buf):
+        mat[irow][:it.dat.size] = it.dat
+    ###
+    del buf
+    return hdrs, mat
+def c_wrt_sac(filename, xs, hdr):
+    """
+    Write.
+    """
+    np_arr = np.array(xs, dtype= np.float32 )
+    hdr.npts = np_arr.size
+    hdr.e = hdr.b + hdr.delta * (np_arr.size - 1)
+    ###
+    cffi_arr = ffi.cast('float*', np_arr.ctypes.data )
+    libsac.write_sac(filename.encode('utf8'), hdr, cffi_arr)
+def c_wrt_sac2(filename, xs, b, delta):
+    """
+    Write.
+    """
+    np_arr = np.array(xs, dtype= np.float32 )
+    ###
+    cffi_arr = ffi.cast('float*', np_arr.ctypes.data )
+    libsac.write_sac2(filename.encode('utf8'), np_arr.size, b, delta, cffi_arr )
+def c_truncate_sac(c_sactr, t1, t2):
+    """
+    Truncate an object of `c_sactrace` with the time window (t1, t2).
+    Return a new object that is the truncated `c_sactrace`.
+    """
+    obj = c_sactr.duplicate()
+    obj.truncate(t1, t2)
+    return obj
+###
+#  classes based on C libraries
+###
+class c_sactrace:
+    """
+    The class `c_sactrace` is based on C libraries implemented in `c_src/...`.
+
+    An `c_sactrace` object has two elements: #1. `c_sactrace.hdr` and #2. `c_sactrace.dat`.
+    The 1st, `c_sactrace.hdr`, is stored as a C Struct in the memory, and it does not support
+    `copy.deepcopy(...)`, and please use `new_hdr = c_dup_sachdr(old_hdr)` to copy.
+    The 2st, `c_sactrace.dat`, is a numpy.ndarray. You can manipulate it, and we suggest to 
+    use `dtype=np.float32` when manipulating it.
+    """
+    def __init__(self, fnm=None, tmark=None, t1=None, t2=None, lcalda=False):
+        """
+        fnm: the sac filename that is a string.
+        tmark:  default is None. can be -5, -3, 0, 1,...9 for 'b', 'o', 't0', 't1',...,'t9'.
+        t1, t2: defaults are None. the time window to cut when reading.
+        lcalda: default is False, and set True to enable the lcalda when reading.
+        """
+        self.hdr = c_dup_sachdr( ffi.addressof(libsac.sachdr_null) )
+        self.dat  = None
+        if fnm:
+            if tmark == None or t1 == None and t2 == None:
+                self.read(fnm)
+            else:
+                self.read2(fnm, tmark, t1, t2)
+    def duplicate(self):
+        """
+        Return a new object that is the duplication of this object.
+        """
+        obj = c_sactrace()
+        obj.hdr = c_dup_sachdr(self.hdr)
+        obj.dat = copy.deepcopy(self.dat)
+        return obj
+    def read(self, fnm, lcalda=False):
+        """
+        Read from a file.
+        """
+        buf = libsac.read_sac(fnm.encode('utf8'), self.hdr)
+        self.dat = np.frombuffer(ffi.buffer(buf, 4*self.hdr.npts), dtype=np.float32 )[:]
+        ffi.gc(buf, libsac.free)
+        ###
+        hdr = self.hdr
+        hdr.e = hdr.b + hdr.delta * (hdr.npts - 1)
+        if lcalda and self.hdr.lcalda != 1:
+            hdr.lcalda = 1
+            hdr.gcarc = geomath.haversine(hdr.stlo, hdr.stla, hdr.evlo, hdr.evla)
+            hdr.baz   = geomath.azimuth(  hdr.stlo, hdr.stla, hdr.evlo, hdr.evla)
+            hdr.az    = geomath.azimuth(  hdr.evlo, hdr.evla, hdr.stlo, hdr.stla)
+    def read2(self, fnm, tmark, t1, t2, lcalda=False):
+        """
+        Read from a file with cutting method.
+        tmark can be -5, -3, 0, 1,...9 for 'b', 'o', 't0', 't1',...,'t9'.
+        """
+        buf = libsac.read_sac2(fnm.encode('utf8'), self.hdr, tmark, t1, t2)
+        self.dat = np.frombuffer(ffi.buffer(buf, 4*self.hdr.npts), dtype=np.float32 )[:]
+        ffi.gc(buf, libsac.free)
+        ###
+        hdr = self.hdr
+        hdr.e = hdr.b + hdr.delta * (hdr.npts - 1)
+        if lcalda and self.hdr.lcalda != 1:
+            hdr.lcalda = 1
+            hdr.gcarc = geomath.haversine(hdr.stlo, hdr.stla, hdr.evlo, hdr.evla)
+            hdr.baz   = geomath.azimuth(  hdr.stlo, hdr.stla, hdr.evlo, hdr.evla)
+            hdr.az    = geomath.azimuth(  hdr.evlo, hdr.evla, hdr.stlo, hdr.stla)
+    def write(self, fnm):
+        """
+        Write to a file in sac formate.
+        """
+        hdr = self.hdr
+        hdr.e = hdr.b + hdr.delta * (hdr.npts - 1)
+        cffi_arr = ffi.cast('float*', self.dat.astype(np.float32).ctypes.data )
+        libsac.write_sac(fnm.encode('utf8'), self.hdr, cffi_arr)
+    def get_time_axis(self):
+        return np.arange(self.dat.size) * self.hdr.delta + self.hdr.b
+    def plot(self, ax=None, show=True, **kwargs):
+        if ax != None:
+            ax.plot(self.get_time_axis(), self.dat, **kwargs )
+        else:
+            plt.plot(self.get_time_axis(), self.dat, **kwargs )
+
+        if show:
+            plt.show()
+    def norm(self, method='abs'):
+        """
+        Norm max amplitude to 1
+        norm: 'pos' to normalize the max positive amplitude.
+              'neg' ...                  negative ...
+              'abs' ...                  absolute ... (default)
+        """
+        max_pos = self.dat.max()
+        max_neg = -self.dat.min()
+        if method  == 'pos':
+            self.dat *= (1.0/max_pos)
+        elif method == 'neg':
+            self.dat *= (1.0/max_neg)
+        else:
+            self.dat *= (1.0/ max(max_pos, max_neg) )
+    def rmean(self):
+        """
+        Remove mean value
+        """
+        self.dat -= np.average(self.dat)
+    def detrend(self):
+        """
+        """
+        self.dat = signal.detrend(self.dat)
+    def taper(self, ratio):
+        """
+        tukey window is used for the tapering.
+        """
+        self.dat = processing.taper(self.dat, int(self.dat.size*ratio) )
+    def filter(self, btype, fs, order=2, npass=2):
+        """
+        """
+        self.dat = processing.filter(self.dat, 1.0/self.hdr.delta, btype, fs, order, npass)
+    def truncate(self, t1, t2):
+        """
+        """
+        i1 = libsac.get_absolute_time_index(t1, self.hdr.delta, self.hdr.b)
+        i2 = libsac.get_absolute_time_index(t2, self.hdr.delta, self.hdr.b) + 1
+        new_dat = np.zeros(i2-i1, dtype= np.float32 )
+        ###
+        n1, o1 = 0, i1
+        o2 = i2
+        if i1<0:
+            n1 = -i1
+            o1 = 0
+        if i2 > self.dat.size:
+            o2 = self.dat.size
+        n2 = n1+(o2-o1)
+        new_dat[n1:n2] = self.dat[o1:o2]
+        ###
+        self.dat = new_dat
+        hdr = self.hdr
+        hdr.npts = self.dat.size
+        hdr.b = hdr.b + hdr.delta*i1
+        hdr.e = hdr.b + hdr.delta*(self.dat.size-1)
+##################################################################################################################
+# Classes/method below are usually useless
+##################################################################################################################
 ###
 #  sactrace container
 ###
@@ -1757,14 +1870,33 @@ class sachdr_pair_ev_list(list):
 ##########################
 ##########################
 if __name__ == "__main__":
+    #print(help(c_sactrace) )
+    #x = np.linspace(0, 100, 101)
+    #hdr1 = c_mk_sachdr_time(0, 1.0, x.size)
+    #hdr2 = c_mk_sachdr_time(0, 2.0, x.size)
+    #hdr1.delta = 2.0
+    #hdr2.delta = 4.0
+    #print(hdr1, hdr1.delta)
+    #print(hdr2, hdr2.delta)
+    ##
+    #c_wrt_sac('junk.sac', x, hdr1)
     #hdr= rd_sachdr_struct('test_tmp/1.sac', True)
     #print(hdr, hdr.stlo, hdr.stla, hdr.b, hdr.e, hdr.npts, hdr.delta )
 #
     #hdr = cp_sachdr_struct(hdr)
     #print(hdr.stlo, hdr.stla, hdr.b, hdr.e, hdr.npts, hdr.delta )
-    #st = rd_sac_struct('test_tmp/1.sac', -5, 100, 3000, True)
+    st = c_rd_sac('test_tmp/1.sac', -5, 100, 3000, True)
+    st.truncate(200, 2000)
+    #st.plot()
+    #print(st.dat.dtype )
+    st.write('junk.sac')
+    #st.dat = st.dat[:100]
+    #st.taper(0.2)
     #hdr = st.hdr
     #print(hdr.stlo, hdr.stla, hdr.b, hdr.e, hdr.npts, hdr.delta )
+    #st2 = st.duplicate()
+    #hdr = st2.hdr
+    #print(hdr.stlo, hdr.stla, hdr.b, hdr.e, hdr.npts, hdr.delta )
     #st.plot(color='k')
-    hdrs, mat = c_rd_sac_mat(['test_tmp/1.sac', 'test_tmp/1.sac'], -5, -100, 100, True)
-    sys.exit(0)
+    #hdrs, mat = c_rd_sac_mat(['test_tmp/1.sac', 'test_tmp/1.sac'], -5, -100, 100, True)
+    #sys.exit(0) 
