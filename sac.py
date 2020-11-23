@@ -50,7 +50,7 @@ Sac header update and revision
 
 >>> import copy
 >>> s = rd_sac('1.sac')
->>> new_hdr = copy.deepcopy(s.hdr)
+>>> new_hdr = deepcopy(s.hdr)
 >>> new_hdr['t1'] = 2.0 # meaningless value, just for example
 >>> new_hdr['t2'] = 4.0
 >>> new_hdr.update( **{'stlo': -10.0, 'stla': 10.0, 'delta': 0.2 } )
@@ -75,10 +75,10 @@ Massive data IO and processing
 
 """
 import matplotlib.pyplot as plt
-import copy
 from copy import deepcopy
 import numpy as np
 import scipy.signal as signal
+from scipy.signal import tukey, detrend, decimate, correlate, resample
 import struct
 import sys
 from glob import glob
@@ -216,7 +216,7 @@ def truncate_sac(sac_trace, tmark, t1, t2, clean_sachdr=False):
     clean_sachdr: set -12345 for sachdr elements that exclude `b`, `e`, `delta`
     Return: a new SAC_TRACE object.
     """
-    tmp = copy.deepcopy(sac_trace)
+    tmp = deepcopy(sac_trace)
     tmp.truncate(tmark, t1, t2)
     if clean_sachdr:
         return make_sactrace_v(tmp['dat'], tmp['delta'], tmp['b'])
@@ -232,7 +232,7 @@ def correlation_sac(sac_trace1, sac_trace2):
     Please note cc{st1, st2} = reversed cc{st2, st1}
 
     """
-    cc = signal.correlate(sac_trace1['dat'], sac_trace2['dat'], 'full', 'fft')
+    cc = correlate(sac_trace1['dat'], sac_trace2['dat'], 'full', 'fft')
     cc_start = sac_trace1['b'] - sac_trace2['e']
     return make_sactrace_v(cc, sac_trace1['delta'], cc_start)
 def stack_sac(sac_trace_lst, amp_norm=False):
@@ -272,7 +272,7 @@ def stack_sac(sac_trace_lst, amp_norm=False):
             st['dat'] += tmp_sac['dat']
     return st
 def time_shift_all_sac(sac_trace, t_shift_sec):
-    st = copy.deepcopy(sac_trace)
+    st = deepcopy(sac_trace)
     st.shift_time_all(t_shift_sec)
     return st
 def optimal_timeshift_cc_sac(st1, st2, min_timeshift=-1.e12, max_timeshift=1.e12, cc_amp= 'pos', search_time_window=None):
@@ -297,7 +297,7 @@ def plot_sac_lst(st_lst, ax=None):
     if ax == None:
         fig, ax = plt.subplots(1, 1)
     for isac, it in enumerate(st_lst):
-        junk = copy.deepcopy(it)
+        junk = deepcopy(it)
         junk.norm()
         junk['dat'] = junk['dat']*0.4 + isac
         junk.plot_ax(ax, color='k', linewidth= 0.6)
@@ -389,7 +389,7 @@ class sachdr:
               fid (default)
         """
         if type == 'filename':
-            self.d_arch['filename'] = copy.deepcopy(f)
+            self.d_arch['filename'] = deepcopy(f)
             f = open(f, 'rb')
         hdrvol = f.read(632)
         #print(sachdr.little_endian_format)
@@ -506,8 +506,8 @@ class sactrace:
     ### init
     def init(self, dat, hdr, deepcopy=True):
         if deepcopy:
-            self.hdr = copy.deepcopy(hdr)
-            self.dat = copy.deepcopy(dat)
+            self.hdr = deepcopy(hdr)
+            self.dat = deepcopy(dat)
         else:
             self.hdr = hdr
             self.dat = dat
@@ -739,7 +739,7 @@ class sactrace:
         """
         Taper using tukey window.
         """
-        w = signal.tukey(self['npts'], ratio)
+        w = tukey(self['npts'], ratio)
         self.dat *= w
         #return self
     def rmean(self):
@@ -752,7 +752,7 @@ class sactrace:
         """
         Remove linear trend
         """
-        self.dat = signal.detrend(self.dat)
+        self.dat = detrend(self.dat)
         #return self
     def bandpass(self, f1, f2, order= 2, npass= 1):
         """
@@ -777,7 +777,7 @@ class sactrace:
             factor = int(delta // self['delta'])
             return self.decimate(factor)
         new_npts = int( round(delta/self['delta']* self['npts']) )
-        self['dat'] = signal.resample(self['dat'], new_npts)
+        self['dat'] = resample(self['dat'], new_npts)
         self['npts'] = new_npts
         self['delta'] = delta
         self['e'] = self['b'] + (new_npts-1)*delta
@@ -785,7 +785,7 @@ class sactrace:
         """
         Downsample the time-series using scipy.signal.decimate.
         """
-        self['dat'] = signal.decimate(self['dat'], factor)
+        self['dat'] = decimate(self['dat'], factor)
         self['npts'] = self['dat'].size
         self['delta'] = self['delta']*factor
         self['e'] = self['b'] + (self['npts']-1)*self['delta']
@@ -944,7 +944,7 @@ def c_rd_sachdr(filename=None, lcalda=False):
     """
     Read and return a sac header struct given the filename.
 
-    The returned object is stored as a C Struct in the memory, and hence it doesn't support `copy.deepcopy(...)`.
+    The returned object is stored as a C Struct in the memory, and hence it doesn't support `deepcopy(...)`.
     You can use the methods `new_hdr = c_dup_sachdr(old_hdr)` to copy/duplicate and generate a new object.
     """
     hdr = ffi.new('SACHDR *')
@@ -960,7 +960,7 @@ def c_mk_sachdr_time(b, delta, npts):
     """
     Make a new sac header object for time series given several time related parameters.
 
-    The returned object is stored as a C Struct in the memory, and hence it doesn't support `copy.deepcopy(...)`.
+    The returned object is stored as a C Struct in the memory, and hence it doesn't support `deepcopy(...)`.
     You can use the methods `new_hdr = c_dup_sachdr(old_hdr)` to copy/duplicate and generate a new object.
     """
     ###
@@ -979,7 +979,7 @@ def c_mk_empty_sachdr():
     """
     Return an empty hdr.
 
-    The returned object is stored as a C Struct in the memory, and hence it doesn't support `copy.deepcopy(...)`.
+    The returned object is stored as a C Struct in the memory, and hence it doesn't support `deepcopy(...)`.
     You can use the methods `new_hdr = c_dup_sachdr(old_hdr)` to copy/duplicate and generate a new object.
     """
     return c_dup_sachdr( ffi.addressof(libsac.sachdr_null) )
@@ -987,7 +987,7 @@ def c_dup_sachdr(hdr):
     """
     Return a deepcopy of the existing hdr.
 
-    Please use this method to copy an existing `hdr` object instead of `copy.deepcopy(...)` that is not supported.
+    Please use this method to copy an existing `hdr` object instead of `deepcopy(...)` that is not supported.
     """
     hdr2 = ffi.new('SACHDR *')
     libsac.copy_sachdr(hdr, hdr2)
@@ -1063,7 +1063,7 @@ class c_sactrace:
 
     An `c_sactrace` object has two elements: #1. `c_sactrace.hdr` and #2. `c_sactrace.dat`.
     The 1st, `c_sactrace.hdr`, is stored as a C Struct in the memory, and it does not support
-    `copy.deepcopy(...)`, and please use `new_hdr = c_dup_sachdr(old_hdr)` to copy.
+    `deepcopy(...)`, and please use `new_hdr = c_dup_sachdr(old_hdr)` to copy.
     The 2st, `c_sactrace.dat`, is a numpy.ndarray. You can manipulate it, and we suggest to 
     use `dtype=np.float32` when manipulating it.
     """
@@ -1087,7 +1087,7 @@ class c_sactrace:
         """
         obj = c_sactrace()
         obj.hdr = c_dup_sachdr(self.hdr)
-        obj.dat = copy.deepcopy(self.dat)
+        obj.dat = deepcopy(self.dat)
         return obj
     def read(self, fnm, lcalda=False):
         """
@@ -1161,7 +1161,7 @@ class c_sactrace:
     def detrend(self):
         """
         """
-        self.dat = signal.detrend(self.dat)
+        self.dat = detrend(self.dat)
     def taper(self, ratio):
         """
         tukey window is used for the tapering.
@@ -1347,7 +1347,7 @@ class sachdr_list(list):
         """
         Deepcopy and return a new object.
         """
-        return copy.deepcopy(self)
+        return deepcopy(self)
     ### IO
     def read_fnm_lst(self, fnm_lst):
         """
@@ -1427,7 +1427,7 @@ class sachdr_list(list):
             for it in self:
                 fnm = it['filename']
                 if fnm not in vol:
-                    vol[fnm] = copy.deepcopy(it)
+                    vol[fnm] = deepcopy(it)
         else:
             for it in self:
                 fnm = it['filename']
@@ -1473,7 +1473,7 @@ class sachdr_dict(dict):
         """
         Deepcopy and return a new object.
         """
-        return copy.deepcopy(self)
+        return deepcopy(self)
     ### IO
     def read_fnm_lst(self, fnm_lst):
         """
@@ -1500,7 +1500,7 @@ class sachdr_dict(dict):
         """
         tmp = sachdr_list()
         tmp.extend(list( self.values() ) )
-        return copy.deepcopy(tmp) if deepcopy else tmp
+        return deepcopy(tmp) if deepcopy else tmp
     ###
 
 ###
@@ -1623,7 +1623,7 @@ class sachdr_ev_dict(dict):
             v = value[0][sachdr_event_key] #self.get_ev_info(key, [sachdr_event_key])[0]
             #print(v)
             if range[0] <= v < range[1]:
-                tmp[key] = copy.deepcopy(value) if deepcopy else value
+                tmp[key] = deepcopy(value) if deepcopy else value
         return tmp
     def select_4_st_return(self, sachdr_st_key, range, deepcopy=False):
         """
@@ -1636,7 +1636,7 @@ class sachdr_ev_dict(dict):
         tmp = sachdr_ev_dict()
         for key, value in self.items():
             v = value.select_return(sachdr_st_key, range)
-            tmp[key] = copy.deepcopy(v) if deepcopy else v
+            tmp[key] = deepcopy(v) if deepcopy else v
         return tmp
     ### 
     def to_sachdr_pair_ev_list(self):
@@ -1837,7 +1837,7 @@ class sachdr_pair_ev_list(list):
                 for it in [it_pair['hdr1'], it_pair['hdr2'] ]:
                     fnm = it['filename']
                     if fnm not in tmp:
-                        tmp[fnm] = copy.deepcopy(it)
+                        tmp[fnm] = deepcopy(it)
         else:
             for it_pair in self:
                 for it in [it_pair['hdr1'], it_pair['hdr2'] ]:
