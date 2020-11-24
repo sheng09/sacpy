@@ -2,24 +2,17 @@
 """
 Executable files for cross-correlation and stacking operations
 """
-from numpy.core.fromnumeric import shape
-from numpy.core.numeric import roll
-from operator import pos
-from sacpy.processing import filter, taper
-from sacpy.sac import rd_sac_2
+from sacpy.processing import filter, taper, tukey_jit, temporal_normalize, frequency_whiten
+from sacpy.sac import rd_sac_2, wrt_sac_2
 import time
-import sacpy.sac as sac
-import sacpy.processing as processing
 import sacpy.geomath as geomath
 from mpi4py import MPI
 import h5py
 import pyfftw
 import numpy as np
 import sys
-import getpass
 import getopt
 from glob import glob
-import scipy.signal as signal
 from numba import jit
 
 def main(   fnm_wildcard, tmark, t1, t2, delta, pre_detrend=True, pre_taper_ratio= 0.005, pre_filter= None,
@@ -280,12 +273,12 @@ def main(   fnm_wildcard, tmark, t1, t2, delta, pre_detrend=True, pre_taper_rati
             cc_t0, cc_t1 = 0, rollsize*delta
         # 4.2 post filtering
         if post_filter:
-            w = processing.tukey_jit( stack_mat.shape[1], post_taper_ratio )
+            w = tukey_jit( stack_mat.shape[1], post_taper_ratio )
             btype, f1, f2 = post_filter
             for irow in range(dist.size):
                 #stack_mat[irow] -= np.mean( stack_mat[irow] )
                 #stack_mat[irow] = signal.detrend( stack_mat[irow] )
-                stack_mat[irow] = processing.filter(stack_mat[irow], sampling_rate, btype, (f1, f2), 2, 2 )
+                stack_mat[irow] = filter(stack_mat[irow], sampling_rate, btype, (f1, f2), 2, 2 )
                 stack_mat[irow] *= w
         # 4.3 post norm
         if post_norm:
@@ -317,7 +310,7 @@ def main(   fnm_wildcard, tmark, t1, t2, delta, pre_detrend=True, pre_taper_rati
                 mpi_print_log('%s_..._sac' % (output_pre_fnm), 1, mpi_log_fid, True)
             for irow, it in enumerate(dist):
                 fnm = '%s_%05.1f_.sac' % (output_pre_fnm, it)
-                sac.wrt_sac_2(fnm, stack_mat[irow], delta, cc_t0, user3= stack_count[irow] )
+                wrt_sac_2(fnm, stack_mat[irow], delta, cc_t0, user3= stack_count[irow] )
 
     ##### Done
     if True:
@@ -345,7 +338,7 @@ def init_preproc_parameter(t1, t2, delta, taper_ratio= 0.005):
     npts = np.round((t2-t1)/delta) + 1
     fftsize = npts * 2 # in fact it should be `npts*2-1`. However here we use EVEN fftsize to speed-up fft.
     #
-    pre_proc_window = processing.tukey_jit(npts, taper_ratio)
+    pre_proc_window = tukey_jit(npts, taper_ratio)
     return npts, fftsize, pre_proc_window
 
 def init_ccstack(dist_range, dist_step, fftsize):
@@ -405,11 +398,11 @@ def rd_preproc_single(sacfnm_template, delta, tmark, t1, t2, detrend= True, tape
     if taper_ratio > 1.0e-5:
         sz_taper = int(npts*taper_ratio)
         for it in  tr:
-            it.dat = processing.taper(it.dat, sz_taper)
+            it.dat = taper(it.dat, sz_taper)
     if filter != None:
         btype, f1, f2 = filter
         for it in tr:
-            it.dat = processing.filter(it.dat, sampling_rate, btype, (f1, f2), 2, 2)
+            it.dat = filter(it.dat, sampling_rate, btype, (f1, f2), 2, 2)
     ### form the mat
     mat  = np.zeros((nsac, npts), dtype=np.float32 )
     for irow in range(nsac):
@@ -447,11 +440,11 @@ def whiten_spec(mat, sampling_rate, wnd_size_t, f1, f2, wnd_size_freq, fftsize, 
     #### temporal normlization
     if wnd_size_t != None:
         for irow in range(nrow):
-            mat[irow] = processing.temporal_normalize(mat[irow], sampling_rate, wnd_size_t, f1, f2, 1.0e-5, taper_length)
+            mat[irow] = temporal_normalize(mat[irow], sampling_rate, wnd_size_t, f1, f2, 1.0e-5, taper_length)
     #### spectral whitening
     if wnd_size_freq != None:
         for irow in range(nrow):
-            mat[irow] = processing.frequency_whiten(mat[irow], wnd_size_freq, 1.0e-5, taper_length)
+            mat[irow] = frequency_whiten(mat[irow], wnd_size_freq, 1.0e-5, taper_length)
     ####
     for irow in range(nrow):
         spec_mat[irow] = pyfftw.interfaces.numpy_fft.rfft(mat[irow], fftsize)
@@ -461,7 +454,7 @@ def whiten_spec(mat, sampling_rate, wnd_size_t, f1, f2, wnd_size_freq, fftsize, 
 def get_bound(fftsize, sampling_rate, f1, f2, critical_level= 0.01):
     x = np.zeros(fftsize)
     x[0] = 1.0
-    x = processing.filter(x, sampling_rate, 'bandpass', (f1, f2), 2, 2)
+    x = filter(x, sampling_rate, 'bandpass', (f1, f2), 2, 2)
     s = pyfftw.interfaces.numpy_fft.rfft(x, fftsize)
     amp = np.abs(s)
     c = np.max(amp) * critical_level
