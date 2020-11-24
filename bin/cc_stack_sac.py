@@ -206,7 +206,7 @@ def main(   fnm_wildcard, tmark, t1, t2, delta, pre_detrend=True, pre_taper_rati
         wildcards = '%s/%s' % (it, sac_wildcards)
         ### 1. read and pre-processing
         t_start = time.time()
-        mat, sampling_rate, stlo, stla, evlo, evla, az, baz = rd_preproc_single(wildcards, tmark, t1, t2, pre_detrend, pre_taper_ratio, pre_filter)
+        mat, sampling_rate, stlo, stla, evlo, evla, az, baz = rd_preproc_single(wildcards, delta, tmark, t1, t2, pre_detrend, pre_taper_ratio, pre_filter)
         local_t_rd = time.time()-t_start
 
         ### 2. whitening
@@ -365,7 +365,7 @@ def init_ccstack(dist_range, dist_step, fftsize):
     spec_stack_mat = np.zeros((nrow, nrfft), dtype=np.complex64 )
     return dist, spec_stack_mat
 
-def rd_preproc_single(sacfnm_template, tmark, t1, t2, detrend= True, taper_ratio= 0.005, filter=None ):
+def rd_preproc_single(sacfnm_template, delta, tmark, t1, t2, detrend= True, taper_ratio= 0.005, filter=None ):
     """
     Read and preproc many sacfiles given a filename template `sacfnm_template`.
     Those sac files can be recorded at many receivers for the same event, or they
@@ -394,22 +394,22 @@ def rd_preproc_single(sacfnm_template, tmark, t1, t2, detrend= True, taper_ratio
     az   = np.array( [it['az']  for it in tr] )
     baz  = np.array( [it['baz'] for it in tr] )
     ### important parameters
-    delta = tr[0]['delta']
     sampling_rate = 1.0/delta
     npts = tr[0].dat.size
     nsac = len(tr)
     ### preprocessing
     if detrend:
         for it in tr:
+            it.rmean()
             it.detrend()
     if taper_ratio > 1.0e-5:
-        w = processing.tukey_jit(npts, taper_ratio)
-        for it in tr:
-            it.dat *= w
+        sz_taper = int(npts*taper_ratio)
+        for it in  tr:
+            it.dat = processing.taper(it.dat, sz_taper)
     if filter != None:
         btype, f1, f2 = filter
         for it in tr:
-            processing.filter(it.dat, sampling_rate, btype, (f1, f2), 2, 2)
+            it.dat = processing.filter(it.dat, sampling_rate, btype, (f1, f2), 2, 2)
     ### form the mat
     mat  = np.zeros((nsac, npts), dtype=np.float32 )
     for irow in range(nsac):
@@ -681,7 +681,10 @@ E.g.,
         elif opt in ('--gc_center_rect'):
             gc_center_rect = []
             for rect in arg.split(','):
-                gc_center_rect.append( [float(it) for it in rect.split('/') ] )
+                tmp = [float(it) for it in rect.split('/') ]
+                tmp[0] = tmp[0] % 360.0
+                tmp[1] = tmp[1] % 360.0
+                gc_center_rect.append( tmp )
         elif opt in ('--post_fold'):
             post_folding = True
         elif opt in ('--post_taper'):

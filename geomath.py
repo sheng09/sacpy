@@ -102,7 +102,7 @@ def great_circle_plane_center(lon1, lat1, lon2, lat2):
     lat = np.arctan2(z3, np.sqrt(x3*x3+y3*y3))
     lon = np.arctan2(y3, x3)
     #print(x3, y3, z3)
-    lon, lat = np.rad2deg(lon), np.rad2deg(lat)
+    lon, lat = np.rad2deg(lon) % 360.0, np.rad2deg(lat)
     if lat > 0.0:
         return (lon, lat), antipode(lon, lat)
     else:
