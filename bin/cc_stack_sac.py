@@ -24,7 +24,7 @@ from numba import jit
 
 def main(   fnm_wildcard, tmark, t1, t2, delta, pre_detrend=True, pre_taper_ratio= 0.005, pre_filter= None,
             temporal_normalization = (128.0, 0.02, 0.066666), spectral_whiten= 0.02,
-            dist_range = (0.0, 180.0), dist_step= 1.0, daz_range= None, gcd_ev_range= None,
+            dist_range = (0.0, 180.0), dist_step= 1.0, daz_range= None, gcd_ev_range= None, gc_center_rect= None,
             post_folding = True, post_taper_ratio = 0.005, post_filter = ('bandpass', 0.02, 0.066666), post_norm = True,
             log_prefnm= 'cc_mpi_log',
             output_pre_fnm= 'junk', output_format= ['hdf5'] ):
@@ -58,6 +58,10 @@ def main(   fnm_wildcard, tmark, t1, t2, delta, pre_detrend=True, pre_taper_rati
         daz_range:    selection criterion for daz range. Set `None` to disable. (e.g., daz_range=(-0.1, 15.0) )
         gcd_ev_range: selection criterion for the distance from the event to two receivers great-circle path.
                       Set `None` to disable. (e.g., gcd_ev_range= (-0.1, 20) )
+        gc_center_rect: selection criterion for the center of the great-circle plane formed by the two receivers.
+                        If the center is outside the area, then it is not used in the cross-correlation stacks.
+                        Can be a list of rect (lo1, lo2, la1, la2).
+                        E.g., gc_center_rect= [ (120, 180, 0, 35), (180, 190, 0, 10) ]
     - 4. post-processing of correlation stacks:
         post_folding:     True to enable folding the positive and the negative cross-correlation lags. False to disable.
         post_taper_ratio: taper ratio between 0 and 0.5 when enable post filter.
@@ -139,11 +143,13 @@ def main(   fnm_wildcard, tmark, t1, t2, delta, pre_detrend=True, pre_taper_rati
         global_stack_count = np.zeros( dist.size, dtype=np.int32 )
         stack_mat = np.zeros((dist.size, fftsize-1), dtype=np.float32 )
 
-    if daz_range != None or gcd_ev_range != None:
+    if daz_range != None or gcd_ev_range != None or gc_center_rect != None:
         if daz_range == None:
             daz_range = (-0.1, 90.1)
         if gcd_ev_range == None:
             gcd_ev_range = (-0.1, 90.1)
+        if gc_center_rect == None:
+            gc_center_rect = [(-9999, 9999, -9999, 9999)]
     # logging
     if True: # user-defined parameters
         mpi_print_log('Set ccstack parameters', 0, mpi_log_fid, True)
@@ -154,9 +160,11 @@ def main(   fnm_wildcard, tmark, t1, t2, delta, pre_detrend=True, pre_taper_rati
                                        len(dist) )
         mpi_print_log(msg, 1, mpi_log_fid, True)
 
-        if daz_range != None or gcd_ev_range != None:
+        if daz_range != None or gcd_ev_range != None or gc_center_rect != None:
             mpi_print_log('Selection of receiver pairs: daz(%.1f, %.1f) gcd_ev(%.1f, %.1f) ' % (daz_range[0], daz_range[1], gcd_ev_range[0], gcd_ev_range[1] ), 1, mpi_log_fid, True )
-
+            mpi_print_log('Selection rect: ', 1, mpi_log_fid, True )
+            for rect in gc_center_rect:
+                mpi_print_log('(%.1f, %.1f, %.1f, %.1f)' % (rect[0], rect[1], rect[2], rect[3] ), 2, mpi_log_fid, True )
     ### 4. post-processing
     # dependent parameters
     critical_parameter= 0.001
@@ -208,9 +216,16 @@ def main(   fnm_wildcard, tmark, t1, t2, delta, pre_detrend=True, pre_taper_rati
 
         ### 3.1 cc and stack
         t_start = time.time()
-        if daz_range != None or gcd_ev_range != None:
-            local_ncc = ccstack_selection_ev(whitened_spectra_mat, stack_count, stlo, stla, az, spec_stack_mat, evlo[0], evla[0], 
-            daz_range[0], daz_range[1], gcd_ev_range[0], gcd_ev_range[1], dist_step, cc_index_range, dist_range[0] )
+        if daz_range != None or gcd_ev_range != None or gc_center_rect != None:
+            center_clo1 = np.array( [rect[0] for rect in gc_center_rect] )
+            center_clo2 = np.array( [rect[1] for rect in gc_center_rect] )
+            center_cla1 = np.array( [rect[2] for rect in gc_center_rect] )
+            center_cla2 = np.array( [rect[3] for rect in gc_center_rect] )
+
+            local_ncc = ccstack_selection_ev(whitened_spectra_mat, stack_count, stlo, stla, az, spec_stack_mat, evlo[0], evla[0],
+                            daz_range[0], daz_range[1], gcd_ev_range[0], gcd_ev_range[1],
+                            center_clo1, center_clo2, center_cla1, center_cla2,
+                            dist_step, cc_index_range, dist_range[0] )
         else:
             local_ncc = ccstack(whitened_spectra_mat, stack_count, stlo, stla, spec_stack_mat, dist_step, cc_index_range, dist_range[0] )
         local_t_cc = time.time()-t_start
@@ -483,6 +498,7 @@ def ccstack(spec_mat, stack_count, stlo_lst, stla_lst, stack_mat, dist_step, ind
 @jit(nopython=True, nogil=True)
 def ccstack_selection_ev(spec_mat, stack_count, stlo_lst, stla_lst, az_lst, stack_mat,
                         evlo, evla, daz_min, daz_max, gcd_ev_min, gcd_ev_max,
+                        center_clo1, center_clo2, center_cla1, center_cla2,
                         dist_step, index_range, dist_start=0.0):
     """
     """
@@ -496,7 +512,36 @@ def ccstack_selection_ev(spec_mat, stack_count, stlo_lst, stla_lst, az_lst, stac
         spec1 = spec_mat[isac1]
         for isac2 in range(isac1, nsac):
             stlo2, stla2, az2 = stlo_lst[isac2], stla_lst[isac2], az_lst[isac2]
-
+            ### rect selection
+            flag = 0
+            if isac1==isac2 or (abs(stlo1-stlo2)<1.0e-3 and abs(stla1-stla2)<1.0e-3 ):
+                (x, y), (x1, y1) = geomath.great_circle_plane_center(evlo, evla, stlo1, stla1)
+                if y<0:
+                    x, y = x1, y1
+                for lo1, lo2, la1, la2 in zip(center_clo1, center_clo2, center_cla1, center_cla2):
+                    if lo1 < lo2:
+                        if x<lo1 or x>lo2 or y<la1 or y >la2:
+                            flag = 1
+                            continue
+                    else:
+                        if x>lo1 or x<lo2 or y<la1 or y >la2:
+                            flag = 1
+                            continue
+            else:
+                (x, y), (x1, y1) = geomath.great_circle_plane_center(stlo1, stla1, stlo2, stla2)
+                if y<0:
+                    x, y = x1, y1
+                for lo1, lo2, la1, la2 in zip(center_clo1, center_clo2, center_cla1, center_cla2):
+                    if lo1 < lo2:
+                        if x<lo1 or x>lo2 or y<la1 or y >la2:
+                            flag = 1
+                            continue
+                    else:
+                        if x>lo1 or x<lo2 or y<la1 or y >la2:
+                            flag = 1
+                            continue
+            if flag == 1:
+                continue
             ### daz selection
             daz = (az1-az2) % 360.0
             if daz > 180.0:
@@ -536,6 +581,7 @@ if __name__ == "__main__":
     dist_step= 1.0
     daz_range = None
     gcd_ev_range = None
+    gc_center_rect = None
 
     post_folding = False
     post_taper_ratio = 0.005
@@ -550,7 +596,7 @@ if __name__ == "__main__":
     HMSG = """\n
     %s  -I "in*/*.sac" -T 0/10800/32400 -D 0.1 -O cc_stack --out_format hdf5
         [--pre_detrend] [--pre_taper 0.005] [--pre_filter bandpass/0.005/0.1] 
-        --stack_dist 0/180/1 [--daz -0.1/15] [--gcd_ev -0.1/20]
+        --stack_dist 0/180/1 [--daz -0.1/15] [--gcd_ev -0.1/20] [--gc_center_rect 120/180/0/40,180/190/0/10]
         [--w_temporal 128.0/0.02/0.06667] [--w_spec 0.02] 
         [--post_fold] [--post_taper 0.05] [--post_filter bandpass/0.02/0.0666] [--post_norm] 
          --log cc_log
@@ -574,6 +620,7 @@ Args:
     --stack_dist :
     [--daz]      :
     [--gcd_ev]   :
+    [--gc_center_rect] : a list of rect (lo1, lo2, la1, la2) to exclude some receiver pairs.
 
     #4. post-processing parameters:
     [--post_fold]
@@ -589,6 +636,7 @@ E.g.,
         --pre_detrend --pre_taper 0.005 
         --w_temporal 128.0/0.02/0.06667 --w_spec 0.02
         --stack_dist 0/180/1
+        --daz -0.1/20 --gcd_ev -0.1/30 --gc_center_rect 120/180/0/40
         --post_fold --post_taper 0.005 --post_filter bandpass/0.001/0.06667 --post_norm 
         --log cc_log  
 
@@ -602,7 +650,7 @@ E.g.,
     options, remainder = getopt.getopt(sys.argv[1:], 'I:T:D:O:',
                             ['pre_detrend', 'pre_taper=', 'pre_filter=',
                              'w_temporal=', 'w_spec=',
-                             'stack_dist=', 'daz=', 'gcd_ev=',
+                             'stack_dist=', 'daz=', 'gcd_ev=', 'gc_center_rect=',
                              'post_fold', 'post_taper=', 'post_filter=', 'post_norm',
                              'log=', 'out_format='] )
     for opt, arg in options:
@@ -630,6 +678,10 @@ E.g.,
             daz_range = [float(it) for it in arg.split('/') ]
         elif opt in ('--gcd_ev'):
             gcd_ev_range = [float(it) for it in arg.split('/') ]
+        elif opt in ('--gc_center_rect'):
+            gc_center_rect = []
+            for rect in arg.split(','):
+                gc_center_rect.append( [float(it) for it in rect.split('/') ] )
         elif opt in ('--post_fold'):
             post_folding = True
         elif opt in ('--post_taper'):
@@ -648,7 +700,7 @@ E.g.,
     #######
     main(fnm_wildcard, tmark, t1, t2, delta, pre_detrend, pre_taper_ratio, pre_filter,
             temporal_normalization, spectral_whiten,
-            dist_range, dist_step, daz_range, gcd_ev_range,
+            dist_range, dist_step, daz_range, gcd_ev_range, gc_center_rect,
             post_folding, post_taper_ratio, post_filter, post_norm,
             log_prefnm, output_pre_fnm, output_format )
     ########
