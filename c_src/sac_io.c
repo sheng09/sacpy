@@ -127,6 +127,7 @@ int read_sachead(const char *name, SACHDR * hdr)
     }
     if (hdr->nvhdr > 6 || hdr->nvhdr < 0)
         swap4bytes((char *) hdr, HD_SIZE);
+    hdr->e = hdr->b + hdr->delta*(hdr->npts-1);
     fclose(fp);
     return 0;
 }

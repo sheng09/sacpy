@@ -42,7 +42,7 @@ typedef struct S_SACHDR
     float evlo;           /*    event longitude        */
     float evel;           /*    event elevation        */
     float evdp;           /*    event depth            */
-    float unused1;        /*    reserved for future use*/
+    float mag;            /*    reserved for future use*/
     float user0;          /*    available to user      */
     float user1;          /*    available to user      */
     float user2;          /*    available to user      */

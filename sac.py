@@ -949,7 +949,6 @@ def c_rd_sachdr(filename=None, lcalda=False):
     """
     hdr = ffi.new('SACHDR *')
     libsac.read_sachead(filename.encode('utf8'), hdr )
-    hdr.e = hdr.b + hdr.delta*(hdr.npts-1)
     if lcalda == True and hdr.lcalda == 0:
         hdr.lcalda = 1
         hdr.gcarc = geomath.haversine(hdr.stlo, hdr.stla, hdr.evlo, hdr.evla)
@@ -1013,7 +1012,7 @@ def c_rd_sachdr_wildcard(fnm_wildcard=None, lcalda=False, tree=False, log_file=N
             wildcard = it + '/' + reminders
             if log_file != None:
                 print('c_rd_sachdr_wildcard(%s)...' %  wildcard, file=log_file )
-            buf.append( (wildcard, c_rd_sachdr_wildcard(wildcard, lcalda, False) ) )
+            buf.append( (wildcard, c_rd_sachdr_wildcard(wildcard, lcalda, False, None, critical_time_window) ) )
         return buf
 
 
