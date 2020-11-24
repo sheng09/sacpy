@@ -992,7 +992,7 @@ def c_dup_sachdr(hdr):
     hdr2 = ffi.new('SACHDR *')
     libsac.copy_sachdr(hdr, hdr2)
     return hdr2
-def c_rd_sachdr_wildcard(fnm_wildcard=None, lcalda=False, tree=False, log_file=None):
+def c_rd_sachdr_wildcard(fnm_wildcard=None, lcalda=False, tree=False, log_file=None, critical_time_window= None):
     """
     Read and return a list of tuple (hdr, filename) given the filename wildcard.
 
@@ -1000,7 +1000,11 @@ def c_rd_sachdr_wildcard(fnm_wildcard=None, lcalda=False, tree=False, log_file=N
     You can use the methods `new_hdr = c_dup_sachdr(old_hdr)` to copy/duplicate and generate a new object.
     """
     if not tree:
-        return [ (c_rd_sachdr(it, lcalda), it) for it in  sorted(glob(fnm_wildcard)) ]
+        buf = [ (c_rd_sachdr(it, lcalda), it) for it in  sorted(glob(fnm_wildcard)) ]
+        if critical_time_window!= None:
+            t0, t1 = critical_time_window
+            buf = [(it, fnm) for (it, fnm) in buf if (it.b<=t0 and it.e>=t1) ]
+        return buf
     else:
         buf = []
         dir_wildcard = '/'.join(fnm_wildcard.split('/')[:-1] )
