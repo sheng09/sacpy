@@ -86,8 +86,8 @@ import pickle
 import sacpy.geomath as geomath
 import sacpy.processing as processing
 from os.path import exists as os_path_exists
-from c_src._sac_io import lib as libsac
-from c_src._sac_io import ffi as ffi
+from sacpy.c_src._sac_io import lib as libsac
+from sacpy.c_src._sac_io import ffi as ffi
 ###
 #  dependend methods
 ###
@@ -992,6 +992,26 @@ def c_dup_sachdr(hdr):
     hdr2 = ffi.new('SACHDR *')
     libsac.copy_sachdr(hdr, hdr2)
     return hdr2
+def c_rd_sachdr_wildcard(fnm_wildcard=None, lcalda=False, tree=False, log_file=None):
+    """
+    Read and return a list of tuple (hdr, filename) given the filename wildcard.
+
+    The returned `hdr` object is stored as a C Struct in the memory, and hence it doesn't support `deepcopy(...)`.
+    You can use the methods `new_hdr = c_dup_sachdr(old_hdr)` to copy/duplicate and generate a new object.
+    """
+    if not tree:
+        return [ (c_rd_sachdr(it, lcalda), it) for it in  sorted(glob(fnm_wildcard)) ]
+    else:
+        buf = []
+        dir_wildcard = '/'.join(fnm_wildcard.split('/')[:-1] )
+        reminders = fnm_wildcard.split('/')[-1]
+        for it in sorted(glob(dir_wildcard) ):
+            wildcard = it + '/' + reminders
+            if log_file != None:
+                print('c_rd_sachdr_wildcard(%s)...' %  wildcard, file=log_file )
+            buf.append( (wildcard, c_rd_sachdr_wildcard(wildcard, lcalda, False) ) )
+        return buf
+
 
 def c_rd_sac(filename, tmark=None, t1=None, t2=None, lcalda=False):
     """
@@ -1882,10 +1902,11 @@ if __name__ == "__main__":
     #c_wrt_sac('junk.sac', x, hdr1)
     st= c_rd_sac('test_tmp/1.sac')
     hdr = st.hdr
-    print(hdr, hdr.stlo, hdr.stla, hdr.b, hdr.e, hdr.npts, hdr.delta, ffi.string(hdr.kstnm) )
-    hdr.kstnm = b'test'
-    print(hdr, hdr.stlo, hdr.stla, hdr.b, hdr.e, hdr.npts, hdr.delta, ffi.string(hdr.kstnm) )
-    st.write('junk.sac')
+    print(type(hdr ) )
+    #print(hdr, hdr.stlo, hdr.stla, hdr.b, hdr.e, hdr.npts, hdr.delta, ffi.string(hdr.kstnm) )
+    #hdr.kstnm = b'test'
+    #print(hdr, hdr.stlo, hdr.stla, hdr.b, hdr.e, hdr.npts, hdr.delta, ffi.string(hdr.kstnm) )
+    #st.write('junk.sac')
     #hdr = cp_sachdr_struct(hdr)
     #print(hdr.stlo, hdr.stla, hdr.b, hdr.e, hdr.npts, hdr.delta )
     #st = c_rd_sac('test_tmp/1.sac', -5, 100, 3000, True)
