@@ -2,3 +2,4 @@ _sac_io.c
 _sac_io.o
 sac_io.o
 _sac_io.cpython-35m-x86_64-linux-gnu.so
+*.so
