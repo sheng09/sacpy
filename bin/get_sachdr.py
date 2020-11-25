@@ -3,19 +3,19 @@
 Executable files for obtain sac hdr information for many files.
 """
 from sacpy.sac import c_rd_sachdr_wildcard, ffi
-import h5py
+from h5py import File as h5py_File
 import numpy as np
-from sys import exit, argv
+from sys import exit, argv, stdout
 from getopt import getopt
-from glob import glob
 from os import getcwd
 
-def run(h5_fnm, fnm_wildcard, critical_time_window=None, info=None):
-    fid = h5py.File(h5_fnm, 'w')
+def run(h5_fnm, fnm_wildcard, critical_time_window=None, info=None, verbose=False):
+    fid = h5py_File(h5_fnm, 'w')
     if info!= None:
         fid.attrs['cmd'] = info
     ###
-    buf = c_rd_sachdr_wildcard(fnm_wildcard, True, True, critical_time_window= critical_time_window)
+    log_file = stdout if verbose else None
+    buf = c_rd_sachdr_wildcard(fnm_wildcard, True, True, log_file, critical_time_window)
     ###
     ev_set, st_set = set(), set()
     grp_hdrtree = fid.create_group('/hdr_tree')
@@ -77,22 +77,34 @@ if __name__ == "__main__":
     ####
     outfnm= None
     fnm_wildcard = None
-    HMSG = '%s -I "/path*wildcards*/fnm*wildcard*.sac"  -O junk.h5 [-T -10/30] ' % argv[0]
+    verbose = False
+    HMSG = """
+    Read sac header of many sac files given the filename wildcards, and
+    generate a hdf5 file that contains necessary header informations.
+
+    The generated hdf5 is self-documented.
+
+    Usage:
+
+        %s -I "/path*wildcards*/fnm*wildcard*.sac"  -O junk.h5 [-T -10/30] [-V]
+    """ % argv[0]
     ####
     if len(argv) < 3:
         print(HMSG)
         exit(0)
     ####
-    options, remainder = getopt(argv[1:], 'I:O:T:hH?')
+    options, remainder = getopt(argv[1:], 'I:O:T:VhH?')
     for opt, arg in options:
         if opt in ('-I'):
             fnm_wildcard = arg
         elif opt in ('-O'):
             outfnm = arg
+        elif opt in ('-V'):
+            verbose= True
         elif opt in ('-T'):
             critical_time_window = [float(it) for it in arg.split('/')]
         elif opt in ('-H', '-h', '-?'):
             print(HMSG)
             exit(0)
     info = 'cd %s; ' % getcwd() + ' '.join(argv)
-    run(outfnm, fnm_wildcard, critical_time_window, info)
+    run(outfnm, fnm_wildcard, critical_time_window, info, verbose)
