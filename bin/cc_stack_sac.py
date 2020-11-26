@@ -162,6 +162,10 @@ def main(   fnm_wildcard, tmark, t1, t2, delta, pre_detrend=True, pre_taper_rati
     # dependent parameters
     critical_parameter= 0.001
     cc_index_range = get_bound(fftsize, sampling_rate, post_filter[1], post_filter[2], critical_parameter)
+
+    w_speedup_i1, w_speedup_i2 = None, None
+    if spectral_whiten != None:
+        w_speedup_i1, w_speedup_i2 = get_bound(fftsize, sampling_rate, post_filter[1], post_filter[2]+spectral_whiten, critical_parameter)
     # logging
     if True:
         mpi_print_log('Set post-processing parameters', 0, mpi_log_fid, True)
@@ -206,7 +210,7 @@ def main(   fnm_wildcard, tmark, t1, t2, delta, pre_detrend=True, pre_taper_rati
         ### 2. whitening
         #mpi_print_log('whitening...', 1, mpi_log_fid, True)
         t_start = time.time()
-        whitened_spectra_mat = whiten_spec(mat, sampling_rate, wt_size, wt_f1, wt_f2, wf_size, fftsize, taper_size)
+        whitened_spectra_mat = whiten_spec(mat, sampling_rate, wt_size, wt_f1, wt_f2, wf_size, fftsize, w_speedup_i1, w_speedup_i2, taper_size)
         local_t_whiten = time.time()-t_start
 
         ### 3.1 cc and stack
@@ -415,7 +419,7 @@ def rd_preproc_single(sacfnm_template, delta, tmark, t1, t2, detrend= True, tape
     ###
     return mat, sampling_rate, stlo, stla, evlo, evla, az, baz
 
-def whiten_spec(mat, sampling_rate, wnd_size_t, f1, f2, wnd_size_freq, fftsize, taper_length= 0):
+def whiten_spec(mat, sampling_rate, wnd_size_t, f1, f2, wnd_size_freq, fftsize, speedup_i1, speedup_i2, taper_length= 0):
     """
     Apply #1 temporal normalizatin and #2 spectral whitening to time series.
 
@@ -447,7 +451,7 @@ def whiten_spec(mat, sampling_rate, wnd_size_t, f1, f2, wnd_size_freq, fftsize, 
     #### spectral whitening
     if wnd_size_freq != None:
         for irow in range(nrow):
-            mat[irow] = frequency_whiten(mat[irow], wnd_size_freq, 1.0e-5, taper_length)
+            mat[irow] = frequency_whiten(mat[irow], wnd_size_freq, 1.0e-5, speedup_i1, speedup_i2, taper_length)
     ####
     for irow in range(nrow):
         spec_mat[irow] = pyfftw.interfaces.numpy_fft.rfft(mat[irow], fftsize)
