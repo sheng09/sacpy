@@ -198,16 +198,19 @@ def main(   fnm_wildcard, tmark, t1, t2, delta, pre_detrend=True, pre_taper_rati
     for it in directories[mpi_i1: mpi_i2]:
         wildcards = '%s/%s' % (it, sac_wildcards)
         ### 1. read and pre-processing
+        #mpi_print_log('Read...', 1, mpi_log_fid, True)
         t_start = time.time()
         mat, sampling_rate, stlo, stla, evlo, evla, az, baz = rd_preproc_single(wildcards, delta, tmark, t1, t2, pre_detrend, pre_taper_ratio, pre_filter)
         local_t_rd = time.time()-t_start
 
         ### 2. whitening
+        #mpi_print_log('whitening...', 1, mpi_log_fid, True)
         t_start = time.time()
         whitened_spectra_mat = whiten_spec(mat, sampling_rate, wt_size, wt_f1, wt_f2, wf_size, fftsize, taper_size)
         local_t_whiten = time.time()-t_start
 
         ### 3.1 cc and stack
+        #mpi_print_log('cc&stack...', 1, mpi_log_fid, True)
         t_start = time.time()
         if daz_range != None or gcd_ev_range != None or gc_center_rect != None:
             center_clo1 = np.array( [rect[0] for rect in gc_center_rect] )
@@ -216,7 +219,7 @@ def main(   fnm_wildcard, tmark, t1, t2, delta, pre_detrend=True, pre_taper_rati
             center_cla2 = np.array( [rect[3] for rect in gc_center_rect] )
 
             local_ncc = ccstack_selection_ev(whitened_spectra_mat, stack_count, stlo, stla, az, spec_stack_mat, evlo[0], evla[0],
-                            daz_range[0], daz_range[1], gcd_ev_range[0], gcd_ev_range[1],
+                            daz_range[0], daz_range[1], gcd_ev_range[0], gcd_ev_range[1], dist_range[0], dist_range[1],
                             center_clo1, center_clo2, center_cla1, center_cla2,
                             dist_step, cc_index_range, dist_range[0] )
         else:
@@ -490,13 +493,14 @@ def ccstack(spec_mat, stack_count, stlo_lst, stla_lst, stack_mat, dist_step, ind
 
 @jit(nopython=True, nogil=True)
 def ccstack_selection_ev(spec_mat, stack_count, stlo_lst, stla_lst, az_lst, stack_mat,
-                        evlo, evla, daz_min, daz_max, gcd_ev_min, gcd_ev_max,
+                        evlo, evla, daz_min, daz_max, gcd_ev_min, gcd_ev_max, dist_min, dist_max,
                         center_clo1, center_clo2, center_cla1, center_cla2,
                         dist_step, index_range, dist_start=0.0):
     """
     """
     daz1, daz2 = daz_min, daz_max
     gcd1, gcd2 = gcd_ev_min, gcd_ev_max
+    dist1, dist2 = dist_min-dist_step*0.5, dist_max+dist_step*0.5
     count = 0
     i1, i2 = index_range
     nsac = spec_mat.shape[0]
@@ -505,6 +509,10 @@ def ccstack_selection_ev(spec_mat, stack_count, stlo_lst, stla_lst, az_lst, stac
         spec1 = spec_mat[isac1]
         for isac2 in range(isac1, nsac):
             stlo2, stla2, az2 = stlo_lst[isac2], stla_lst[isac2], az_lst[isac2]
+            ### dist selection
+            dist = geomath.haversine(stlo1, stla1, stlo2, stla2)
+            if dist < dist1 or dist > dist2:
+                continue
             ### rect selection
             flag = 0
             if isac1==isac2 or (abs(stlo1-stlo2)<1.0e-3 and abs(stla1-stla2)<1.0e-3 ):
@@ -551,7 +559,6 @@ def ccstack_selection_ev(spec_mat, stack_count, stlo_lst, stla_lst, az_lst, stac
             ###
             spec2 = spec_mat[isac2]
             ###
-            dist = geomath.haversine(stlo1, stla1, stlo2, stla2)
             idx = int( np.round((dist-dist_start) / dist_step) )
             w   = np.conj(spec1[i1:i2]) * spec2[i1:i2]
             stack_mat[idx][i1:i2] += w
