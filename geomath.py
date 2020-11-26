@@ -4,7 +4,6 @@
 This contain sets of geometric methods, especially for spherical coordinates.
 """
 
-import os
 import numpy as np
 from math import radians #, cos, sin, asin, sqrt
 from numba import jit, float64, types

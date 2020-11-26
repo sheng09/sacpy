@@ -77,14 +77,15 @@ Massive data IO and processing
 import matplotlib.pyplot as plt
 from copy import deepcopy
 import numpy as np
-import scipy.signal as signal
 from scipy.signal import tukey, detrend, decimate, correlate, resample
-import struct
+from struct import unpack, pack
 import sys
 from glob import glob
 import pickle
-import sacpy.geomath as geomath
-import sacpy.processing as processing
+from sacpy.geomath import haversine, azimuth, point_distance_to_great_circle_plane
+from sacpy.processing import filter as processing_filter
+from sacpy.processing import taper as processing_taper
+#import sacpy.processing as processing
 from os.path import exists as os_path_exists
 from sacpy.c_src._sac_io import lib as libsac
 from sacpy.c_src._sac_io import ffi as ffi
@@ -393,8 +394,8 @@ class sachdr:
             f = open(f, 'rb')
         hdrvol = f.read(632)
         #print(sachdr.little_endian_format)
-        info = struct.unpack(sachdr.little_endian_format, hdrvol)
-        info, small_endian_tag = (info, True) if 1< info[76] < 7 else (struct.unpack(sachdr.big_endian_format, hdrvol), False)
+        info = unpack(sachdr.little_endian_format, hdrvol)
+        info, small_endian_tag = (info, True) if 1< info[76] < 7 else (unpack(sachdr.big_endian_format, hdrvol), False)
         ###
         dict_f = dict()
         dict_i = dict()
@@ -415,9 +416,9 @@ class sachdr:
             stlo, stla = self.d_arch['stlo'], self.d_arch['stla']
             evlo, evla = self.d_arch['evlo'], self.d_arch['evla']
             self.d_arch['lcalda'] = 1
-            self.d_arch['gcarc'] = geomath.haversine(stlo, stla, evlo, evla)
-            self.d_arch['baz'] = geomath.azimuth(stlo, stla, evlo, evla)
-            self.d_arch['az'] = geomath.azimuth(evlo, evla, stlo, stla)
+            self.d_arch['gcarc'] = haversine(stlo, stla, evlo, evla)
+            self.d_arch['baz'] = azimuth(stlo, stla, evlo, evla)
+            self.d_arch['az'] = azimuth(evlo, evla, stlo, stla)
         return small_endian_tag
     def init(self, delta, npts, b, **kwargs):
         """
@@ -450,7 +451,7 @@ class sachdr:
         s = '{:\0<8.8}{:\0<16.16}'.format(self.d_arch['kstnm'], self.d_arch['kevnm'] )
         s += ''.join( ['{:\0<8.8}'.format(self.d_arch[k]) for k in self.s_keys[2:] ] )
         lst.append( bytes(s, 'utf8') )
-        return struct.pack('70f40i192s', *lst)
+        return pack('70f40i192s', *lst)
     ###
     def update(self, **kwargs):
         """
@@ -594,9 +595,9 @@ class sactrace:
         update 'gcarc', 'baz', and 'az' using evlo, evla, stlo, and stla inside the header.
         """
         if self['evla'] != -12345.0 and self['evlo'] != -12345.0 and self['stla'] != -12345.0 and self['stlo'] != -12345.0:
-            self['gcarc']= geomath.haversine(self['evlo'], self['evla'], self['stlo'], self['stla'])  
-            self['az']   = geomath.azimuth(  self['evlo'], self['evla'], self['stlo'], self['stla']) 
-            self['baz']  = geomath.azimuth(  self['stlo'], self['stla'], self['evlo'], self['evla']) 
+            self['gcarc']= haversine(self['evlo'], self['evla'], self['stlo'], self['stla'])  
+            self['az']   = azimuth(  self['evlo'], self['evla'], self['stlo'], self['stla']) 
+            self['baz']  = azimuth(  self['stlo'], self['stla'], self['evlo'], self['evla']) 
     ### internel methods
     def __get_t_idx__(self, tmark, t):
         """
@@ -758,17 +759,17 @@ class sactrace:
         """
         Bandpass
         """
-        self.dat = processing.filter(self.dat, 1.0/self['delta'], 'bandpass', [f1, f2], order, npass )
+        self.dat = processing_filter(self.dat, 1.0/self['delta'], 'bandpass', [f1, f2], order, npass )
     def lowpass(self, f, order= 2, npass= 1):
         """
         Lowpass
         """
-        self.dat = processing.filter(self.dat, 1.0/self['delta'], 'lowpass', [f], order, npass )
+        self.dat = processing_filter(self.dat, 1.0/self['delta'], 'lowpass', [f], order, npass )
     def highpass(self, f, order= 2, npass= 1):
         """
         High pass
         """
-        self.dat = processing.filter(self.dat, 1.0/self['delta'], 'highpass', [f], order, npass )
+        self.dat = processing_filter(self.dat, 1.0/self['delta'], 'highpass', [f], order, npass )
     def resample(self, delta):
         """
         Resample the time-series using Fourier method.
@@ -951,9 +952,9 @@ def c_rd_sachdr(filename=None, lcalda=False):
     libsac.read_sachead(filename.encode('utf8'), hdr )
     if lcalda == True and hdr.lcalda == 0:
         hdr.lcalda = 1
-        hdr.gcarc = geomath.haversine(hdr.stlo, hdr.stla, hdr.evlo, hdr.evla)
-        hdr.baz   = geomath.azimuth(  hdr.stlo, hdr.stla, hdr.evlo, hdr.evla)
-        hdr.az    = geomath.azimuth(  hdr.evlo, hdr.evla, hdr.stlo, hdr.stla)
+        hdr.gcarc = haversine(hdr.stlo, hdr.stla, hdr.evlo, hdr.evla)
+        hdr.baz   = azimuth(  hdr.stlo, hdr.stla, hdr.evlo, hdr.evla)
+        hdr.az    = azimuth(  hdr.evlo, hdr.evla, hdr.stlo, hdr.stla)
     return hdr
 def c_mk_sachdr_time(b, delta, npts):
     """
@@ -1124,9 +1125,9 @@ class c_sactrace:
         hdr.e = hdr.b + hdr.delta * (hdr.npts - 1)
         if lcalda and self.hdr.lcalda != 1:
             hdr.lcalda = 1
-            hdr.gcarc = geomath.haversine(hdr.stlo, hdr.stla, hdr.evlo, hdr.evla)
-            hdr.baz   = geomath.azimuth(  hdr.stlo, hdr.stla, hdr.evlo, hdr.evla)
-            hdr.az    = geomath.azimuth(  hdr.evlo, hdr.evla, hdr.stlo, hdr.stla)
+            hdr.gcarc = haversine(hdr.stlo, hdr.stla, hdr.evlo, hdr.evla)
+            hdr.baz   = azimuth(  hdr.stlo, hdr.stla, hdr.evlo, hdr.evla)
+            hdr.az    = azimuth(  hdr.evlo, hdr.evla, hdr.stlo, hdr.stla)
     def read2(self, fnm, tmark, t1, t2, lcalda=False):
         """
         Read from a file with cutting method.
@@ -1140,9 +1141,9 @@ class c_sactrace:
         hdr.e = hdr.b + hdr.delta * (hdr.npts - 1)
         if lcalda and self.hdr.lcalda != 1:
             hdr.lcalda = 1
-            hdr.gcarc = geomath.haversine(hdr.stlo, hdr.stla, hdr.evlo, hdr.evla)
-            hdr.baz   = geomath.azimuth(  hdr.stlo, hdr.stla, hdr.evlo, hdr.evla)
-            hdr.az    = geomath.azimuth(  hdr.evlo, hdr.evla, hdr.stlo, hdr.stla)
+            hdr.gcarc = haversine(hdr.stlo, hdr.stla, hdr.evlo, hdr.evla)
+            hdr.baz   = azimuth(  hdr.stlo, hdr.stla, hdr.evlo, hdr.evla)
+            hdr.az    = azimuth(  hdr.evlo, hdr.evla, hdr.stlo, hdr.stla)
     def write(self, fnm):
         """
         Write to a file in sac formate.
@@ -1189,11 +1190,11 @@ class c_sactrace:
         """
         tukey window is used for the tapering.
         """
-        self.dat = processing.taper(self.dat, int(self.dat.size*ratio) )
+        self.dat = processing_taper(self.dat, int(self.dat.size*ratio) )
     def filter(self, btype, fs, order=2, npass=2):
         """
         """
-        self.dat = processing.filter(self.dat, 1.0/self.hdr.delta, btype, fs, order, npass)
+        self.dat = processing_filter(self.dat, 1.0/self.hdr.delta, btype, fs, order, npass)
     def truncate(self, t1, t2):
         """
         """
@@ -1745,19 +1746,19 @@ class sachdr_pair_ev(sachdr_pair):
         evlo, evla  = h1['evlo'], h1['evla']
         stlo1, stla1 = h1['stlo'], h1['stla']
         stlo2, stla2 = h2['stlo'], h2['stla']
-        h1['az'] = geomath.azimuth(evlo, evla, stlo1, stla1)
-        h2['az'] = geomath.azimuth(evlo, evla, stlo2, stla2)
-        h1['baz'] = geomath.azimuth(stlo1, stla1, evlo, evla)
-        h2['baz'] = geomath.azimuth(stlo1, stla1, evlo, evla)
-        h1['gcarc'] = geomath.haversine(evlo, evla, stlo1, stla1)
-        h2['gcarc'] = geomath.haversine(evlo, evla, stlo2, stla2)
+        h1['az'] = azimuth(evlo, evla, stlo1, stla1)
+        h2['az'] = azimuth(evlo, evla, stlo2, stla2)
+        h1['baz'] = azimuth(stlo1, stla1, evlo, evla)
+        h2['baz'] = azimuth(stlo1, stla1, evlo, evla)
+        h1['gcarc'] = haversine(evlo, evla, stlo1, stla1)
+        h2['gcarc'] = haversine(evlo, evla, stlo2, stla2)
         self['ddist'  ] = np.abs( h1['gcarc'] - h2['gcarc']  )
-        self['st_dist'] = geomath.haversine(stlo1, stla1, stlo2, stla2 )
+        self['st_dist'] = haversine(stlo1, stla1, stlo2, stla2 )
         self['daz'       ] = np.abs(h1['az']  - h2['az']  )
         self['dbaz'      ] = np.abs(h1['baz'] - h2['baz'] )
-        self['gc2ev'     ] = np.abs( geomath.point_distance_to_great_circle_plane(evlo, evla, stlo1, stla1, stlo2, stla2) )
-        self['gc2st1'    ] = np.abs( geomath.point_distance_to_great_circle_plane(stlo1, stla1, evlo, evla, stlo2, stla2) )
-        self['gc2st2'    ] = np.abs( geomath.point_distance_to_great_circle_plane(stlo2, stla2, evlo, evla, stlo1, stla1) )
+        self['gc2ev'     ] = np.abs( point_distance_to_great_circle_plane(evlo, evla, stlo1, stla1, stlo2, stla2) )
+        self['gc2st1'    ] = np.abs( point_distance_to_great_circle_plane(stlo1, stla1, evlo, evla, stlo2, stla2) )
+        self['gc2st2'    ] = np.abs( point_distance_to_great_circle_plane(stlo2, stla2, evlo, evla, stlo1, stla1) )
     def __str__(self):
         s = sachdr_pair.__str__(self)
         #s += '\n'
