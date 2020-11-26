@@ -6,6 +6,7 @@ This is for data processing.
 
 from scipy.signal import butter, lfilter, filtfilt, fftconvolve
 import numpy as np
+from pyfftw.interfaces.cache import enable as pyfftw_cache_enable
 from pyfftw.interfaces.numpy_fft import rfft, irfft
 from numba import jit, int64, float64
 from copy import deepcopy
@@ -130,6 +131,7 @@ def temporal_normalize(tr, sampling_rate, twin_len, f1, f2, water_level_ratio= 1
         weight = taper(weight, taper_length)
     return weight
 
+pyfftw_cache_enable
 def frequency_whiten(tr, fwin_len, water_level_ratio= 1.0e-5, speedup_i1= None, speedup_i2= None, taper_length=0):
     """
     Return the whitened time series in time domain.
