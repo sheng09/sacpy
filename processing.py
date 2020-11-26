@@ -130,7 +130,7 @@ def temporal_normalize(tr, sampling_rate, twin_len, f1, f2, water_level_ratio= 1
         weight = taper(weight, taper_length)
     return weight
 
-def frequency_whiten(tr, fwin_len, water_level_ratio= 1.0e-5, taper_length=0):
+def frequency_whiten(tr, fwin_len, water_level_ratio= 1.0e-5, speedup_i1= None, speedup_i2= None, taper_length=0):
     """
     Return the whitened time series in time domain.
 
@@ -143,6 +143,9 @@ def frequency_whiten(tr, fwin_len, water_level_ratio= 1.0e-5, taper_length=0):
         fftsize = fftsize + 1
 
     spec = rfft(tr, fftsize)
+    ### for acceleration purpose
+    if speedup_i2 != None:
+        spec = spec[:speedup_i2]
     amp = np.abs(spec)
     weight = moving_average(amp, fwin_len, False)
     weight += (weight.max() * water_level_ratio)
