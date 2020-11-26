@@ -53,23 +53,26 @@ def plot_single_gc(ax, x, y, **kwargs):
         la3 = 180-la3
     ax.plot([lo1, lo2, lo3, lo4, lo1], [la1, la2, la3, la4, la1], transform=geo_gcd, **kwargs )
     pass
-def plot_gc(ax, clo, cla, downsample_ratio=1, plot_gcc=False):
+def plot_gc(ax, clo, cla, downsample_ratio=1, plot_gcpath=False, plot_gcc=False):
     """
     Plot many great-circles given a list of center longitude `clo` and latitude `cla`.
     """
     ### plot the great-cirles
-    for x, y in zip(clo[::downsample_ratio], cla[::downsample_ratio] ):
-        plot_single_gc(ax, x, y, alpha= 0.6, color='white', linewidth=0.8 )
+    if plot_gcpath:
+        for x, y in zip(clo[::downsample_ratio], cla[::downsample_ratio] ):
+            plot_single_gc(ax, x, y, alpha= 0.6, color='white', linewidth=0.8 )
     ### plot the center
     if plot_gcc:
         ax.scatter(clo[::downsample_ratio], cla[::downsample_ratio], 10, color='gray', marker='.', alpha= 0.6, transform=data_crs )
 def plot_dist(ax, dist, dist_range, dist_step=1.0):
     """
     """
-    ax.hist(dist, np.arange(0.0, 180.1, dist_step), align= 'left', color='gray' )
+    n, bins, patches = ax.hist(dist, np.arange(0.0, 180.1, dist_step), align= 'left', color='gray' )
+    v = n[n!=0]
+    v = np.sort(v)[v.size//2] * 3
     ax.set_xlim(dist_range)
-    ax.set_ylim(bottom=0)
-    ax.set_xlabel('Inter-receiver distance (\degree)')
+    ax.set_ylim([0, v] )
+    ax.set_xlabel('Inter-receiver distance ($\degree$)')
     ax.set_ylabel('Number of pairs')
 def decipher_plot_options(plot_options):
     figname = 'junk.png'
@@ -81,9 +84,11 @@ def decipher_plot_options(plot_options):
             figname = value
         elif key == 'downsample':
             downsample = int(value)
+        elif key == 'gcp':
+            plot_gcpath = eval(value)
         elif key == 'gcc':
             plot_gcc = eval(value)
-    return figname, downsample, plot_gcc
+    return figname, downsample, plot_gcpath, plot_gcc
 ####################################################################################
 
 
@@ -181,7 +186,7 @@ def run(h5fnm, dist_range, ev_gcd_range=None, daz_range=None,
     ### for plotting
     cla_sum, clo_sum, npairs, all_dist = 0.0, 0.0, 0, list()
     fig, ax, ax2 = plot_basemap() if plot_options!=None else (None, None)
-    figname, downsample, plot_gcc = decipher_plot_options(plot_options) if plot_options!=None else (None, None, None)
+    figname, downsample, plot_gcpath, plot_gcc = decipher_plot_options(plot_options) if plot_options!=None else (None, None, None)
     ###
     for key in grp_hdrtree:
         grp = fid['/hdr_tree/%s' % key ]
@@ -198,19 +203,19 @@ def run(h5fnm, dist_range, ev_gcd_range=None, daz_range=None,
         ###
         if verbose:
             print(key, 'npairs:', dist.size )
-        ### plot all great-circles and their centers
+        ### for plotting: plot all great-circles and their centers
         if plot_options != None:
             ###
             all_dist.extend(dist)
             ###
             clo_sum = clo_sum + np.sum(clo)
             cla_sum = cla_sum + np.sum(cla)
-            plot_gc(ax, clo, cla, downsample, plot_gcc)
-    ### for plotting
-    # plot the great-circle average and the centers
+            plot_gc(ax, clo, cla, downsample, plot_gcpath, plot_gcc)
+    ### for plotting: plot the great-circle average and the centers
     if npairs > 0 and plot_options != None:
         x, y = clo_sum/npairs, cla_sum/npairs
-        plot_single_gc(ax, x, y, alpha= 1.0, color='C1', linewidth=1.2 )
+        if plot_gcpath:
+            plot_single_gc(ax, x, y, alpha= 1.0, color='C1', linewidth=1.2 )
         if plot_gcc:
             ax.scatter([x], [y], 30, color='C1', marker='o', alpha= 0.6, transform=data_crs )
         plot_dist(ax2, all_dist, dist_range, 1.0)
@@ -233,7 +238,10 @@ if __name__ == "__main__":
     verbose= False
     plot_options = None
     ####
-    HMSG = '%s -I in.h5 [-D 0/180] [--daz -0.1/15.1] [--gcd_ev -0.1/20.1] [--gc_center_rect 120/160/0/30,170/190/0/10] [--plot fnm=junk.png,downsample=10,gcc=True ] [-V]' % argv[0]
+    HMSG = """
+    %s -I in.h5 [-D 0/180] [--daz -0.1/15.1] [--gcd_ev -0.1/20.1] [--gc_center_rect 120/160/0/30,170/190/0/10] 
+    [--plot fnm=junk.png,downsample=10,gcp=True,gcc=True ] [-V]
+    """ % argv[0]
     if len(argv) < 2:
         print(HMSG)
         exit(0)
