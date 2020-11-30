@@ -8,7 +8,7 @@ from getopt import getopt
 from sys import exit, argv
 import numpy as np
 
-def run(h5_filename, figname, dist_range=None, cc_time_range=None, figsize= (6, 15), interpolation= None ):
+def run(h5_filename, figname, dist_range=None, cc_time_range=None, lines= None, figsize= (6, 15), interpolation= None, title='' ):
     fid = h5_File(h5_filename, 'r')
     cc_t0, cc_t1 = fid['ccstack'].attrs['cc_t0'], fid['ccstack'].attrs['cc_t1']
     mat = fid['ccstack'][:]
@@ -32,12 +32,16 @@ def run(h5_filename, figname, dist_range=None, cc_time_range=None, figsize= (6, 
             vmin=-0.6, vmax=0.6, origin='lower' )
     ax2.bar(dist, stack_count, align='center', color='gray', width= dist[1]-dist[0] )
     ###
+    for d, t in lines:
+        ax1.plot(d, t, '.', color='C0', alpha= 0.8)
+    ###
     dist_range = (dist[0], dist[-1] ) if dist_range == None else dist_range
     ax1.set_xlim(dist_range)
     ax1.set_xlabel('Inter-receiver distance ($\degree$)')
     ax1.set_ylabel('Correlation time (s)')
     if cc_time_range:
         ax1.set_ylim(cc_time_range)
+    ax1.set_title(title)
     ###
     tmp = stack_count[stack_count>0]
     ax2.set_xlim(dist_range)
@@ -52,6 +56,7 @@ def plt_options(args):
     """
     figsize = (6, 15)
     interpolation = None
+    title = ''
     ###
     for it in args.split(','):
         opt, value = it.split('=')
@@ -59,8 +64,18 @@ def plt_options(args):
             figsize = tuple( [float(it) for it in value.split('/') ] )
         elif opt == 'interpolation':
             interpolation = value
-    return figsize, interpolation
+        elif opt == 'title':
+            title = value
+    return figsize, interpolation, title
 
+def get_lines(fnms):
+    """
+    """
+    lines = list()
+    for it in fnms.split(','):
+        tmp = np.loadtxt(it, comments='#')
+        lines.append( (tmp[:,0], tmp[:,1]) )
+    return lines
 
 if __name__ == "__main__":
 
@@ -69,33 +84,37 @@ if __name__ == "__main__":
     figname = None
     dist_range = None
     cc_time_range = None
-    ####
+    #### pyplot options
     figsize = (6, 15)
     interpolation = None
+    title = ''
+    #### lines to plot
+    lines = None
     ####
     HMSG = """
-    %s -I in.h5 -P img.png [-D 0/50] [-T 0/3000] [--plt figure=6/12,interpolation=gaussian] -V
+    %s -I in.h5 -P img.png [-D 0/50] [-T 0/3000] [--lines fnm1,fnm2,fnm3] [--plt figure=6/12,interpolation=gaussian] -V
     """ % argv[0]
     if len(argv) < 2:
         print(HMSG)
         exit(0)
     ####
-    options, remainder = getopt(argv[1:], 'I:P:D:T:VHh?', ['plt='] )
+    options, remainder = getopt(argv[1:], 'I:P:D:T:VHh?', ['lines=', 'plt='] )
     for opt, arg in options:
         if opt in ('-I'):
             h5_fnm = arg
-            print(h5_fnm)
         elif opt in ('-P'):
             figname = arg
         elif opt in ('-D'):
             dist_range = tuple([float(it) for it in arg.split('/') ] )
         elif opt in ('-T'):
             cc_time_range = tuple([float(it) for it in arg.split('/') ] )
+        elif opt in ('--lines'):
+            lines = get_lines(arg)
         elif opt in ('--plt'):
-            figsize, interpolation = plt_options(arg)
+            figsize, interpolation, title = plt_options(arg)
         else:
             print(HMSG)
             exit(0)
     ####
-    run(h5_fnm, figname, dist_range, cc_time_range, figsize, interpolation)
+    run(h5_fnm, figname, dist_range, cc_time_range, lines, figsize, interpolation, title)
 

@@ -1118,7 +1118,7 @@ class c_sactrace:
         Read from a file.
         """
         buf = libsac.read_sac(fnm.encode('utf8'), self.hdr)
-        self.dat = np.frombuffer(ffi.buffer(buf, 4*self.hdr.npts), dtype=np.float32 )[:]
+        self.dat = deepcopy( np.frombuffer(ffi.buffer(buf, 4*self.hdr.npts), dtype=np.float32 )[:] )
         ffi.gc(buf, libsac.free)
         ###
         hdr = self.hdr
@@ -1134,7 +1134,7 @@ class c_sactrace:
         tmark can be -5, -3, 0, 1,...9 for 'b', 'o', 't0', 't1',...,'t9'.
         """
         buf = libsac.read_sac2(fnm.encode('utf8'), self.hdr, tmark, t1, t2)
-        self.dat = np.frombuffer(ffi.buffer(buf, 4*self.hdr.npts), dtype=np.float32 )[:]
+        self.dat = deepcopy( np.frombuffer(ffi.buffer(buf, 4*self.hdr.npts), dtype=np.float32 )[:] )
         ffi.gc(buf, libsac.free)
         ###
         hdr = self.hdr
@@ -1172,11 +1172,15 @@ class c_sactrace:
         max_pos = self.dat.max()
         max_neg = -self.dat.min()
         if method  == 'pos':
-            self.dat *= (1.0/max_pos)
+            if max_pos > 0.0:
+                self.dat *= (1.0/max_pos)
         elif method == 'neg':
-            self.dat *= (1.0/max_neg)
+            if max_neg > 0.0:
+                self.dat *= (1.0/max_neg)
         else:
-            self.dat *= (1.0/ max(max_pos, max_neg) )
+            v = max(max_pos, max_neg)
+            if v > 0.0:
+                self.dat *= (1.0/ v )
     def rmean(self):
         """
         Remove mean value
@@ -1217,6 +1221,23 @@ class c_sactrace:
         hdr.npts = self.dat.size
         hdr.b = hdr.b + hdr.delta*i1
         hdr.e = hdr.b + hdr.delta*(self.dat.size-1)
+    def max_amplitude_time(self, amp, t_range):
+        """
+        Get the (idx, time, amplitude) for the max amplitude point in the time range `t_range`.
+
+        amp: 'pos' for max positive amplitude, and 'neg' for max negative amplitude
+        """
+        t1, t2 = t_range
+        i1 = libsac.get_valid_time_index(t1, self.hdr.delta, self.hdr.b, self.dat.size)
+        i2 = libsac.get_valid_time_index(t2, self.hdr.delta, self.hdr.b, self.dat.size) + 1
+        x = self.dat[i1:i2]
+        ###
+        if amp == 'pos':
+            imax = np.argmax(x)
+            return imax+i1, (imax+i1)*self.hdr.delta+self.hdr.b, x[imax]
+        elif amp == 'neg':
+            imin = np.argmin(x)
+            return imin+i1, (imin+i1)*self.hdr.delta+self.hdr.b, x[imin]
 ##################################################################################################################
 # Classes/method below are usually useless
 ##################################################################################################################
@@ -1906,7 +1927,8 @@ if __name__ == "__main__":
     #c_wrt_sac('junk.sac', x, hdr1)
     st= c_rd_sac('test_tmp/1.sac')
     hdr = st.hdr
-    print(type(hdr ) )
+    st.plot()
+    #print(type(hdr ) )
     #print(hdr, hdr.stlo, hdr.stla, hdr.b, hdr.e, hdr.npts, hdr.delta, ffi.string(hdr.kstnm) )
     #hdr.kstnm = b'test'
     #print(hdr, hdr.stlo, hdr.stla, hdr.b, hdr.e, hdr.npts, hdr.delta, ffi.string(hdr.kstnm) )
