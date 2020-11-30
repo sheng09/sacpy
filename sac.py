@@ -1012,7 +1012,7 @@ def c_rd_sachdr_wildcard(fnm_wildcard=None, lcalda=False, tree=False, log_file=N
         for it in sorted(glob(dir_wildcard) ):
             wildcard = it + '/' + reminders
             if log_file != None:
-                print('c_rd_sachdr_wildcard(%s)...' %  wildcard, file=log_file )
+                print('c_rd_sachdr_wildcard(%s)...' %  wildcard, file=log_file, flush=True )
             buf.append( (wildcard, c_rd_sachdr_wildcard(wildcard, lcalda, False, None, critical_time_window) ) )
         return buf
 
