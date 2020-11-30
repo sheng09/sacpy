@@ -13,14 +13,20 @@ def run(h5_fnm, fnm_wildcard, critical_time_window=None, info=None, verbose=Fals
     fid = h5py_File(h5_fnm, 'w')
     if info!= None:
         fid.attrs['cmd'] = info
-    ###
+    #######
     log_file = stdout if verbose else None
-    buf = c_rd_sachdr_wildcard(fnm_wildcard, True, True, log_file, critical_time_window)
-    ###
     ev_set, st_set = set(), set()
     grp_hdrtree = fid.create_group('/hdr_tree')
-    grp_hdrtree.attrs['size'] = len(buf)
-    for wildcard, lst in buf:
+    #######
+    dir_wildcard = '/'.join(fnm_wildcard.split('/')[:-1] )
+    reminders = fnm_wildcard.split('/')[-1]
+    dirs = sorted(glob(dir_wildcard) )
+    grp_hdrtree.attrs['size'] = len(dirs)
+    #######
+    for it in dirs:
+        wildcard = it + '/' + reminders
+        lst = c_rd_sachdr_wildcard(wildcard, True, False, log_file, critical_time_window)
+        ###
         fnm  = [fnm.encode('utf8') for hdr, fnm in lst]
         evlo = np.array([hdr.evlo  for hdr, fnm in lst], dtype=np.float32 )
         evla = np.array([hdr.evla  for hdr, fnm in lst], dtype=np.float32 )
@@ -53,7 +59,6 @@ def run(h5_fnm, fnm_wildcard, critical_time_window=None, info=None, verbose=Fals
             ev_set.add(pt)
         for pt in zip(stlo, stla, kstnm, knetwk):
             st_set.add(pt)
-        ###
     grp_ev = fid.create_group('/event')
     ev_set = sorted(ev_set)
     grp_ev.attrs['size'] = len(ev_set)
