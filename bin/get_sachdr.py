@@ -5,6 +5,7 @@ Executable files for obtain sac hdr information for many files.
 from sacpy.sac import c_rd_sachdr_wildcard, ffi
 from h5py import File as h5py_File
 import numpy as np
+from glob import glob
 from sys import exit, argv, stdout
 from getopt import getopt
 from os import getcwd
@@ -25,6 +26,8 @@ def run(h5_fnm, fnm_wildcard, critical_time_window=None, info=None, verbose=Fals
     #######
     for it in dirs:
         wildcard = it + '/' + reminders
+        if log_file != None:
+            print(wildcard, file=log_file, flush=True)
         lst = c_rd_sachdr_wildcard(wildcard, True, False, log_file, critical_time_window)
         ###
         fnm  = [fnm.encode('utf8') for hdr, fnm in lst]
