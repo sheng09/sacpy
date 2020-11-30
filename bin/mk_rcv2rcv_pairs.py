@@ -250,7 +250,6 @@ if __name__ == "__main__":
     for opt, arg in options:
         if opt in ('-I'):
             h5_fnm = arg
-            outfnm = arg
         elif opt in ('-V'):
             verbose = True
         elif opt in ('-D'):
