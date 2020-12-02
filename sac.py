@@ -1021,14 +1021,18 @@ def c_rd_sac(filename, tmark=None, t1=None, t2=None, lcalda=False):
     """
     Read sac given `filename`, and return an object ot sactrace.
     """
-    return c_sactrace(filename, tmark=tmark, t1=t1, t2=t2, lcalda=lcalda)
+    tmp = c_sactrace(filename, tmark=tmark, t1=t1, t2=t2, lcalda=lcalda)
+    if tmp.dat is None:
+        return None
+    return tmp
 def c_rd_sac_mat(fnms, tmark, t1, t2, lcalda=False, norm=None, filter=None):
     """
     Return (hdrs, mat), where `hdrs` is a list of sachdr and mat is the matrix of data.
     If a sac file does not exist, then zeros will be used to fill the row in the matrix `mat`,
     and None will be used for the element in the `hdrs`.
     """
-    buf = [c_sactrace(it, tmark=tmark, t1=t1, t2=t2, lcalda=lcalda) if os_path_exists(it) else None for it in fnms ]
+    tmp = [c_sactrace(it, tmark=tmark, t1=t1, t2=t2, lcalda=lcalda) if os_path_exists(it) else None for it in fnms ]
+    buf = [it for it in tmp if it != None]
     ###
     if filter:
         btype, f1, f2 = filter
@@ -1118,6 +1122,9 @@ class c_sactrace:
         Read from a file.
         """
         buf = libsac.read_sac(fnm.encode('utf8'), self.hdr)
+        if buf == ffi.NULL: ## NAN happend in the data
+            print('Nan in sac file: %s' % (fnm), file=sys.stderr )
+            return
         self.dat = deepcopy( np.frombuffer(ffi.buffer(buf, 4*self.hdr.npts), dtype=np.float32 )[:] )
         ffi.gc(buf, libsac.free)
         ###
@@ -1134,6 +1141,9 @@ class c_sactrace:
         tmark can be -5, -3, 0, 1,...9 for 'b', 'o', 't0', 't1',...,'t9'.
         """
         buf = libsac.read_sac2(fnm.encode('utf8'), self.hdr, tmark, t1, t2)
+        if buf == ffi.NULL: ## NAN happend in the data
+            print('Nan in sac file: %s' % (fnm), file=sys.stderr )
+            return
         self.dat = deepcopy( np.frombuffer(ffi.buffer(buf, 4*self.hdr.npts), dtype=np.float32 )[:] )
         ffi.gc(buf, libsac.free)
         ###

@@ -165,7 +165,21 @@ float* read_sac(const char *name, SACHDR *hdr)
     }
     fclose(fp);
     if (swapflag)
-        swap4bytes((char *) ptr, size);
+        swap4bytes((char *) ptr, size*sizeof(float) );
+    int nan_number = 0;
+    for(size_t idx=0; idx<size; ++idx)
+    {
+        if (!(isfinite(ptr[idx]) ) )
+        {
+            nan_number = 1;
+            break;
+        }
+    }
+    if (nan_number == 1)
+    {
+        free(ptr);
+        return 0;
+    }
     return ptr;
 }
 float* read_sac2(const char *name, SACHDR *hdr, int tmark, float t1, float t2)
@@ -262,6 +276,20 @@ float* read_sac2(const char *name, SACHDR *hdr, int tmark, float t1, float t2)
     hdr->e = new_e;
     hdr->npts = new_npts;
     //
+    int nan_number = 0;
+    for(int idx=0; idx<new_npts; ++idx)
+    {
+        if (!(isfinite(ptr[idx]) ) )
+        {
+            nan_number = 1;
+            break;
+        }
+    }
+    if (nan_number == 1)
+    {
+        free(ptr);
+        return 0;
+    }
     return ptr;
 }
 
