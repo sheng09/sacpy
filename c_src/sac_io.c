@@ -209,6 +209,7 @@ float* read_sac2(const char *name, SACHDR *hdr, int tmark, float t1, float t2)
         swapflag = 1;
     }
     hdr->e = hdr->b + (hdr->npts-1)*hdr->delta; // update hdr.e in case of wrongness
+    int old_npts = hdr->npts;
     // Obtain time range to read
     float tref = 0.0;
     if (tmark==-5 || tmark==-3 || tmark==-2 || (tmark>=0&&tmark<10) )
@@ -246,6 +247,13 @@ float* read_sac2(const char *name, SACHDR *hdr, int tmark, float t1, float t2)
     int rd_idx_2 = (idx_t2<hdr->npts) ? idx_t2 : hdr->npts;  // position to stop  in reading from file
     int rd_npts = rd_idx_2- rd_idx_1;                        // size of block to read
     //
+    if (rd_idx_1> old_npts || rd_idx_2 < 0)
+    {
+        hdr->b = new_b;
+        hdr->e = new_e;
+        hdr->npts = new_npts;
+        return ptr;
+    }
     //printf("rd: %d %d, idx_t12 %d %d, t12 %f %f\n", rd_idx_1, rd_idx_2, idx_t1, idx_t2, t1, t2);
     //
     if (idx_t1>0)
