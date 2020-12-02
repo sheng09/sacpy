@@ -390,7 +390,8 @@ def rd_preproc_single(sacfnm_template, delta, tmark, t1, t2, detrend= True, tape
     """
     ### read
     fnms = sorted( glob(sacfnm_template) )
-    tr  = [rd_sac_2(it, tmark, t1, t2, True) for it in fnms]
+    tmp = [rd_sac_2(it, tmark, t1, t2, True) for it in fnms]
+    tr  = [it for it in tmp if it != None] # None can exist due to Nan numbers
     ### important geomeotry values
     stlo = np.array( [it['stlo'] for it in tr] )
     stla = np.array( [it['stla'] for it in tr] )
