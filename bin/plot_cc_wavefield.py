@@ -32,8 +32,9 @@ def run(h5_filename, figname, dist_range=None, cc_time_range=None, lines= None, 
             vmin=-0.6, vmax=0.6, origin='lower' )
     ax2.bar(dist, stack_count, align='center', color='gray', width= dist[1]-dist[0] )
     ###
-    for d, t in lines:
-        ax1.plot(d, t, '.', color='C0', alpha= 0.8)
+    if lines != None:
+        for d, t in lines:
+            ax1.plot(d, t, '.', color='C0', alpha= 0.8)
     ###
     dist_range = (dist[0], dist[-1] ) if dist_range == None else dist_range
     ax1.set_xlim(dist_range)
@@ -92,7 +93,7 @@ if __name__ == "__main__":
     lines = None
     ####
     HMSG = """
-    %s -I in.h5 -P img.png [-D 0/50] [-T 0/3000] [--lines fnm1,fnm2,fnm3] [--plt figure=6/12,interpolation=gaussian] -V
+    %s -I in.h5 -P img.png [-D 0/50] [-T 0/3000] [--lines fnm1,fnm2,fnm3] [--plt figsize=6/12,interpolation=gaussian] -V
     """ % argv[0]
     if len(argv) < 2:
         print(HMSG)
