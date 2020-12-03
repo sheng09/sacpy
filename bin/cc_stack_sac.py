@@ -2,7 +2,6 @@
 """
 Executable files for cross-correlation and stacking operations
 """
-from genericpath import sameopenfile
 from sacpy.processing import filter, taper, tukey_jit, temporal_normalize, frequency_whiten
 from sacpy.sac import rd_sac_2, wrt_sac_2
 from sacpy.sac import c_rd_sac, c_wrt_sac2
@@ -18,7 +17,7 @@ from glob import glob
 from numba import jit
 
 def main(   fnm_wildcard, tmark, t1, t2, delta, pre_detrend=True, pre_taper_ratio= 0.005, pre_filter= None,
-            temporal_normalization = (128.0, 0.02, 0.066666), spectral_whiten= 0.02,
+            temporal_normalization_parameter = (128.0, 0.02, 0.066666), spectral_whiten_parameter= 0.02,
             dist_range = (0.0, 180.0), dist_step= 1.0, daz_range= None, gcd_ev_range= None, gc_center_rect= None,
             post_folding = True, post_taper_ratio = 0.005, post_filter = ('bandpass', 0.02, 0.066666), post_norm = True, post_cut= None,
             log_prefnm= 'cc_mpi_log',
@@ -43,10 +42,10 @@ def main(   fnm_wildcard, tmark, t1, t2, delta, pre_detrend=True, pre_taper_rati
         pre_filter:      None to disable pre-filter or a tuple (btype, f1, f2) to enable the filter.
                          (e.g.,  pre_filter= ('lowpass', 1.0, 0.0), or pre_filter= ('bandpass', 0.02, 0.5) )
     - 2. optional whitening:
-        temporal_normalization: temporal normalization parameter. (e.g., 128.0, 0.02, 0.066666)
-                                set None to disable temporal normalization.
-        spectral_whiten:        spectral whitening parameter in Hz. (e.g., spectral_whiten= 0.02)
-                                set None to disable spectral whitening.
+        temporal_normalization_parameter: temporal normalization parameter. (e.g., 128.0, 0.02, 0.066666)
+                                          set None to disable temporal normalization.
+        spectral_whiten_parameter:        spectral whitening parameter in Hz. (e.g., spectral_whiten_parameter= 0.02)
+                                          set None to disable spectral whitening.
     - 3. cross-correlation and stacking:
         dist_range:   inter-distance range (e.g., dist_range=(0.0, 180.0) ).
         dist_step:    inter-distance step. The generated dist list will be `np.arange(dist_range[0], dist_range[1] + dist_step )`.
@@ -60,9 +59,11 @@ def main(   fnm_wildcard, tmark, t1, t2, delta, pre_detrend=True, pre_taper_rati
     - 4. post-processing of correlation stacks:
         post_folding:     True to enable folding the positive and the negative cross-correlation lags. False to disable.
         post_taper_ratio: taper ratio between 0 and 0.5 when enable post filter.
+                          The ratio is with respect to the full correlation time series instead of the cutted one declared by `post_cut`.
         post_filter:      None to disable post-filter or a tuple (btype, f1, f2) to enable the filter.
                           (e.g.,  post_filter= ('lowpass', 1.0, 0.0), or post_filter= ('bandpass', 0.02, 0.5) )
         post_norm:        Normalize each cross-correlation stack with the max positive amplitude.
+        post_cut:         A tuple to cut the correlation stacks before outputting. Set None to disable.
     - 5. output:
         log_prefnm     : mpi log filename prefix;
         output_pre_fnm : output filename prefix;
@@ -74,10 +75,12 @@ def main(   fnm_wildcard, tmark, t1, t2, delta, pre_detrend=True, pre_taper_rati
     mpi_ncpu = mpi_comm.Get_size()
     mpi_log_fid = open('%s_%03d.txt' % (log_prefnm, mpi_rank), 'w' )
 
-    mpi_print_log('Start! rank(%d) nproc(%d)' % (mpi_rank, mpi_ncpu), 0, mpi_log_fid, True)
+    mpi_print_log(mpi_log_fid, 0, True, 'Start! rank(%d) nproc(%d)' % (mpi_rank, mpi_ncpu) )
     t_main_start = time.time()
 
-    ### 1. read sac files and pre-processing
+    ############################################################################################################################################
+    ### 1. Init parameters for reading sac files and pre-processing
+    ############################################################################################################################################
     # dependent parameters
     sampling_rate = 1.0/delta
     npts          = int( np.round((t2-t1)/delta) ) + 1
@@ -86,137 +89,121 @@ def main(   fnm_wildcard, tmark, t1, t2, delta, pre_detrend=True, pre_taper_rati
     taper_size    = int(npts*pre_taper_ratio)
     # logging
     if True: # user-defined parameters
-        mpi_print_log('Set reading parameters', 0, mpi_log_fid, True)
-        mpi_print_log('fnm_wildcard:    %s ' % (fnm_wildcard)          , 1, mpi_log_fid, True)
-        mpi_print_log('tmark, t1, t2:   %s, %f, %f ' % (tmark, t1, t2) , 1, mpi_log_fid, True)
-        mpi_print_log('delta:           %f ' % (delta)                 , 1, mpi_log_fid, True)
-        mpi_print_log('pre_detrend:     %d ' % (pre_detrend)           , 1, mpi_log_fid, True)
-        mpi_print_log('pre_taper_ratio: %f ' % (pre_taper_ratio)       , 1, mpi_log_fid, True)
-        if pre_filter != None:
-            mpi_print_log('pre_filter:      (%s, %f, %f)' % (pre_filter[0], pre_filter[1], pre_filter[2]), 1, mpi_log_fid, True)
-        else:
-            mpi_print_log('pre_filter:  None (disabled)', 1, mpi_log_fid, True)
+        mpi_print_log(mpi_log_fid, 0, False, 'Set reading parameters')
+        mpi_print_log(mpi_log_fid, 1, False, 'fnm_wildcard:   ', fnm_wildcard)
+        mpi_print_log(mpi_log_fid, 1, False, 'tmark, t1, t2:  ', tmark, t1, t2)
+        mpi_print_log(mpi_log_fid, 1, False, 'delta:          ', delta)
+        mpi_print_log(mpi_log_fid, 1, False, 'pre_detrend:    ', pre_detrend)
+        mpi_print_log(mpi_log_fid, 1, False, 'pre_taper_ratio:', pre_taper_ratio)
+        mpi_print_log(mpi_log_fid, 1, False, 'pre_filter:     ', pre_filter, '\n')
         #
-        mpi_print_log('', 1, mpi_log_fid, False)
-        mpi_print_log('Dependent parameters:', 1, mpi_log_fid, False)
-        mpi_print_log('sampling_rate: %f ' % (sampling_rate) , 1, mpi_log_fid, True)
-        mpi_print_log('npts:          %d ' % (npts) , 1, mpi_log_fid, True)
-        mpi_print_log('fftsize:       %d ' % (fftsize) , 1, mpi_log_fid, True)
-        mpi_print_log('df:            %f ' % (df) , 1, mpi_log_fid, True)
-        mpi_print_log('pre_taper_size:%d ' % (taper_size) , 1, mpi_log_fid, True)
+        mpi_print_log(mpi_log_fid, 1, False, 'Dependent parameters:')
+        mpi_print_log(mpi_log_fid, 1, False, 'sampling_rate:  ', sampling_rate)
+        mpi_print_log(mpi_log_fid, 1, False, 'npts:           ', npts)
+        mpi_print_log(mpi_log_fid, 1, False, 'fftsize:        ', fftsize)
+        mpi_print_log(mpi_log_fid, 1, False, 'df:             ', df)
+        mpi_print_log(mpi_log_fid, 1, True,  'pre_taper_size: ', taper_size)
 
-    ### 2. optional whitening
+    ############################################################################################################################################
+    ### 2. Init parameters for optional whitening
+    ############################################################################################################################################
     wt_size, wt_f1, wt_f2, wf_size = None, None, None, None
-    if temporal_normalization != None:
-        wt, wt_f1, wt_f2 = temporal_normalization
+    if temporal_normalization_parameter != None:
+        wt, wt_f1, wt_f2 = temporal_normalization_parameter
         wt_size = (int(np.round(wt / delta) ) //2 ) * 2 + 1
-    if spectral_whiten != None:
-        wf = spectral_whiten  # Hz
+    if spectral_whiten_parameter != None:
+        wf = spectral_whiten_parameter  # Hz
         wf_size = (int(np.round(wf / df) ) //2 ) * 2 + 1
     # acceleration for spectral whitening
     critical_parameter= 0.001
     w_speedup_i1, w_speedup_i2 = None, None
-    if spectral_whiten != None:
-        w_speedup_i1, w_speedup_i2 = get_bound(fftsize, sampling_rate, post_filter[1], post_filter[2]+spectral_whiten, critical_parameter)
+    if spectral_whiten_parameter != None:
+        w_speedup_i1, w_speedup_i2 = get_bound(fftsize, sampling_rate, post_filter[1], post_filter[2]+spectral_whiten_parameter, critical_parameter)
     # logging
     if True: # user-defined parameters
-        mpi_print_log('Set whitening parameters', 0, mpi_log_fid, True)
-        if temporal_normalization != None:
-            mpi_print_log('temporal normalization:   (%f sec, %f Hz, %f Hz), size= %d' % (temporal_normalization[0], 
-                    temporal_normalization[1], temporal_normalization[2], wt_size), 1, mpi_log_fid, True)
-        else:
-            mpi_print_log('temporal normalization:   None (disabled)', 1, mpi_log_fid, True)
-        if spectral_whiten != None:
-            mpi_print_log('spetral whitening:        %f Hz, size=%d' % (spectral_whiten, wf_size) , 1, mpi_log_fid, True)
-        else:
-            mpi_print_log('spetral whitening:        None (disabled)', 1, mpi_log_fid, True)
-
-    #### 3. selection criteria
+        mpi_print_log(mpi_log_fid, 0, False, 'Set whitening parameters')
+        mpi_print_log(mpi_log_fid, 1, False, 'Temporal normalization: ', temporal_normalization_parameter, 'size:', wt_size)
+        mpi_print_log(mpi_log_fid, 1, True,  'Spetral whitening:      ', spectral_whiten_parameter, 'size:', wf_size)
+    ############################################################################################################################################
+    #### 3. Init selection criteria
+    ############################################################################################################################################
     if daz_range != None or gcd_ev_range != None or gc_center_rect != None:
-        if daz_range == None:
-            daz_range = (-0.1, 90.1)
-        if gcd_ev_range == None:
-            gcd_ev_range = (-0.1, 90.1)
-        if gc_center_rect == None:
-            gc_center_rect = [(-9999, 9999, -9999, 9999)]
+        daz_range      = (-0.1, 90.1) if daz_range == None else daz_range
+        gcd_ev_range   = (-0.1, 90.1) if gcd_ev_range == None else gcd_ev_range
+        gc_center_rect = [(-9999, 9999, -9999, 9999)] if gc_center_rect == None else gc_center_rect
     # logging
     if True:
-        if daz_range != None or gcd_ev_range != None or gc_center_rect != None:
-            mpi_print_log('Set selection criteria', 0, mpi_log_fid, True)
-            mpi_print_log('Selection of receiver pairs: daz(%.1f, %.1f) gcd_ev(%.1f, %.1f) ' % (daz_range[0], daz_range[1], gcd_ev_range[0], gcd_ev_range[1] ), 1, mpi_log_fid, True )
-            mpi_print_log('Selection rect: ', 1, mpi_log_fid, True )
-            for rect in gc_center_rect:
-                mpi_print_log('(%.1f, %.1f, %.1f, %.1f)' % (rect[0], rect[1], rect[2], rect[3] ), 2, mpi_log_fid, True )
-    ### 4. post-processing
+        mpi_print_log(mpi_log_fid, 0, False, 'Set selection criteria')
+        mpi_print_log(mpi_log_fid, 1, False, 'daz:    ', daz_range )
+        mpi_print_log(mpi_log_fid, 1, False, 'gcd_ev: ', gcd_ev_range )
+        mpi_print_log(mpi_log_fid, 1, False, 'selection of gc-center rect: ', gc_center_rect )
+    ############################################################################################################################################
+    ### 4. Init post-processing parameters
+    ############################################################################################################################################
     # dependent parameters
     critical_parameter= 0.001
     cc_index_range = get_bound(fftsize, sampling_rate, post_filter[1], post_filter[2], critical_parameter)
     # logging
     if True:
-        mpi_print_log('Set post-processing parameters', 0, mpi_log_fid, True)
-        mpi_print_log('post_folding:   %d' % post_folding, 1, mpi_log_fid, True)
-        if post_filter != None:
-            mpi_print_log('post_taper_ratio: %f' % (post_taper_ratio), 1, mpi_log_fid, True )
-            mpi_print_log('post_filter:      (%s, %f, %f)' % (post_filter[0], post_filter[1], post_filter[2]), 1, mpi_log_fid, True)
-        else:
-            mpi_print_log('post_filter:  None (disabled)', 1, mpi_log_fid, True)
-        mpi_print_log('post_norm:   %d' % (post_norm), 1, mpi_log_fid, True )
+        mpi_print_log(mpi_log_fid, 0, False, 'Set post-processing parameters' )
+        mpi_print_log(mpi_log_fid, 1, False, 'Post folding:      ', post_folding )
+        mpi_print_log(mpi_log_fid, 1, False, 'Post taper taio:   ', post_taper_ratio )
+        mpi_print_log(mpi_log_fid, 1, False, 'Post filter:       ', post_filter )
+        mpi_print_log(mpi_log_fid, 1, True,  'Post normalizaion: ', post_norm )
     if True:
-        mpi_print_log('Enable accelerating cross-correlation', 0, mpi_log_fid, True)
-        msg = 'Level parameter: %f (will abandon the spectra outside (%f,%f) Hz.)' % (critical_parameter, cc_index_range[0]*df, cc_index_range[1]*df )
-        mpi_print_log(msg, 1, mpi_log_fid, True )
-
-    ### 5. cross-correlation stack
-    dist = np.arange(dist_range[0], dist_range[1] + dist_step )
-    nrfft_valid = cc_index_range[1] # spectra bigger than this are not useful given the post-filter processing
+        mpi_print_log(mpi_log_fid, 0, False, 'Enable accelerating cross-correlation')
+        mpi_print_log(mpi_log_fid, 1, True,  'Level parameter: %f (will abandon the spectra outside (%f, %f) Hz.)' % (
+                        critical_parameter, cc_index_range[0]*df, cc_index_range[1]*df ) )
+    ############################################################################################################################################
+    ### 5. Init cross-correlation stack buf
+    ############################################################################################################################################
+    dist           = np.arange(dist_range[0], dist_range[1] + dist_step )
+    nrfft_valid    = cc_index_range[1] # spectra bigger than this are not useful given the post-filter processing
     spec_stack_mat = np.zeros( (dist.size, nrfft_valid), dtype= np.complex64 )
-    stack_count = np.zeros( dist.size, dtype=np.int32 )
+    stack_count    = np.zeros( dist.size, dtype=np.int32 )
 
     global_spec_stack_mat, global_stack_count, stack_mat= None, None, None
     if mpi_rank == 0:
         global_spec_stack_mat = np.zeros( (dist.size, nrfft_valid), dtype= np.complex64 )
-        global_stack_count = np.zeros( dist.size, dtype=np.int32 )
-        stack_mat = np.zeros((dist.size, fftsize-1), dtype=np.float32 )
+        global_stack_count    = np.zeros( dist.size, dtype=np.int32 )
+        stack_mat             = np.zeros((dist.size, fftsize-1), dtype=np.float32 )
     # logging
     if True: # user-defined parameters
-        mpi_print_log('Set ccstack parameters', 0, mpi_log_fid, True)
-        mpi_print_log('dist_range: [%f,%f]' % (dist_range[0], dist_range[1]), 1, mpi_log_fid, True)
-        mpi_print_log('dist_step:   %f' % (dist_step), 1, mpi_log_fid, True)
-        msg = '[%s,...,%s] (size=%d)' % (', '.join(['%.1f' % it for it in dist[:3] ] ),  
-                                       ', '.join(['%.1f' % it for it in dist[-1:] ]), 
-                                       len(dist) )
-        mpi_print_log(msg, 1, mpi_log_fid, True)
-    #######################################################################################################################################
-    ### run
-    #######################################################################################################################################
+        mpi_print_log(mpi_log_fid, 0, False, 'Set ccstack parameters' )
+        mpi_print_log(mpi_log_fid, 1, False, 'dist range: ', dist_range)
+        mpi_print_log(mpi_log_fid, 1, False, 'dist step:  ', dist_step)
+        mpi_print_log(mpi_log_fid, 1, True,  'dist:       ',
+                            ', '.join(['%.1f' % it for it in dist[:3] ] ), '...',
+                            ', '.join(['%.1f' % it for it in dist[-1:] ]), )
+    ############################################################################################################################################
+    ### Distribut MPI
+    ############################################################################################################################################
     directories   = sorted( glob('/'.join(fnm_wildcard.split('/')[:-1] ) ) )
     sac_wildcards = fnm_wildcard.split('/')[-1]
-    njobs  = len(directories)
-    nchunk = (njobs // mpi_ncpu) if (njobs % mpi_ncpu == 0) else (njobs // mpi_ncpu + 1)
-    mpi_i1 = mpi_rank * nchunk
-    mpi_i2 = mpi_i1 + nchunk
+    local_directories = directories[mpi_rank::mpi_ncpu]
     # logging
     if True:
-        mpi_print_log('Distribute MPI jobs...', 0, mpi_log_fid, True)
-        mpi_print_log('total jobs: %d' % (njobs), 1, mpi_log_fid, True)
-        mpi_print_log('job ranges on this node: [%d, %d)' % (mpi_i1, mpi_i2), 1, mpi_log_fid, True)
-    ###
+        mpi_print_log(mpi_log_fid, 0, False, 'Distribute MPI jobs')
+        mpi_print_log(mpi_log_fid, 1, False, 'Total job size:   ', len(directories) )
+        mpi_print_log(mpi_log_fid, 1, True,  'Jobs on this node: ', len(local_directories) )
+    ############################################################################################################################################
+    ### start running
+    ############################################################################################################################################
     if True:
-        mpi_print_log('Running...', 0, mpi_log_fid, True)
-    t_rd_whiten, t_ccstack = 0.0, 0.0
-    for it in directories[mpi_i1: mpi_i2]:
+        mpi_print_log(mpi_log_fid, 0, False, 'Start running...')
+    time_rd_whiten, time_ccstack = 0.0, 0.0
+    for idx_job, it in enumerate(local_directories):
         wildcards = '%s/%s' % (it, sac_wildcards)
+        mpi_print_log(mpi_log_fid, 1, True, '-',idx_job+1, wildcards, end='...')
         ### 1. read and pre-processing and whitening
         t_start = time.time()
         whitened_spectra_mat, stlo, stla, evlo, evla, az, baz = rd_preproc_whiten_single(wildcards, delta, tmark, t1, t2, npts,
                                                                                             pre_detrend, pre_taper_ratio, pre_filter,
                                                                                             fftsize, nrfft_valid, wt_size, wt_f1, wt_f2, wf_size, w_speedup_i1, w_speedup_i2, taper_size)
-        #mpi_print_log('Read...', 1, mpi_log_fid, True)
-        nsac = whitened_spectra_mat.shape[0]
-        local_t_rd_whiten = time.time()-t_start
+        nsac = stlo.size
+        local_time_rd_whiten = time.time()-t_start
 
         ### 3.1 cc and stack
-        #mpi_print_log('cc&stack...', 1, mpi_log_fid, True)
         t_start = time.time()
         if daz_range != None or gcd_ev_range != None or gc_center_rect != None:
             center_clo1 = np.array( [rect[0] for rect in gc_center_rect] )
@@ -230,93 +217,102 @@ def main(   fnm_wildcard, tmark, t1, t2, delta, pre_detrend=True, pre_taper_rati
                             dist_step, cc_index_range, dist_range[0] )
         else:
             local_ncc = ccstack(whitened_spectra_mat, stack_count, stlo, stla, spec_stack_mat, dist_step, cc_index_range, dist_range[0] )
-        local_t_cc = time.time()-t_start
+        local_time_ccstack = time.time()-t_start
 
-        ###
-        t_rd_whiten = t_rd_whiten + local_t_rd_whiten
-        t_ccstack = t_ccstack + local_t_cc
+        ### time summary
+        time_rd_whiten = time_rd_whiten + local_time_rd_whiten
+        time_ccstack = time_ccstack + local_time_ccstack
         if True:
-            tmp = t_rd_whiten+ local_t_cc + 0.001
-            msg = '%s. rd&whiten: %.1fs(%d%%)(%d)，ccstack %.1fs(%d%%) (%d)' % (wildcards,
-                    t_rd_whiten, t_rd_whiten/tmp*100, nsac,
-                    local_t_cc, local_t_cc/tmp*100, local_ncc )
-            mpi_print_log(msg , 1, mpi_log_fid, True)
+            tmp = local_time_rd_whiten+ local_time_ccstack + 0.001
+            mpi_print_log(mpi_log_fid, 1, False,
+                            'rd&whiten: %.1fs(%d%%)(%d)，ccstack %.1fs(%d%%) (%d)' % (
+                            local_time_rd_whiten, time_rd_whiten/tmp*100, nsac,
+                            local_time_ccstack,   local_time_ccstack/tmp*100, local_ncc ) )
     if True:
-        total_loop_time = t_rd_whiten + t_ccstack + 1.0e-3 # in case of zeros
-        msg = 'Time consumption summation: (rd&whiten: %.1fs(%d%%)， ccstack %.1fs(%d%%))' % (
-                        t_rd_whiten, t_rd_whiten/total_loop_time*100, 
-                        t_ccstack, t_ccstack/total_loop_time*100 )
-        mpi_print_log(msg, 1, mpi_log_fid, True)
+        total_loop_time = time_rd_whiten + time_ccstack + 1.0e-3 # in case of zeros
+        mpi_print_log(mpi_log_fid, 1, True,
+                        'Time consumption summary: (rd&whiten: %.1fs(%d%%)， ccstack %.1fs(%d%%) )' % (
+                        time_rd_whiten, time_rd_whiten/total_loop_time*100,
+                        time_ccstack, time_ccstack/total_loop_time*100 ) )
 
+    ############################################################################################################################################
     ### 3.1.2 MPI collecting
+    ############################################################################################################################################
     if True:
-        mpi_print_log('MPI collecting...', 0, mpi_log_fid, True)
+        mpi_print_log(mpi_log_fid, 0, True, 'MPI collecting(reducing) to RANK0...')
     mpi_comm.Reduce([spec_stack_mat, MPI.C_FLOAT_COMPLEX], [global_spec_stack_mat, MPI.C_FLOAT_COMPLEX], MPI.SUM, root= 0)
     mpi_comm.Reduce([stack_count, MPI.INT32_T], [global_stack_count, MPI.INT32_T], MPI.SUM, root= 0 )
     mpi_comm.Barrier()
 
-    ### 3.2 ifft
+    ############################################################################################################################################
+    ### On RANK0
+    ### 3.2 ifft and
+    ### 4.  post processing
+    ### 5. output
+    ############################################################################################################################################
     if mpi_rank == 0:
         if True:
-            mpi_print_log('Ifft', 0, mpi_log_fid, True)
+            mpi_print_log(mpi_log_fid, 0, False, 'Ifft', )
+            mpi_print_log(mpi_log_fid, 1, True,  'fftsize: ', fftsize, '(we will later get rid of the useless point in the cross-correlation.)')
         rollsize = npts-1
         for irow in range(dist.size):
             global_spec_stack_mat[irow][0] = 0.0
             x = pyfftw.interfaces.numpy_fft.irfft(global_spec_stack_mat[irow], fftsize)
             x = np.roll(x, rollsize)
             stack_mat[irow] = x[:-1]
-
-    ### 4. post processing
-    if mpi_rank == 0:
+        ########################################################################################################################################
+        ### 4 post processing
+        ########################################################################################################################################
         if True:
-            mpi_print_log('Post processing', 0, mpi_log_fid, True)
+            mpi_print_log(mpi_log_fid, 0, True, 'Post processing...' )
         cc_t1, cc_t2 = -rollsize*delta, rollsize*delta
-        # 4.1 post folding
+        # 4.1 post processing folding
         if post_folding:
+            mpi_print_log(mpi_log_fid, 1, True, 'Fold...' )
             for irow in range(dist.size):
                 stack_mat[irow] += stack_mat[irow][::-1]
             stack_mat = stack_mat[:,rollsize:]
             cc_t1, cc_t2 = 0, rollsize*delta
         # 4.2 post filtering
         if post_filter:
-            w = tukey_jit( stack_mat.shape[1], post_taper_ratio )
+            junk = int(post_taper_ratio * stack_mat.shape[1])
+            mpi_print_log(mpi_log_fid, 1, False, 'Post filtering... ', post_filter )
+            mpi_print_log(mpi_log_fid, 1, True,  'Post tapering ... ', post_taper_ratio, 'size:', junk )
             btype, f1, f2 = post_filter
             for irow in range(dist.size):
-                #stack_mat[irow] -= np.mean( stack_mat[irow] )
-                #stack_mat[irow] = signal.detrend( stack_mat[irow] )
                 stack_mat[irow] = filter(stack_mat[irow], sampling_rate, btype, (f1, f2), 2, 2 )
-                stack_mat[irow] *= w
+                taper(stack_mat[irow], junk)
         # 4.3 post norm
         if post_norm:
+            mpi_print_log(mpi_log_fid, 1, True, 'Post normalizing... ' )
             for irow in range(dist.size):
                 v = np.max(stack_mat[irow])
-                #print(irow, v)
                 if v> 0.0:
                     stack_mat[irow] *= (1.0/v)
         # 4.4 post cut
         if post_cut != None:
+            mpi_print_log(mpi_log_fid, 1, True, 'Post cutting... ', post_cut )
             post_t1, post_t2 = post_cut
-            if post_t1 < cc_t1:
-                post_t1 = cc_t1
-            if post_t2 > cc_t2:
-                post_t2 = cc_t2
+            post_t1 = cc_t1 if post_t1 < cc_t1 else post_t1
+            post_t2 = cc_t2 if post_t2 > cc_t2 else post_t2
+
             post_i1 = int( round((post_t1-cc_t1)/delta) )
             post_i2 = int( round((post_t2-cc_t1)/delta) ) + 1
+
             cc_t1 = cc_t1 + post_i1 *delta
             cc_t2 = cc_t1 + (post_i2-post_i1-1)*delta
             stack_mat = stack_mat[:, post_i1:post_i2 ]
-            if True:
-                mpi_print_log('Post cutting...', 1, mpi_log_fid, True)
         if True:
-            mpi_print_log('correlation time range (%f, %f)' % (cc_t1, cc_t2), 1, mpi_log_fid, True)
-
-    ### 5. output
+            mpi_print_log(mpi_log_fid, 1, True, 'correlation time range', (cc_t1, cc_t2) )
+        ########################################################################################################################################
+        ### 5. output
+        ########################################################################################################################################
         if True:
-            mpi_print_log('Output format(%s)' % (output_format) , 0, mpi_log_fid, True)
+            mpi_print_log(mpi_log_fid, 0, False, 'Outputting...', output_format)
         if 'hdf5' in output_format or 'h5' in output_format:
             h5_fnm = '%s.h5' % (output_pre_fnm)
             if True:
-                mpi_print_log(h5_fnm, 1, mpi_log_fid, True)
+                mpi_print_log(mpi_log_fid, 1, True, 'hdf5: ', h5_fnm)
             f = h5py.File(h5_fnm, 'w' )
             dset = f.create_dataset('ccstack', data=stack_mat )
             dset.attrs['cc_t0'] = cc_t1
@@ -327,21 +323,23 @@ def main(   fnm_wildcard, tmark, t1, t2, delta, pre_detrend=True, pre_taper_rati
             f.close()
         if 'sac' in output_format or 'SAC' in output_format:
             if True:
-                mpi_print_log('%s_..._sac' % (output_pre_fnm), 1, mpi_log_fid, True)
+                mpi_print_log(mpi_log_fid, 1, True, 'sac:  ', '%s_..._sac' % (output_pre_fnm))
             for irow, it in enumerate(dist):
                 fnm = '%s_%05.1f_.sac' % (output_pre_fnm, it)
                 wrt_sac_2(fnm, stack_mat[irow], delta, cc_t1, user3= stack_count[irow] )
-
+    ########################################################################################################################################
     ##### Done
+    ########################################################################################################################################
     if True:
-        mpi_print_log('Done (%.1f sec)' % (time.time()-t_main_start) , 0, mpi_log_fid, True)
+        mpi_print_log(mpi_log_fid, 0, True,  'Done (%.1f sec)' % (time.time()-t_main_start) )
     mpi_log_fid.close()
 
-def mpi_print_log(msg, n_pre, file=sys.stdout, flush=False):
+def mpi_print_log(file, n_pre, flush, *objects, end='\n'):
     if n_pre <= 0:
-        print('>>> %s' % (msg), file= file, flush= flush )
+        print('>>> ', file=file, end='' )
     else:
-        print('%s%s' % ('    '*n_pre, msg), file= file, flush= flush )
+        print('    '*n_pre, file=file, end='' )
+    print(*objects, file=file, flush=flush, end=end )
 
 def rd_preproc_whiten_single(sacfnm_template, delta, tmark, t1, t2, npts,
                                 pre_detrend, pre_taper_ratio , pre_filter, # preproc args
@@ -539,8 +537,8 @@ if __name__ == "__main__":
     pre_taper_ratio= 0.005
     pre_filter= None
 
-    temporal_normalization = None #(128.0, 0.02, 0.066666)
-    spectral_whiten= None #0.02
+    temporal_normalization_parameter = None #(128.0, 0.02, 0.066666)
+    spectral_whiten_parameter= None #0.02
 
     dist_range = (0.0, 180.0)
     dist_step= 1.0
@@ -636,9 +634,9 @@ E.g.,
             junk1, junk2, junk3 = arg.split('/')
             pre_filter = (junk1, float(junk2), float(junk3) )
         elif opt in ('--w_temporal'):
-            temporal_normalization = [float(it) for it in arg.split('/') ]
+            temporal_normalization_parameter = tuple( [float(it) for it in arg.split('/') ] )
         elif opt in ('--w_spec'):
-            spectral_whiten = float(arg)
+            spectral_whiten_parameter = float(arg)
         elif opt in ('--stack_dist'):
             x, y, z = [float(it) for it in arg.split('/') ]
             dist_range, dist_step = (x, y), z
@@ -672,7 +670,7 @@ E.g.,
             output_format = arg.split(',')
     #######
     main(fnm_wildcard, tmark, t1, t2, delta, pre_detrend, pre_taper_ratio, pre_filter,
-            temporal_normalization, spectral_whiten,
+            temporal_normalization_parameter, spectral_whiten_parameter,
             dist_range, dist_step, daz_range, gcd_ev_range, gc_center_rect,
             post_folding, post_taper_ratio, post_filter, post_norm, post_cut,
             log_prefnm, output_pre_fnm, output_format )

@@ -93,7 +93,7 @@ if __name__ == "__main__":
     lines = None
     ####
     HMSG = """
-    %s -I in.h5 -P img.png [-D 0/50] [-T 0/3000] [--lines fnm1,fnm2,fnm3] [--plt figsize=6/12,interpolation=gaussian] -V
+    %s -I in.h5 -P img.png [-D 0/50] [-T 0/3000] [--lines fnm1,fnm2,fnm3] [--plt figsize=6/12,interpolation=gaussian] [-H]
     """ % argv[0]
     if len(argv) < 2:
         print(HMSG)

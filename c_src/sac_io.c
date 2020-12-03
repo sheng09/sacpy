@@ -209,7 +209,7 @@ float* read_sac2(const char *name, SACHDR *hdr, int tmark, float t1, float t2, b
 {
     if (t1>t2)
     {
-        fprintf(stderr, "Err. Invalid cutting window in read_sac(...). t1(%f)>t2(%f) %s\n", t1, t2, name);
+        fprintf(stderr, "Err. Invalid cutting window in read_sac2(...). t1(%f)>t2(%f) %s\n", t1, t2, name);
         return NULL;
     }
     //
@@ -253,7 +253,7 @@ float* read_sac2(const char *name, SACHDR *hdr, int tmark, float t1, float t2, b
     // Check if the cutting window is valid
     if (t1> hdr->e || t2 < hdr->b)
     {
-        fprintf(stderr, "Err. the cutting window in read_sac(...) does not apply to  %s\n", name);
+        fprintf(stderr, "Err. the cutting window in read_sac2(...) does not apply to  %s\n", name);
         return NULL;
     }
     //
