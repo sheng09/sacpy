@@ -116,7 +116,7 @@ int read_sachead(const char *name, SACHDR * hdr)
     FILE *fp = NULL;
     if ((fp = fopen(name, "rb")) == NULL)
     {
-        fprintf(stderr, "Unable to open %s\n",name);
+        fprintf(stderr, "Unable to open %s in read_sachead(...)\n",name);
         return -1;
     }
     if (fread(hdr, sizeof(SACHDR), 1, fp) != 1)
@@ -136,7 +136,7 @@ float* read_sac(const char *name, SACHDR *hdr, bool scale)
     FILE  *fp=NULL;
     if ((fp = fopen(name, "rb")) == NULL)
     {
-        fprintf(stderr, "Unable to open %s\n",name);
+        fprintf(stderr, "Unable to open %s in read_sac(...)\n",name);
         return NULL;
     }
     if (fread(hdr, sizeof(SACHDR), 1, fp) != 1)
@@ -216,7 +216,7 @@ float* read_sac2(const char *name, SACHDR *hdr, int tmark, float t1, float t2, b
     FILE  *fp = NULL;
     if ((fp = fopen(name, "rb")) == NULL)
     {
-        fprintf(stderr, "Unable to open %s\n",name);
+        fprintf(stderr, "Unable to open %s in read_sac2(...)\n",name);
         return NULL;
     }
     // read sac hdr
@@ -253,7 +253,7 @@ float* read_sac2(const char *name, SACHDR *hdr, int tmark, float t1, float t2, b
     // Check if the cutting window is valid
     if (t1> hdr->e || t2 < hdr->b)
     {
-        fprintf(stderr, "Err. Invalid cutting window in read_sac(...). t1(%f)>t2(%f) %s\n", t1, t2, name);
+        fprintf(stderr, "Err. the cutting window in read_sac(...) does not apply to  %s\n", name);
         return NULL;
     }
     //

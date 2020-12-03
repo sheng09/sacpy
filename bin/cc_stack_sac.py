@@ -2,8 +2,10 @@
 """
 Executable files for cross-correlation and stacking operations
 """
+from genericpath import sameopenfile
 from sacpy.processing import filter, taper, tukey_jit, temporal_normalize, frequency_whiten
 from sacpy.sac import rd_sac_2, wrt_sac_2
+from sacpy.sac import c_rd_sac, c_wrt_sac2
 import time
 import sacpy.geomath as geomath
 from mpi4py import MPI
@@ -18,7 +20,7 @@ from numba import jit
 def main(   fnm_wildcard, tmark, t1, t2, delta, pre_detrend=True, pre_taper_ratio= 0.005, pre_filter= None,
             temporal_normalization = (128.0, 0.02, 0.066666), spectral_whiten= 0.02,
             dist_range = (0.0, 180.0), dist_step= 1.0, daz_range= None, gcd_ev_range= None, gc_center_rect= None,
-            post_folding = True, post_taper_ratio = 0.005, post_filter = ('bandpass', 0.02, 0.066666), post_norm = True, post_cut= None, 
+            post_folding = True, post_taper_ratio = 0.005, post_filter = ('bandpass', 0.02, 0.066666), post_norm = True, post_cut= None,
             log_prefnm= 'cc_mpi_log',
             output_pre_fnm= 'junk', output_format= ['hdf5'] ):
     """
@@ -78,11 +80,10 @@ def main(   fnm_wildcard, tmark, t1, t2, delta, pre_detrend=True, pre_taper_rati
     ### 1. read sac files and pre-processing
     # dependent parameters
     sampling_rate = 1.0/delta
-    npts    = int( np.round((t2-t1)/delta) ) + 1
-    fftsize = npts * 2
-    #nrfft   = fftsize // 2 + 1
-    df      = 1.0/(delta*fftsize)
-    taper_size = int(npts*pre_taper_ratio)
+    npts          = int( np.round((t2-t1)/delta) ) + 1
+    fftsize       = npts * 2
+    df            = 1.0/(delta*fftsize)
+    taper_size    = int(npts*pre_taper_ratio)
     # logging
     if True: # user-defined parameters
         mpi_print_log('Set reading parameters', 0, mpi_log_fid, True)
@@ -117,7 +118,6 @@ def main(   fnm_wildcard, tmark, t1, t2, delta, pre_detrend=True, pre_taper_rati
     w_speedup_i1, w_speedup_i2 = None, None
     if spectral_whiten != None:
         w_speedup_i1, w_speedup_i2 = get_bound(fftsize, sampling_rate, post_filter[1], post_filter[2]+spectral_whiten, critical_parameter)
-
     # logging
     if True: # user-defined parameters
         mpi_print_log('Set whitening parameters', 0, mpi_log_fid, True)
@@ -151,7 +151,6 @@ def main(   fnm_wildcard, tmark, t1, t2, delta, pre_detrend=True, pre_taper_rati
     # dependent parameters
     critical_parameter= 0.001
     cc_index_range = get_bound(fftsize, sampling_rate, post_filter[1], post_filter[2], critical_parameter)
-
     # logging
     if True:
         mpi_print_log('Set post-processing parameters', 0, mpi_log_fid, True)
@@ -190,7 +189,7 @@ def main(   fnm_wildcard, tmark, t1, t2, delta, pre_detrend=True, pre_taper_rati
     #######################################################################################################################################
     ### run
     #######################################################################################################################################
-    directories  = sorted( glob('/'.join(fnm_wildcard.split('/')[:-1] ) ) )
+    directories   = sorted( glob('/'.join(fnm_wildcard.split('/')[:-1] ) ) )
     sac_wildcards = fnm_wildcard.split('/')[-1]
     njobs  = len(directories)
     nchunk = (njobs // mpi_ncpu) if (njobs % mpi_ncpu == 0) else (njobs // mpi_ncpu + 1)
@@ -204,22 +203,17 @@ def main(   fnm_wildcard, tmark, t1, t2, delta, pre_detrend=True, pre_taper_rati
     ###
     if True:
         mpi_print_log('Running...', 0, mpi_log_fid, True)
-    t_rd, t_whiten, t_ccstack = 0.0, 0.0, 0.0
+    t_rd_whiten, t_ccstack = 0.0, 0.0
     for it in directories[mpi_i1: mpi_i2]:
         wildcards = '%s/%s' % (it, sac_wildcards)
-        ### 1. read and pre-processing
+        ### 1. read and pre-processing and whitening
+        t_start = time.time()
+        whitened_spectra_mat, stlo, stla, evlo, evla, az, baz = rd_preproc_whiten_single(wildcards, delta, tmark, t1, t2, npts,
+                                                                                            pre_detrend, pre_taper_ratio, pre_filter,
+                                                                                            fftsize, nrfft_valid, wt_size, wt_f1, wt_f2, wf_size, w_speedup_i1, w_speedup_i2, taper_size)
         #mpi_print_log('Read...', 1, mpi_log_fid, True)
-        t_start = time.time()
-        mat, sampling_rate, stlo, stla, evlo, evla, az, baz = rd_preproc_single(wildcards, delta, tmark, t1, t2, pre_detrend, pre_taper_ratio, pre_filter)
-        nsac = mat.shape[0]
-        local_t_rd = time.time()-t_start
-
-        ### 2. whitening
-        #mpi_print_log('whitening...', 1, mpi_log_fid, True)
-        t_start = time.time()
-        whitened_spectra_mat = whiten_spec(mat, nrfft_valid, sampling_rate, wt_size, wt_f1, wt_f2, wf_size, fftsize, w_speedup_i1, w_speedup_i2, taper_size)
-        local_t_whiten = time.time()-t_start
-        del mat
+        nsac = whitened_spectra_mat.shape[0]
+        local_t_rd_whiten = time.time()-t_start
 
         ### 3.1 cc and stack
         #mpi_print_log('cc&stack...', 1, mpi_log_fid, True)
@@ -239,21 +233,18 @@ def main(   fnm_wildcard, tmark, t1, t2, delta, pre_detrend=True, pre_taper_rati
         local_t_cc = time.time()-t_start
 
         ###
-        t_rd = t_rd + local_t_rd
-        t_whiten = t_whiten + local_t_whiten
+        t_rd_whiten = t_rd_whiten + local_t_rd_whiten
         t_ccstack = t_ccstack + local_t_cc
         if True:
-            tmp = local_t_rd + local_t_whiten + local_t_cc
-            msg = '%s. rd: %.1fs(%d%%)(%d)， whiten: %.1fs(%d%%), ccstack %.1fs(%d%%) (%d)' % (wildcards,
-                    local_t_rd, local_t_rd/tmp*100, nsac,
-                    local_t_whiten, local_t_whiten/tmp*100,
+            tmp = t_rd_whiten+ local_t_cc + 0.001
+            msg = '%s. rd&whiten: %.1fs(%d%%)(%d)，ccstack %.1fs(%d%%) (%d)' % (wildcards,
+                    t_rd_whiten, t_rd_whiten/tmp*100, nsac,
                     local_t_cc, local_t_cc/tmp*100, local_ncc )
             mpi_print_log(msg , 1, mpi_log_fid, True)
     if True:
-        total_loop_time = t_rd + t_whiten + t_ccstack + 1.0e-3 # in case of zeros
-        msg = 'Time consumption summation: (rd: %.1fs(%d%%)， whiten: %.1fs(%d%%), ccstack %.1fs(%d%%))' % (
-                        t_rd, t_rd/total_loop_time*100, 
-                        t_whiten, t_whiten/total_loop_time*100, 
+        total_loop_time = t_rd_whiten + t_ccstack + 1.0e-3 # in case of zeros
+        msg = 'Time consumption summation: (rd&whiten: %.1fs(%d%%)， ccstack %.1fs(%d%%))' % (
+                        t_rd_whiten, t_rd_whiten/total_loop_time*100, 
                         t_ccstack, t_ccstack/total_loop_time*100 )
         mpi_print_log(msg, 1, mpi_log_fid, True)
 
@@ -352,119 +343,81 @@ def mpi_print_log(msg, n_pre, file=sys.stdout, flush=False):
     else:
         print('%s%s' % ('    '*n_pre, msg), file= file, flush= flush )
 
-def init_preproc_parameter(t1, t2, delta, taper_ratio= 0.005):
+def rd_preproc_whiten_single(sacfnm_template, delta, tmark, t1, t2, npts,
+                                pre_detrend, pre_taper_ratio , pre_filter, # preproc args
+                                fftsize, nrfft_valid, wnd_size_t, w_f1, w_f2, wnd_size_freq, speedup_i1, speedup_i2, whiten_taper_ratio # whitening args
+                            ):
     """
-    Init parameter for preprocessing, cross-correlation, stacking, and postprocessing.
-
-    t1, t2, delta: parametering for reading sac files.
-    taper_ratio:   taper ratio between 0.0 and 0.5.
-
-    Return (npts, fftsize, pre_proc_window).
-    npts: npts of input time series
-    fftsize: fftsize will be used in fft for cross-correlation.
-    pre_proc_window: the time window will be used in and after pre-processing.
-    """
-    npts = np.round((t2-t1)/delta) + 1
-    fftsize = npts * 2 # in fact it should be `npts*2-1`. However here we use EVEN fftsize to speed-up fft.
-    #
-    pre_proc_window = tukey_jit(npts, taper_ratio)
-    return npts, fftsize, pre_proc_window
-
-def rd_preproc_single(sacfnm_template, delta, tmark, t1, t2, detrend= True, taper_ratio= 0.005, filter=None ):
-    """
-    Read and preproc many sacfiles given a filename template `sacfnm_template`.
+    Read, preproc, and whiten many sacfiles given a filename template `sacfnm_template`.
     Those sac files can be recorded at many receivers for the same event, or they
     can be recorded at the same receiver from different events.
 
     sacfnm_template: The filename template that contain wildcards. The function with use
                      `glob(sacfnm_template)` to obtain all sac filenames.
     tmark, t1, t2:   The cut time window to read sac time series.
-    detrend:         Set True (default) to enable detrend after reading.
-    taper_ratio:     Set taper ratio (0~0.5) to apply taper after the optional detrend.
-                     Default taper ratui is 0.005.
-    filter:          Filter all the time series. Set `None` to disable filter.
+
+    pre_detrend:     Set True to enable detrend after reading.
+    pre_taper_ratio: Set taper ratio (0~-0.5) to apply taper after the optional detrend.
+    pre_filter:      Filter all the time series. Set `None` to disable filter.
                      The filter can be ('bandpass', f1, f2), ('lowpass', fc, meaningless_f) or
                      ('highpass', fc, meaningless_f).
 
-    Return: (mat, sampling_rate, stlo, stla, evlo, evla, az, baz)
+    Return: (spectra, stlo, stla, evlo, evla, az, baz)
     """
-    ### read
+    ###
     fnms = sorted( glob(sacfnm_template) )
-    tmp = [rd_sac_2(it, tmark, t1, t2, True) for it in fnms]
-    tr  = [it for it in tmp if it != None] # None can exist due to Nan numbers
-    ### important geomeotry values
-    stlo = np.array( [it['stlo'] for it in tr] )
-    stla = np.array( [it['stla'] for it in tr] )
-    evlo = np.array( [it['evlo'] for it in tr] )
-    evla = np.array( [it['evla'] for it in tr] )
-    az   = np.array( [it['az']  for it in tr] )
-    baz  = np.array( [it['baz'] for it in tr] )
-    ### important parameters
+    nsac = len(fnms)
+    ###
     sampling_rate = 1.0/delta
-    npts = tr[0].dat.size
-    nsac = len(tr)
-    ### preprocessing
-    if detrend:
-        for it in tr:
-            it.rmean()
-            it.detrend()
-    if taper_ratio > 1.0e-5:
-        sz_taper = int(npts*taper_ratio)
-        for it in  tr:
-            it.dat = taper(it.dat, sz_taper)
-    if filter != None:
-        btype, f1, f2 = filter
-        for it in tr:
-            it.dat = filter(it.dat, sampling_rate, btype, (f1, f2), 2, 2)
-    ### form the mat
-    mat  = np.zeros((nsac, npts), dtype=np.float32 )
-    for irow in range(nsac):
-        mat[irow] = tr[irow].dat
+    btype, f1, f2 = pre_filter if pre_filter != None else (None, None, None)
+    whiten_taper_length = int(npts * whiten_taper_ratio)
+    spectra = np.zeros((nsac, nrfft_valid), dtype=np.complex64  )
+    stlo = np.zeros(nsac, dtype=np.float32 )
+    stla = np.zeros(nsac, dtype=np.float32 )
+    evlo = np.zeros(nsac, dtype=np.float32 )
+    evla = np.zeros(nsac, dtype=np.float32 )
+    az   = np.zeros(nsac, dtype=np.float32 )
+    baz  = np.zeros(nsac, dtype=np.float32 )
     ###
-    del tr
+    index = 0
+    for it in fnms:
+        st = c_rd_sac(it, tmark, t1, t2, True, True)
+        ## Check if Nan or all zeros.
+        if (st is None) or (not np.any(st.dat)):
+            continue
+        ## preproc
+        if pre_detrend:
+            st.detrend()
+        if pre_taper_ratio > 1.0e-5:
+            st.taper(pre_taper_ratio)
+        if pre_filter != None:
+            st.dat = filter(st.dat, sampling_rate, btype, (f1, f2), 2, 2)
+        ## whiten
+        if wnd_size_t != None:
+            st.dat = temporal_normalize(st.dat, sampling_rate, wnd_size_t, w_f1, w_f2, 1.0e-5, whiten_taper_length)
+        if wnd_size_freq != None:
+            st.dat = frequency_whiten(st.dat, wnd_size_freq, 1.0e-5, speedup_i1, speedup_i2, whiten_taper_length)
+        ## fft and obtain valid values
+        if np.all(np.isfinite(st.dat)) and np.any(st.dat):
+            spectra[index] = (pyfftw.interfaces.numpy_fft.rfft(st.dat, fftsize)[:nrfft_valid] )
+            hdr = st.hdr
+            stlo[index] = hdr.stlo
+            stla[index] = hdr.stla
+            evlo[index] = hdr.evlo
+            evla[index] = hdr.evla
+            az[index]   = hdr.az
+            baz[index]  = hdr.baz
+            index = index + 1
     ###
-    return mat, sampling_rate, stlo, stla, evlo, evla, az, baz
-
-def whiten_spec(mat, nrfft_valid, sampling_rate, wnd_size_t, f1, f2, wnd_size_freq, fftsize, speedup_i1, speedup_i2, taper_length= 0):
-    """
-    Apply #1 temporal normalizatin and #2 spectral whitening to time series.
-
-    mat:           The time series to be processed. Each row is a single time series.
-    nrfft_valid:   The useful size of spectra. Spectra bigger than this size will be abandoned. 
-                   This can help saving huge memory.
-    sampling_rate: Sampling rate in Hz.
-    wnd_size_t:    An odd integer that declares the moving time window size in temporal normalization.
-                   Set `None` to disable temporal normalization
-    f1, f2:        The frequency band used in temporal normalization. The input time series will be
-                   bandpassed in the band (f1, f2) to compute the weight.
-    wnd_size_freq: And odd integer that delcares the moving window size in frequency domain in
-                   spectral whitening.
-                   Set `None` to disable spectral whitening.
-    fftsize:       Since this function would return spectra of the whitened time series. The `fftsize`
-                   will be used in generating the spectra. The spectra length is `fftsize//2+1` since
-                   we use `rfft`.
-    speedup_i1, speedup_i2: two index for speeding up the spectral whitening.
-    Return:        mat_spec
-
-    mat_spec:      The spectra of whitened time series.
-    """
-    #### The return mat
-    nrow  = mat.shape[0]
-    nrfft = fftsize // 2 + 1
-    spec_mat = np.zeros((nrow, nrfft_valid), dtype=np.complex64 )
-    #### temporal normlization
-    if wnd_size_t != None:
-        for irow in range(nrow):
-            mat[irow] = temporal_normalize(mat[irow], sampling_rate, wnd_size_t, f1, f2, 1.0e-5, taper_length)
-    #### spectral whitening
-    if wnd_size_freq != None:
-        for irow in range(nrow):
-            mat[irow] = frequency_whiten(mat[irow], wnd_size_freq, 1.0e-5, speedup_i1, speedup_i2, taper_length)
-    ####
-    for irow in range(nrow):
-        spec_mat[irow] = pyfftw.interfaces.numpy_fft.rfft(mat[irow], fftsize)[:nrfft_valid]
-    ####
-    return spec_mat
+    if index < nsac:
+        spectra = spectra[:index, :]
+        stlo = stlo[:index]
+        stla = stla[:index]
+        evlo = evlo[:index]
+        evla = evla[:index]
+        az   = az[:index]
+        baz  = baz[:index]
+    return spectra, stlo, stla, evlo, evla, az, baz
 
 def get_bound(fftsize, sampling_rate, f1, f2, critical_level= 0.01):
     x = np.zeros(fftsize)
@@ -580,7 +533,7 @@ def ccstack_selection_ev(spec_mat, stack_count, stlo_lst, stla_lst, az_lst, stac
 
 if __name__ == "__main__":
     fnm_wildcard = ''
-    tmark, t1, t2 = '0', 10800, 32400
+    tmark, t1, t2 = -5, 10800, 32400
     delta = 0.1
     pre_detrend=True
     pre_taper_ratio= 0.005
@@ -597,7 +550,7 @@ if __name__ == "__main__":
 
     post_folding = False
     post_taper_ratio = 0.005
-    post_filter = None #('bandpass', 0.02, 0.066666)
+    post_filter = ('bandpass', 0.02, 0.066666)
     post_norm = False
     post_cut = None
 
@@ -672,6 +625,7 @@ E.g.,
             fnm_wildcard = arg
         elif opt in ('-T'):
             tmark, t1, t2 = arg.split('/')
+            tmark = int(tmark)
             t1 = float(t1)
             t2 = float(t2)
         elif opt in ('--pre_detrend'):
