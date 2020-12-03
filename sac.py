@@ -1017,11 +1017,11 @@ def c_rd_sachdr_wildcard(fnm_wildcard=None, lcalda=False, tree=False, log_file=N
         return buf
 
 
-def c_rd_sac(filename, tmark=None, t1=None, t2=None, lcalda=False):
+def c_rd_sac(filename, tmark=None, t1=None, t2=None, lcalda=False, scale=False):
     """
     Read sac given `filename`, and return an object ot sactrace.
     """
-    tmp = c_sactrace(filename, tmark=tmark, t1=t1, t2=t2, lcalda=lcalda)
+    tmp = c_sactrace(filename, tmark, t1, t2, lcalda, scale)
     if tmp.dat is None:
         return None
     return tmp
@@ -1095,20 +1095,21 @@ class c_sactrace:
     The 2st, `c_sactrace.dat`, is a numpy.ndarray. You can manipulate it, and we suggest to 
     use `dtype=np.float32` when manipulating it.
     """
-    def __init__(self, fnm=None, tmark=None, t1=None, t2=None, lcalda=False):
+    def __init__(self, fnm=None, tmark=None, t1=None, t2=None, lcalda=False, scale=False):
         """
         fnm: the sac filename that is a string.
         tmark:  default is None. can be -5, -3, 0, 1,...9 for 'b', 'o', 't0', 't1',...,'t9'.
         t1, t2: defaults are None. the time window to cut when reading.
         lcalda: default is False, and set True to enable the lcalda when reading.
+        scale:  normalize the time series and put the inverse of the scaling factor into hdr.scale
         """
         self.hdr = c_dup_sachdr( ffi.addressof(libsac.sachdr_null) )
         self.dat  = None
         if fnm:
             if tmark == None or t1 == None and t2 == None:
-                self.read(fnm)
+                self.read(fnm, lcalda, scale)
             else:
-                self.read2(fnm, tmark, t1, t2)
+                self.read2(fnm, tmark, t1, t2, lcalda, scale)
     def duplicate(self):
         """
         Return a new object that is the duplication of this object.
@@ -1117,11 +1118,11 @@ class c_sactrace:
         obj.hdr = c_dup_sachdr(self.hdr)
         obj.dat = deepcopy(self.dat)
         return obj
-    def read(self, fnm, lcalda=False):
+    def read(self, fnm, lcalda=False, scale=False ):
         """
         Read from a file.
         """
-        buf = libsac.read_sac(fnm.encode('utf8'), self.hdr)
+        buf = libsac.read_sac(fnm.encode('utf8'), self.hdr, scale)
         if buf == ffi.NULL: ## NAN happend in the data
             print('Nan in sac file: %s' % (fnm), file=sys.stderr )
             return
@@ -1135,12 +1136,12 @@ class c_sactrace:
             hdr.gcarc = haversine(hdr.stlo, hdr.stla, hdr.evlo, hdr.evla)
             hdr.baz   = azimuth(  hdr.stlo, hdr.stla, hdr.evlo, hdr.evla)
             hdr.az    = azimuth(  hdr.evlo, hdr.evla, hdr.stlo, hdr.stla)
-    def read2(self, fnm, tmark, t1, t2, lcalda=False):
+    def read2(self, fnm, tmark, t1, t2, lcalda=False, scale=False ):
         """
         Read from a file with cutting method.
         tmark can be -5, -3, 0, 1,...9 for 'b', 'o', 't0', 't1',...,'t9'.
         """
-        buf = libsac.read_sac2(fnm.encode('utf8'), self.hdr, tmark, t1, t2)
+        buf = libsac.read_sac2(fnm.encode('utf8'), self.hdr, tmark, t1, t2, scale)
         if buf == ffi.NULL: ## NAN happend in the data
             print('Nan in sac file: %s' % (fnm), file=sys.stderr )
             return

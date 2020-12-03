@@ -1,6 +1,8 @@
 #ifndef __SAC_IO__
 #define __SAC_IO__
 
+#include <stdbool.h>
+
 typedef struct S_SACHDR
 {
     float delta;          /* RF time increment, sec    */
@@ -206,9 +208,37 @@ extern const  int   USERN;
 extern const  int  HD_SIZE;
 
 
+
+//    Read sac header.
+//    filename: the input
+//    hdr:      the obtained header
+//
+//    return: 0 for success or -1 for failure.
 int   read_sachead(const char *filename, SACHDR *hdr);
-float* read_sac(const char *filename, SACHDR *hdr);
-float* read_sac2(const char *filename, SACHDR *hdr, int tmarker, float t1, float t2);
+//    Read sac file for both the header and the time series
+//    filename: the input
+//    hdr     : the obtained header
+//    scale   : scale the time series by normalize the amplitude by setting the absolute
+//              amplitude in `hdr.scale`.
+//
+//    return: None-NULL for the pointer that point to the memory for the trace.
+//            Or NULL for the failure. The failure can be due to:
+//            #1. Wrong sac header info or time series size.
+//            #2. Nan numbers or purely zeros in the time series.
+float* read_sac(const char *filename, SACHDR *hdr, bool scale);
+//    Read sac file for both the header and the time series with a cutting window.
+//    filename: the input
+//    hdr     : the obtained header
+//    tmark, t1, t2: the cutting window
+//    scale   : scale the time series by normalize the amplitude by setting the absolute
+//              amplitude in `hdr.scale`.
+//
+//    return: None-NULL for the pointer that point to the memory for the trace.
+//            Or NULL for the failure. The failure can be due to:
+//            #1. Wrong sac header info or time series size.
+//            #2. Nan numbers or purely zeros in the time series.
+//            #3. invalid cutting window
+float* read_sac2(const char *filename, SACHDR *hdr, int tmarker, float t1, float t2, bool scale);
 
 
 int   write_sac(const char *filename, const SACHDR *hdr, const float *ptr);
