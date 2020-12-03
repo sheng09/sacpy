@@ -212,37 +212,40 @@ extern const  int  HD_SIZE;
 //    Read sac header.
 //    filename: the input
 //    hdr:      the obtained header
+//    verbose:  true to enale print warning/err message, or false to keep silent
 //
 //    return: 0 for success or -1 for failure.
-int   read_sachead(const char *filename, SACHDR *hdr);
+int   read_sachead(const char *filename, SACHDR *hdr, bool verbose);
 //    Read sac file for both the header and the time series
 //    filename: the input
 //    hdr     : the obtained header
 //    scale   : scale the time series by normalize the amplitude by setting the absolute
 //              amplitude in `hdr.scale`.
+//    verbose:  true to enale print warning/err message, or false to keep silent
 //
 //    return: None-NULL for the pointer that point to the memory for the trace.
 //            Or NULL for the failure. The failure can be due to:
 //            #1. Wrong sac header info or time series size.
 //            #2. Nan numbers or purely zeros in the time series.
-float* read_sac(const char *filename, SACHDR *hdr, bool scale);
+float* read_sac(const char *filename, SACHDR *hdr, bool scale, bool verbose);
 //    Read sac file for both the header and the time series with a cutting window.
 //    filename: the input
 //    hdr     : the obtained header
 //    tmark, t1, t2: the cutting window
 //    scale   : scale the time series by normalize the amplitude by setting the absolute
 //              amplitude in `hdr.scale`.
+//    verbose:  true to enale print warning/err message, or false to keep silent
 //
 //    return: None-NULL for the pointer that point to the memory for the trace.
 //            Or NULL for the failure. The failure can be due to:
 //            #1. Wrong sac header info or time series size.
 //            #2. Nan numbers or purely zeros in the time series.
 //            #3. invalid cutting window
-float* read_sac2(const char *filename, SACHDR *hdr, int tmarker, float t1, float t2, bool scale);
+float* read_sac2(const char *filename, SACHDR *hdr, int tmarker, float t1, float t2, bool scale, bool verbose);
 
 
-int   write_sac(const char *filename, const SACHDR *hdr, const float *ptr);
-int   write_sac2(const char *filename, int npts, float b, float delta, const float *ptr);
+int   write_sac(const char *filename, const SACHDR *hdr, const float *ptr, bool verbose);
+int   write_sac2(const char *filename, int npts, float b, float delta, const float *ptr, bool verbose);
 
 
 SACHDR sachdr_time(float dt, int npts, float b);

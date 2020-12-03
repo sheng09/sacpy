@@ -111,17 +111,17 @@ const SACHDR sachdr_null = {
   { '-','1','2','3','4','5',' ',' ' }, { '-','1','2','3','4','5',' ',' ' },
   { '-','1','2','3','4','5',' ',' ' }
 };
-int read_sachead(const char *name, SACHDR * hdr)
+int read_sachead(const char *name, SACHDR * hdr, bool verbose)
 {
     FILE *fp = NULL;
     if ((fp = fopen(name, "rb")) == NULL)
     {
-        fprintf(stderr, "Unable to open %s in read_sachead(...)\n",name);
+        if(verbose) fprintf(stderr, "Unable to open %s in read_sachead(...)\n",name);
         return -1;
     }
     if (fread(hdr, sizeof(SACHDR), 1, fp) != 1)
     {
-        fprintf(stderr, "Error in reading SAC header %s\n",name);
+        if(verbose) fprintf(stderr, "Error in reading SAC header from %s in read_sachead(...)\n",name);
         fclose(fp);
         return -1;
     }
@@ -131,17 +131,18 @@ int read_sachead(const char *name, SACHDR * hdr)
     fclose(fp);
     return 0;
 }
-float* read_sac(const char *name, SACHDR *hdr, bool scale)
+float* read_sac(const char *name, SACHDR *hdr, bool scale, bool verbose)
 {
     FILE  *fp=NULL;
     if ((fp = fopen(name, "rb")) == NULL)
     {
-        fprintf(stderr, "Unable to open %s in read_sac(...)\n",name);
+        if(verbose) fprintf(stderr, "Error unable to open %s in read_sac(...)\n", name);
         return NULL;
     }
     if (fread(hdr, sizeof(SACHDR), 1, fp) != 1)
     {
-        fprintf(stderr, "Error in reading SAC header %s\n",name);
+        if(verbose) fprintf(stderr, "Error in reading SAC header from %s in read_sac(...)\n", name);
+        fclose(fp);
         return NULL;
     }
     int swapflag = 0;
@@ -155,12 +156,14 @@ float* read_sac(const char *name, SACHDR *hdr, bool scale)
     float *ptr = NULL;
     if ((ptr = (float *) malloc(size*sizeof(float) ) ) == NULL)
     {
-        fprintf(stderr, "Error in allocating memory for reading %s\n",name);
+        if(verbose) fprintf(stderr, "Error in allocating memory for reading %s in read_sac(...)\n", name);
+        fclose(fp);
         return NULL;
     }
     if (fread((char *) ptr, size*sizeof(float), 1, fp) != 1)
     {
-        fprintf(stderr, "Error in reading SAC data %s\n",name);
+        if(verbose) fprintf(stderr, "Error in reading SAC data from %s in read_sac(...)\n", name);
+        fclose(fp);
         return NULL;
     }
     fclose(fp);
@@ -180,6 +183,7 @@ float* read_sac(const char *name, SACHDR *hdr, bool scale)
     if (nan_number == 1)
     {
         free(ptr);
+        if(verbose) fprintf(stderr, "Error Nan/Inf numbers in reading %s in read_sac(...)\n", name);
         return NULL;
     }
     // Scale and set the hdr.scale
@@ -205,25 +209,26 @@ float* read_sac(const char *name, SACHDR *hdr, bool scale)
     }
     return ptr;
 }
-float* read_sac2(const char *name, SACHDR *hdr, int tmark, float t1, float t2, bool scale)
+float* read_sac2(const char *name, SACHDR *hdr, int tmark, float t1, float t2, bool scale, bool verbose)
 {
     if (t1>t2)
     {
-        fprintf(stderr, "Err. Invalid cutting window in read_sac2(...). t1(%f)>t2(%f) %s\n", t1, t2, name);
+        if(verbose) fprintf(stderr, "Error invalid cutting window in read_sac2(...). t1(%f)>t2(%f)\n", t1, t2 );
         return NULL;
     }
     //
     FILE  *fp = NULL;
     if ((fp = fopen(name, "rb")) == NULL)
     {
-        fprintf(stderr, "Unable to open %s in read_sac2(...)\n",name);
+        if(verbose) fprintf(stderr, "Error unable to open %s in read_sac2(...)\n", name);
         return NULL;
     }
     // read sac hdr
     int swapflag = 0;
     if (fread(hdr, sizeof(SACHDR), 1, fp) != 1)
     {
-        fprintf(stderr, "Error in reading SAC header %s\n",name);
+        if(verbose) fprintf(stderr, "Error in reading SAC header from %s in read_sac2(...)\n", name);
+        fclose(fp);
         return NULL;
     }
     if (hdr->nvhdr > 6 || hdr->nvhdr < 0)
@@ -239,13 +244,15 @@ float* read_sac2(const char *name, SACHDR *hdr, int tmark, float t1, float t2, b
         tref = *( (float *) hdr + 10 + tmark);
         if (tref==-12345.)
         {
-            fprintf(stderr,"Time mark undefined in %s\n",name);
+            if(verbose) fprintf(stderr,"Error time mark undefined in %s in read_sac2(...)\n", name);
+            fclose(fp);
             return NULL;
         }
     }
     else
     {
-        fprintf(stderr,"Wrong Time mark %d\n", tmark);
+        if(verbose) fprintf(stderr,"Error Wrong Time mark %d in read_sac2(...)\n", tmark);
+        fclose(fp);
         return NULL;
     }
     t1 += tref; // t1 can be smaller than b. Zeros will be padded in prefix when necessary.
@@ -253,7 +260,8 @@ float* read_sac2(const char *name, SACHDR *hdr, int tmark, float t1, float t2, b
     // Check if the cutting window is valid
     if (t1> hdr->e || t2 < hdr->b)
     {
-        fprintf(stderr, "Err. the cutting window in read_sac2(...) does not apply to  %s\n", name);
+        if(verbose) fprintf(stderr, "Error the cutting window does not apply to %s in read_sac2(...)\n", name);
+        fclose(fp);
         return NULL;
     }
     //
@@ -269,17 +277,20 @@ float* read_sac2(const char *name, SACHDR *hdr, int tmark, float t1, float t2, b
     float * rd_ptr= NULL;
     if ( (ptr = (float *) calloc(new_npts, sizeof(float) ) ) ==NULL)
     {
-         fprintf(stderr, "Error in allocating memory for reading %s n=%ld\n", name, new_npts);
-         return NULL;
+        if(verbose) fprintf(stderr, "Error in allocating memory for reading %s n=%ld in read_sac2(...)\n", name, new_npts);
+        fclose(fp);
+        return NULL;
     }
     // Set parameter for reading
-    int rd_idx_1 = (idx_t1>0)        ? idx_t1 : 0;          // position to start in reading from file
-    int rd_idx_2 = (idx_t2<old_npts) ? idx_t2 : old_npts;   // position to stop  in reading from file
-    int rd_npts = rd_idx_2- rd_idx_1;                        // size of block to read
+    size_t rd_idx_1 = (idx_t1>0)        ? idx_t1 : 0;          // position to start in reading from file
+    size_t rd_idx_2 = (idx_t2<old_npts) ? idx_t2 : old_npts;   // position to stop  in reading from file
+    size_t rd_npts = rd_idx_2- rd_idx_1;                        // size of block to read
     // double-check if the reading window is valid
     if (rd_idx_1> old_npts || rd_idx_2 < 0)
     {
+        if(verbose) fprintf(stderr, "Error the cutting window (index) does not apply to %s in read_sac2(...)\n", name);
         free(ptr);
+        fclose(fp);
         return NULL;
     }
     //printf("rd: %d %d, idx_t12 %d %d, t12 %f %f\n", rd_idx_1, rd_idx_2, idx_t1, idx_t2, t1, t2);
@@ -288,7 +299,8 @@ float* read_sac2(const char *name, SACHDR *hdr, int tmark, float t1, float t2, b
     {
         if (fseek(fp,idx_t1*sizeof(float),SEEK_CUR) < 0)
         {
-            fprintf(stderr, "error in seek %s\n",name);
+            if(verbose) fprintf(stderr, "Error in seek %s in read_sac2(...)\n", name);
+            fclose(fp);
             free(ptr);
             return NULL;
         }
@@ -300,7 +312,8 @@ float* read_sac2(const char *name, SACHDR *hdr, int tmark, float t1, float t2, b
     }
     if (fread( rd_ptr, sizeof(float), rd_npts, fp) != rd_npts)
     {
-        fprintf(stderr, "Error in reading SAC data %s\n",name);
+        if(verbose) fprintf(stderr, "Error in reading SAC data %s in read_sac2(...)\n", name);
+        fclose(fp);
         free(ptr);
         return NULL;
     }
@@ -326,6 +339,7 @@ float* read_sac2(const char *name, SACHDR *hdr, int tmark, float t1, float t2, b
     }
     if (nan_number == 1)
     {
+        if(verbose) fprintf(stderr, "Error Nan/Inf numbers found in reading %s in read_sac2(...)\n", name);
         free(ptr);
         return NULL;
     }
@@ -353,7 +367,7 @@ float* read_sac2(const char *name, SACHDR *hdr, int tmark, float t1, float t2, b
     return ptr;
 }
 
-int write_sac(const char *name, const SACHDR *hdr, const float *ptr)
+int write_sac(const char *name, const SACHDR *hdr, const float *ptr, bool verbose)
 {
     FILE *fp = NULL;
     unsigned size;
@@ -363,26 +377,26 @@ int write_sac(const char *name, const SACHDR *hdr, const float *ptr)
     if (hdr->iftype == IXY) size *= 2;
     if ( !error && (fp = fopen(name, "wb")) == NULL )
     {
-        fprintf(stderr,"Error in opening file for writing %s\n",name);
-        exit(-1);
+        if(verbose) fprintf(stderr,"Error in opening file for writing %s\n",name);
+        error = 1;
     }
     if ( !error && (return_value=fwrite(hdr, sizeof(SACHDR), 1, fp) )!= 1 )
     {
-        fprintf(stderr,"Error in writing SAC header for writing %s return: %d memsize: %u\n",name, return_value, size);
-        exit(-1);
+        if(verbose) fprintf(stderr,"Error in writing SAC header for writing %s return: %d memsize: %u\n",name, return_value, size);
+        error = 1;
     }
     if ( !error && (return_value=fwrite(ptr, size, 1, fp) ) != 1 )
     {
-        fprintf(stderr,"Error in writing SAC data for writing in write_sac(...) %s return: %d memsize: %u\n",name, return_value, size);
-        exit(-1);
+        if(verbose) fprintf(stderr,"Error in writing SAC data for writing in write_sac(...) %s return: %d memsize: %u\n",name, return_value, size);
+        error = 1;
     }
     fclose(fp);
     return (error==0) ? 0 : -1;
 }
-int write_sac2(const char *name, int npts, float b, float delta, const float *ptr)
+int write_sac2(const char *name, int npts, float b, float delta, const float *ptr, bool verbose)
 {
     SACHDR hdr = sachdr_time(delta, npts, b);
-    return write_sac(name, &hdr, ptr);
+    return write_sac(name, &hdr, ptr, verbose);
 }
 
 SACHDR sachdr_time(float dt, int npts, float b)

@@ -941,7 +941,7 @@ class sactrace:
 ###
 #  dependend methods based on C libraries
 ###
-def c_rd_sachdr(filename=None, lcalda=False):
+def c_rd_sachdr(filename=None, lcalda=False, verbose=False):
     """
     Read and return a sac header struct given the filename.
 
@@ -949,7 +949,7 @@ def c_rd_sachdr(filename=None, lcalda=False):
     You can use the methods `new_hdr = c_dup_sachdr(old_hdr)` to copy/duplicate and generate a new object.
     """
     hdr = ffi.new('SACHDR *')
-    libsac.read_sachead(filename.encode('utf8'), hdr )
+    libsac.read_sachead(filename.encode('utf8'), hdr, verbose)
     if lcalda == True and hdr.lcalda == 0:
         hdr.lcalda = 1
         hdr.gcarc = haversine(hdr.stlo, hdr.stla, hdr.evlo, hdr.evla)
@@ -1017,21 +1017,21 @@ def c_rd_sachdr_wildcard(fnm_wildcard=None, lcalda=False, tree=False, log_file=N
         return buf
 
 
-def c_rd_sac(filename, tmark=None, t1=None, t2=None, lcalda=False, scale=False):
+def c_rd_sac(filename, tmark=None, t1=None, t2=None, lcalda=False, scale=False, verbose=False):
     """
     Read sac given `filename`, and return an object ot sactrace.
     """
-    tmp = c_sactrace(filename, tmark, t1, t2, lcalda, scale)
+    tmp = c_sactrace(filename, tmark, t1, t2, lcalda, scale, verbose)
     if tmp.dat is None:
         return None
     return tmp
-def c_rd_sac_mat(fnms, tmark, t1, t2, lcalda=False, norm=None, filter=None):
+def c_rd_sac_mat(fnms, tmark, t1, t2, lcalda=False, norm=None, filter=None, scale=False, verbose=False):
     """
     Return (hdrs, mat), where `hdrs` is a list of sachdr and mat is the matrix of data.
     If a sac file does not exist, then zeros will be used to fill the row in the matrix `mat`,
     and None will be used for the element in the `hdrs`.
     """
-    tmp = [c_sactrace(it, tmark=tmark, t1=t1, t2=t2, lcalda=lcalda) if os_path_exists(it) else None for it in fnms ]
+    tmp = [c_sactrace(it, tmark, t1, t2, lcalda, scale, verbose) if os_path_exists(it) else None for it in fnms ]
     buf = [it for it in tmp if it != None]
     ###
     if filter:
@@ -1056,7 +1056,7 @@ def c_rd_sac_mat(fnms, tmark, t1, t2, lcalda=False, norm=None, filter=None):
     ###
     del buf
     return hdrs, mat
-def c_wrt_sac(filename, xs, hdr):
+def c_wrt_sac(filename, xs, hdr, verbose):
     """
     Write.
     """
@@ -1065,15 +1065,15 @@ def c_wrt_sac(filename, xs, hdr):
     hdr.e = hdr.b + hdr.delta * (np_arr.size - 1)
     ###
     cffi_arr = ffi.cast('float*', np_arr.ctypes.data )
-    libsac.write_sac(filename.encode('utf8'), hdr, cffi_arr)
-def c_wrt_sac2(filename, xs, b, delta):
+    libsac.write_sac(filename.encode('utf8'), hdr, cffi_arr, verbose)
+def c_wrt_sac2(filename, xs, b, delta, verbose):
     """
     Write.
     """
     np_arr = np.array(xs, dtype= np.float32 )
     ###
     cffi_arr = ffi.cast('float*', np_arr.ctypes.data )
-    libsac.write_sac2(filename.encode('utf8'), np_arr.size, b, delta, cffi_arr )
+    libsac.write_sac2(filename.encode('utf8'), np_arr.size, b, delta, cffi_arr, verbose )
 def c_truncate_sac(c_sactr, t1, t2):
     """
     Truncate an object of `c_sactrace` with the time window (t1, t2).
@@ -1095,7 +1095,7 @@ class c_sactrace:
     The 2st, `c_sactrace.dat`, is a numpy.ndarray. You can manipulate it, and we suggest to 
     use `dtype=np.float32` when manipulating it.
     """
-    def __init__(self, fnm=None, tmark=None, t1=None, t2=None, lcalda=False, scale=False):
+    def __init__(self, fnm=None, tmark=None, t1=None, t2=None, lcalda=False, scale=False, verbose=False):
         """
         fnm: the sac filename that is a string.
         tmark:  default is None. can be -5, -3, 0, 1,...9 for 'b', 'o', 't0', 't1',...,'t9'.
@@ -1107,9 +1107,9 @@ class c_sactrace:
         self.dat  = None
         if fnm:
             if tmark == None or t1 == None and t2 == None:
-                self.read(fnm, lcalda, scale)
+                self.read(fnm, lcalda, scale, verbose)
             else:
-                self.read2(fnm, tmark, t1, t2, lcalda, scale)
+                self.read2(fnm, tmark, t1, t2, lcalda, scale, verbose)
     def duplicate(self):
         """
         Return a new object that is the duplication of this object.
@@ -1118,13 +1118,12 @@ class c_sactrace:
         obj.hdr = c_dup_sachdr(self.hdr)
         obj.dat = deepcopy(self.dat)
         return obj
-    def read(self, fnm, lcalda=False, scale=False ):
+    def read(self, fnm, lcalda=False, scale=False, verbose=False ):
         """
         Read from a file.
         """
-        buf = libsac.read_sac(fnm.encode('utf8'), self.hdr, scale)
+        buf = libsac.read_sac(fnm.encode('utf8'), self.hdr, scale, verbose)
         if buf == ffi.NULL: ## NAN happend in the data
-            print('Nan in sac file: %s' % (fnm), file=sys.stderr )
             return
         self.dat = deepcopy( np.frombuffer(ffi.buffer(buf, 4*self.hdr.npts), dtype=np.float32 )[:] )
         ffi.gc(buf, libsac.free)
@@ -1136,14 +1135,13 @@ class c_sactrace:
             hdr.gcarc = haversine(hdr.stlo, hdr.stla, hdr.evlo, hdr.evla)
             hdr.baz   = azimuth(  hdr.stlo, hdr.stla, hdr.evlo, hdr.evla)
             hdr.az    = azimuth(  hdr.evlo, hdr.evla, hdr.stlo, hdr.stla)
-    def read2(self, fnm, tmark, t1, t2, lcalda=False, scale=False ):
+    def read2(self, fnm, tmark, t1, t2, lcalda=False, scale=False, verbose=False ):
         """
         Read from a file with cutting method.
         tmark can be -5, -3, 0, 1,...9 for 'b', 'o', 't0', 't1',...,'t9'.
         """
-        buf = libsac.read_sac2(fnm.encode('utf8'), self.hdr, tmark, t1, t2, scale)
+        buf = libsac.read_sac2(fnm.encode('utf8'), self.hdr, tmark, t1, t2, scale, verbose)
         if buf == ffi.NULL: ## NAN happend in the data
-            print('Nan in sac file: %s' % (fnm), file=sys.stderr )
             return
         self.dat = deepcopy( np.frombuffer(ffi.buffer(buf, 4*self.hdr.npts), dtype=np.float32 )[:] )
         ffi.gc(buf, libsac.free)
@@ -1155,14 +1153,14 @@ class c_sactrace:
             hdr.gcarc = haversine(hdr.stlo, hdr.stla, hdr.evlo, hdr.evla)
             hdr.baz   = azimuth(  hdr.stlo, hdr.stla, hdr.evlo, hdr.evla)
             hdr.az    = azimuth(  hdr.evlo, hdr.evla, hdr.stlo, hdr.stla)
-    def write(self, fnm):
+    def write(self, fnm, verbose=False):
         """
         Write to a file in sac formate.
         """
         hdr = self.hdr
         hdr.e = hdr.b + hdr.delta * (hdr.npts - 1)
         cffi_arr = ffi.cast('float*', self.dat.astype(np.float32).ctypes.data )
-        libsac.write_sac(fnm.encode('utf8'), self.hdr, cffi_arr)
+        libsac.write_sac(fnm.encode('utf8'), self.hdr, cffi_arr, verbose)
     def get_time_axis(self):
         return np.arange(self.dat.size) * self.hdr.delta + self.hdr.b
     def plot(self, ax=None, show=True, **kwargs):
