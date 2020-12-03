@@ -194,7 +194,7 @@ def main(   fnm_wildcard, tmark, t1, t2, delta, pre_detrend=True, pre_taper_rati
     time_rd_whiten, time_ccstack = 0.0, 0.0
     for idx_job, it in enumerate(local_directories):
         wildcards = '%s/%s' % (it, sac_wildcards)
-        mpi_print_log(mpi_log_fid, 1, True, '-',idx_job+1, wildcards, end='...')
+        mpi_print_log(mpi_log_fid, 1, True, '-',idx_job+1, wildcards)
         ### 1. read and pre-processing and whitening
         t_start = time.time()
         whitened_spectra_mat, stlo, stla, evlo, evla, az, baz = rd_preproc_whiten_single(wildcards, delta, tmark, t1, t2, npts,
@@ -382,7 +382,8 @@ def rd_preproc_whiten_single(sacfnm_template, delta, tmark, t1, t2, npts,
     for it in fnms:
         st = c_rd_sac(it, tmark, t1, t2, True, True)
         ## Check if Nan or all zeros.
-        if (st is None) or (not np.any(st.dat)):
+        if (st is None) or (not st.dat.any() ):
+            mpi_print_log(mpi_log_fid, 2, True, '+ Failure reading', it)
             continue
         ## preproc
         try:
@@ -393,7 +394,7 @@ def rd_preproc_whiten_single(sacfnm_template, delta, tmark, t1, t2, npts,
             if pre_filter != None:
                 st.dat = filter(st.dat, sampling_rate, btype, (f1, f2), 2, 2)
         except:
-            mpi_print_log(mpi_log_fid, 2, True, '+ Preproc failure', it)
+            mpi_print_log(mpi_log_fid, 2, True, '+ Failure preproc', it)
             continue
         ## whiten
         try:
@@ -402,19 +403,22 @@ def rd_preproc_whiten_single(sacfnm_template, delta, tmark, t1, t2, npts,
             if wnd_size_freq != None:
                 st.dat = frequency_whiten(st.dat, wnd_size_freq, 1.0e-5, speedup_i1, speedup_i2, whiten_taper_length)
         except:
-            mpi_print_log(mpi_log_fid, 2, True, '+ Whitening failure', it)
+            mpi_print_log(mpi_log_fid, 2, True, '+ Failure whitening', it)
+            continue
+        ## check if the whitened data is valid
+        if (not st.dat.any()) or (np.isnan(st.dat).any() ):
+            mpi_print_log(mpi_log_fid, 2, True, '+ Failure whitening', it)
             continue
         ## fft and obtain valid values
-        if np.all(np.isfinite(st.dat)) and np.any(st.dat):
-            spectra[index] = (pyfftw.interfaces.numpy_fft.rfft(st.dat, fftsize)[:nrfft_valid] )
-            hdr = st.hdr
-            stlo[index] = hdr.stlo
-            stla[index] = hdr.stla
-            evlo[index] = hdr.evlo
-            evla[index] = hdr.evla
-            az[index]   = hdr.az
-            baz[index]  = hdr.baz
-            index = index + 1
+        spectra[index] = (pyfftw.interfaces.numpy_fft.rfft(st.dat, fftsize)[:nrfft_valid] )
+        hdr = st.hdr
+        stlo[index] = hdr.stlo
+        stla[index] = hdr.stla
+        evlo[index] = hdr.evlo
+        evla[index] = hdr.evla
+        az[index]   = hdr.az
+        baz[index]  = hdr.baz
+        index = index + 1
     ###
     if index < nsac:
         spectra = spectra[:index, :]
