@@ -201,6 +201,11 @@ def main(   fnm_wildcard, tmark, t1, t2, delta, pre_detrend=True, pre_taper_rati
                                                                                             pre_detrend, pre_taper_ratio, pre_filter,
                                                                                             fftsize, nrfft_valid, wt_size, wt_f1, wt_f2, wf_size, w_speedup_i1, w_speedup_i2, taper_size,
                                                                                             mpi_log_fid)
+        ### check if the obtained whitened_spectra_mat is valid
+        if whitened_spectra_mat is None:
+            mpi_print_log(mpi_log_fid, 2, True, '+ None of sac time series are valid, and hence we jump over to the next.' )
+            continue
+        ###
         nsac = stlo.size
         local_time_rd_whiten = time.time()-t_start
 
@@ -225,8 +230,8 @@ def main(   fnm_wildcard, tmark, t1, t2, delta, pre_detrend=True, pre_taper_rati
         time_ccstack = time_ccstack + local_time_ccstack
         if True:
             tmp = local_time_rd_whiten+ local_time_ccstack + 0.001
-            mpi_print_log(mpi_log_fid, 1, False,
-                            'rd&whiten: %.1fs(%d%%)(%d)，ccstack %.1fs(%d%%) (%d)' % (
+            mpi_print_log(mpi_log_fid, 2, False,
+                            '+ rd&whiten: %.1fs(%d%%)(%d)，ccstack %.1fs(%d%%) (%d)' % (
                             local_time_rd_whiten, time_rd_whiten/tmp*100, nsac,
                             local_time_ccstack,   local_time_ccstack/tmp*100, local_ncc ) )
     if True:
@@ -383,7 +388,7 @@ def rd_preproc_whiten_single(sacfnm_template, delta, tmark, t1, t2, npts,
         st = c_rd_sac(it, tmark, t1, t2, True, True)
         ## Check if Nan or all zeros.
         if (st is None) or (not st.dat.any() ):
-            mpi_print_log(mpi_log_fid, 2, True, '+ Failure reading', it)
+            mpi_print_log(mpi_log_fid, 2, True, '+ Failure reading:', it)
             continue
         ## preproc
         try:
@@ -394,7 +399,7 @@ def rd_preproc_whiten_single(sacfnm_template, delta, tmark, t1, t2, npts,
             if pre_filter != None:
                 st.dat = filter(st.dat, sampling_rate, btype, (f1, f2), 2, 2)
         except:
-            mpi_print_log(mpi_log_fid, 2, True, '+ Failure preproc', it)
+            mpi_print_log(mpi_log_fid, 2, True, '+ Failure preproc:', it)
             continue
         ## whiten
         try:
@@ -403,11 +408,11 @@ def rd_preproc_whiten_single(sacfnm_template, delta, tmark, t1, t2, npts,
             if wnd_size_freq != None:
                 st.dat = frequency_whiten(st.dat, wnd_size_freq, 1.0e-5, speedup_i1, speedup_i2, whiten_taper_length)
         except:
-            mpi_print_log(mpi_log_fid, 2, True, '+ Failure whitening', it)
+            mpi_print_log(mpi_log_fid, 2, True, '+ Failure whitening:', it)
             continue
         ## check if the whitened data is valid
         if (not st.dat.any()) or (np.isnan(st.dat).any() ):
-            mpi_print_log(mpi_log_fid, 2, True, '+ Failure whitening', it)
+            mpi_print_log(mpi_log_fid, 2, True, '+ Failure whitening:', it)
             continue
         ## fft and obtain valid values
         spectra[index] = (pyfftw.interfaces.numpy_fft.rfft(st.dat, fftsize)[:nrfft_valid] )
@@ -420,7 +425,7 @@ def rd_preproc_whiten_single(sacfnm_template, delta, tmark, t1, t2, npts,
         baz[index]  = hdr.baz
         index = index + 1
     ###
-    if index < nsac:
+    if 0 < index < nsac:
         spectra = spectra[:index, :]
         stlo = stlo[:index]
         stla = stla[:index]
@@ -428,7 +433,10 @@ def rd_preproc_whiten_single(sacfnm_template, delta, tmark, t1, t2, npts,
         evla = evla[:index]
         az   = az[:index]
         baz  = baz[:index]
-    return spectra, stlo, stla, evlo, evla, az, baz
+    if index > 0:
+        return spectra, stlo, stla, evlo, evla, az,   baz
+    else:
+        return None,    None, None, None, None, None, None
 
 def get_bound(fftsize, sampling_rate, f1, f2, critical_level= 0.01):
     x = np.zeros(fftsize)
