@@ -199,7 +199,8 @@ def main(   fnm_wildcard, tmark, t1, t2, delta, pre_detrend=True, pre_taper_rati
         t_start = time.time()
         whitened_spectra_mat, stlo, stla, evlo, evla, az, baz = rd_preproc_whiten_single(wildcards, delta, tmark, t1, t2, npts,
                                                                                             pre_detrend, pre_taper_ratio, pre_filter,
-                                                                                            fftsize, nrfft_valid, wt_size, wt_f1, wt_f2, wf_size, w_speedup_i1, w_speedup_i2, taper_size)
+                                                                                            fftsize, nrfft_valid, wt_size, wt_f1, wt_f2, wf_size, w_speedup_i1, w_speedup_i2, taper_size,
+                                                                                            mpi_log_fid)
         nsac = stlo.size
         local_time_rd_whiten = time.time()-t_start
 
@@ -343,8 +344,8 @@ def mpi_print_log(file, n_pre, flush, *objects, end='\n'):
 
 def rd_preproc_whiten_single(sacfnm_template, delta, tmark, t1, t2, npts,
                                 pre_detrend, pre_taper_ratio , pre_filter, # preproc args
-                                fftsize, nrfft_valid, wnd_size_t, w_f1, w_f2, wnd_size_freq, speedup_i1, speedup_i2, whiten_taper_ratio # whitening args
-                            ):
+                                fftsize, nrfft_valid, wnd_size_t, w_f1, w_f2, wnd_size_freq, speedup_i1, speedup_i2, whiten_taper_ratio, # whitening args
+                                mpi_log_fid):
     """
     Read, preproc, and whiten many sacfiles given a filename template `sacfnm_template`.
     Those sac files can be recorded at many receivers for the same event, or they
@@ -384,17 +385,25 @@ def rd_preproc_whiten_single(sacfnm_template, delta, tmark, t1, t2, npts,
         if (st is None) or (not np.any(st.dat)):
             continue
         ## preproc
-        if pre_detrend:
-            st.detrend()
-        if pre_taper_ratio > 1.0e-5:
-            st.taper(pre_taper_ratio)
-        if pre_filter != None:
-            st.dat = filter(st.dat, sampling_rate, btype, (f1, f2), 2, 2)
+        try:
+            if pre_detrend:
+                st.detrend()
+            if pre_taper_ratio > 1.0e-5:
+                st.taper(pre_taper_ratio)
+            if pre_filter != None:
+                st.dat = filter(st.dat, sampling_rate, btype, (f1, f2), 2, 2)
+        except:
+            mpi_print_log(mpi_log_fid, 2, True, '+ Preproc failure', it)
+            continue
         ## whiten
-        if wnd_size_t != None:
-            st.dat = temporal_normalize(st.dat, sampling_rate, wnd_size_t, w_f1, w_f2, 1.0e-5, whiten_taper_length)
-        if wnd_size_freq != None:
-            st.dat = frequency_whiten(st.dat, wnd_size_freq, 1.0e-5, speedup_i1, speedup_i2, whiten_taper_length)
+        try:
+            if wnd_size_t != None:
+                st.dat = temporal_normalize(st.dat, sampling_rate, wnd_size_t, w_f1, w_f2, 1.0e-5, whiten_taper_length)
+            if wnd_size_freq != None:
+                st.dat = frequency_whiten(st.dat, wnd_size_freq, 1.0e-5, speedup_i1, speedup_i2, whiten_taper_length)
+        except:
+            mpi_print_log(mpi_log_fid, 2, True, '+ Whitening failure', it)
+            continue
         ## fft and obtain valid values
         if np.all(np.isfinite(st.dat)) and np.any(st.dat):
             spectra[index] = (pyfftw.interfaces.numpy_fft.rfft(st.dat, fftsize)[:nrfft_valid] )
