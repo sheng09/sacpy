@@ -25,7 +25,7 @@ def run(h5_filename, figname, dist_range=None, cc_time_range=None, lines= None,
         mat = mat[:, i1:i2]
         cc_t0, cc_t1 = cc_time_range
     for irow in range(dist.size):
-        v = max(mat[irow].max(), -mat[irow].min() )
+        v = mat[irow].max()
         if v > 0.0:
             mat[irow] *= (1.0/v)
     mat = mat.transpose()

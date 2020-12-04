@@ -3,8 +3,7 @@
 Executable files for cross-correlation and stacking operations
 """
 from sacpy.processing import filter, taper, tukey_jit, temporal_normalize, frequency_whiten
-from sacpy.sac import rd_sac_2, wrt_sac_2
-from sacpy.sac import c_rd_sac, c_wrt_sac2
+from sacpy.sac import c_rd_sac, c_wrt_sac, c_mk_sachdr_time
 import time
 import sacpy.geomath as geomath
 from mpi4py import MPI
@@ -289,12 +288,14 @@ def main(   fnm_wildcard, tmark, t1, t2, delta, pre_detrend=True, pre_taper_rati
                 stack_mat[irow] = filter(stack_mat[irow], sampling_rate, btype, (f1, f2), 2, 2 )
                 taper(stack_mat[irow], junk)
         # 4.3 post norm
+        absolute_amp = np.ones(dist.size, dtype=np.float32)
         if post_norm:
             mpi_print_log(mpi_log_fid, 1, True, 'Post normalizing... ' )
             for irow in range(dist.size):
-                v = np.max(stack_mat[irow])
+                v = stack_mat[irow].max()
                 if v> 0.0:
                     stack_mat[irow] *= (1.0/v)
+                    absolute_amp[irow] = v
         # 4.4 post cut
         if post_cut != None:
             mpi_print_log(mpi_log_fid, 1, True, 'Post cutting... ', post_cut )
@@ -325,14 +326,19 @@ def main(   fnm_wildcard, tmark, t1, t2, delta, pre_detrend=True, pre_taper_rati
             dset.attrs['cc_t1'] = cc_t2
             dset.attrs['delta'] = delta
             f.create_dataset('stack_count', data= global_stack_count )
+            f.create_dataset('absolute_amp', data= absolute_amp )
             f.create_dataset('dist', data= dist)
             f.close()
         if 'sac' in output_format or 'SAC' in output_format:
+            out_hdr = c_mk_sachdr_time(cc_t1, delta, 1)
             if True:
                 mpi_print_log(mpi_log_fid, 1, True, 'sac:  ', '%s_..._sac' % (output_pre_fnm))
             for irow, it in enumerate(dist):
                 fnm = '%s_%05.1f_.sac' % (output_pre_fnm, it)
-                wrt_sac_2(fnm, stack_mat[irow], delta, cc_t1, user3= stack_count[irow] )
+                out_hdr.user2 = dist[irow]
+                out_hdr.user3 = stack_count[irow]
+                out_hdr.user4 = absolute_amp[irow]
+                c_wrt_sac(fnm, stack_mat[irow], out_hdr, True)
     ########################################################################################################################################
     ##### Done
     ########################################################################################################################################
@@ -444,7 +450,7 @@ def get_bound(fftsize, sampling_rate, f1, f2, critical_level= 0.01):
     x = filter(x, sampling_rate, 'bandpass', (f1, f2), 2, 2)
     s = pyfftw.interfaces.numpy_fft.rfft(x, fftsize)
     amp = np.abs(s)
-    c = np.max(amp) * critical_level
+    c = amp.max() * critical_level
     i1 = np.argmax(amp>c)
     i2 = np.argmin(amp[i1:]>c) + i1 + 1
     if i1 < 0:
