@@ -179,7 +179,8 @@ if __name__ == "__main__":
     lines = None
     ####
     HMSG = """
-    %s -I in.h5 -P img.png [-D 0/50] [-T 0/3000] [--norm fnm1] [--lines fnm1,fnm2,fnm3] [--plt figsize=16/12,title=all,vmax=1.0,axhist=False,ylabel=True,grid=False] [-H]
+    %s -I in.h5 -P img.png [-D 0/50] [-T 0/3000] [--norm fnm=in.txt,method=pos,outfnm=o.txt] [--lines fnm1,fnm2,fnm3]
+        [--plt figsize=16/12,title=all,vmax=1.0,axhist=False,ylabel=True,grid=False] [-H]
     """ % argv[0]
     if len(argv) < 2:
         print(HMSG)

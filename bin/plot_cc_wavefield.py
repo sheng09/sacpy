@@ -7,18 +7,19 @@ import matplotlib.pyplot as plt
 from getopt import getopt
 from sys import exit, argv
 import numpy as np
+from sacpy.processing import max_amplitude_timeseries
 
 def run(h5_filename, figname, dist_range=None, cc_time_range=None, lines= None, 
-    figsize= (6, 15), interpolation= None, title='', vmax= 1.0, axhist=True, ylabel=True, grid=False ):
+        norm_settings = (None, 'pos', (-10, 10) ),
+        figsize= (6, 15), interpolation= None, title='', vmax= 1.0, axhist=True, ylabel=True, grid=False ):
     """
     """
     fid = h5_File(h5_filename, 'r')
-    cc_t0, cc_t1 = fid['ccstack'].attrs['cc_t0'], fid['ccstack'].attrs['cc_t1']
+    cc_t0, cc_t1, delta = fid['ccstack'].attrs['cc_t0'], fid['ccstack'].attrs['cc_t1'], fid['ccstack'].attrs['delta']
     mat = fid['ccstack'][:]
     dist = fid['dist'][:]
     stack_count = fid['stack_count'][:]
     ###
-    delta = (cc_t1-cc_t0)/(mat.shape[1]-1)
     if cc_time_range != None:
         i1 = int( np.round((cc_time_range[0]-cc_t0)/delta) )
         i2 = int( np.round((cc_time_range[1]-cc_t0)/delta) )
@@ -28,6 +29,28 @@ def run(h5_filename, figname, dist_range=None, cc_time_range=None, lines= None,
         v = mat[irow].max()
         if v > 0.0:
             mat[irow] *= (1.0/v)
+    ### normalize the waveform is necessary
+    if not (norm_settings[0] is None):
+        (xs, ts), method, search_window, outfnm = norm_settings
+        tpos, tneg = np.zeros(dist.size), np.zeros(dist.size)
+        if method in ('pos'):
+            for irow in range(dist.size):
+                tref = ts[irow]
+                idx, t_phase, amp_phase= max_amplitude_timeseries(mat[irow], cc_t0, delta, tref, search_window, 1)
+                mat[irow] *= (1.0/(amp_phase) )
+                #ax1.plot(vmax*amp_phase+dist[irow], t_phase, '.', color='C1')
+                #tpos[irow] = t_phase
+        elif method in ('neg'):
+            for irow in range(dist.size):
+                tref = ts[irow]
+                idx, t_phase, amp_phase= max_amplitude_timeseries(mat[irow], cc_t0, delta, tref, search_window, -1)
+                mat[irow] *= (1.0/(amp_phase) )
+                #ax1.plot(vmax*amp_phase+dist[irow], t_phase, '.', color='C2')
+                #tneg[irow] = t_phase
+        with open(outfnm, 'w') as fid:
+            for(d, tp, tn) in zip(dist, tpos, tneg):
+                print('%.1f %.3f %.3f' % (d, tp, tn), file=fid)
+    ###
     mat = mat.transpose()
     ###
     ax1, ax2 = None, None
@@ -107,6 +130,27 @@ def get_lines(fnms):
         lines.append( (tmp[:,0], tmp[:,1]) )
     return lines
 
+def get_norm_methods(arg):
+    """
+    args: --norm fnm=test.txt,method=pos,window=-10/10
+    """
+    x_t = None
+    method = 'pos'
+    window = (-10, 10)
+    outfnm = 'junk.txt'
+    for it in  arg.split(','):
+        opt, value = it.split('=')
+        if opt == 'fnm':
+            tmp = np.loadtxt(value, comments='#')
+            x_t = (tmp[:,0], tmp[:,1])
+        elif opt == 'method':
+            method = value
+        elif opt == 'window':
+            window = tuple( [float(it) for it in value.split('/') ] )
+        elif opt == 'outfnm':
+            outfnm = value
+    return x_t, method, window, outfnm
+
 if __name__ == "__main__":
 
     #run(filename, figname, None)
@@ -122,17 +166,20 @@ if __name__ == "__main__":
     axhist = True
     ylabel = True
     grid = False
+    #### line along which to normalize
+    norm_settings = (None, 'pos', (-10, 10) )
     #### lines to plot
     lines = None
     ####
     HMSG = """
-    %s -I in.h5 -P img.png [-D 0/50] [-T 0/3000] [--lines fnm1,fnm2,fnm3] [--plt figsize=6/12,interpolation=gaussian,title=all,vmax=1.0,axhist=False,ylabel=True,grid=False] [-H]
+    %s -I in.h5 -P img.png [-D 0/50] [-T 0/3000] [--norm fnm=in.txt,method=pos,outfnm=o.txt] [--lines fnm1,fnm2,fnm3]
+        [--plt figsize=6/12,interpolation=gaussian,title=all,vmax=1.0,axhist=False,ylabel=True,grid=False] [-H]
     """ % argv[0]
     if len(argv) < 2:
         print(HMSG)
         exit(0)
     ####
-    options, remainder = getopt(argv[1:], 'I:P:D:T:VHh?', ['lines=', 'plt='] )
+    options, remainder = getopt(argv[1:], 'I:P:D:T:VHh?', ['norm=', 'search=', 'lines=', 'plt='] )
     for opt, arg in options:
         if opt in ('-I'):
             h5_fnm = arg
@@ -142,6 +189,8 @@ if __name__ == "__main__":
             dist_range = tuple([float(it) for it in arg.split('/') ] )
         elif opt in ('-T'):
             cc_time_range = tuple([float(it) for it in arg.split('/') ] )
+        elif opt in ('--norm', '--search'):
+            norm_settings = get_norm_methods(arg)
         elif opt in ('--lines'):
             lines = get_lines(arg)
         elif opt in ('--plt'):
@@ -151,5 +200,6 @@ if __name__ == "__main__":
             exit(0)
     ####
     run(h5_fnm, figname, dist_range, cc_time_range, lines, 
+            norm_settings,
             figsize, interpolation, title, vmax, axhist, ylabel, grid)
 
