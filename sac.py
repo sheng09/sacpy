@@ -1125,16 +1125,16 @@ class c_sactrace:
         buf = libsac.read_sac(fnm.encode('utf8'), self.hdr, scale, verbose)
         if buf == ffi.NULL: ## NAN happend in the data
             return
-        self.dat = deepcopy( np.frombuffer(ffi.buffer(buf, 4*self.hdr.npts), dtype=np.float32 )[:] )
-        ffi.gc(buf, libsac.free)
+        buf = ffi.gc(buf, libsac.free)
+        self.dat = np.frombuffer(ffi.buffer(buf, 4*self.hdr.npts), dtype=np.float32 )
         ###
         hdr = self.hdr
-        hdr.e = hdr.b + hdr.delta * (hdr.npts - 1)
+        self.hdr.e = hdr.b + hdr.delta * (hdr.npts - 1)
         if lcalda and self.hdr.lcalda != 1:
-            hdr.lcalda = 1
-            hdr.gcarc = haversine(hdr.stlo, hdr.stla, hdr.evlo, hdr.evla)
-            hdr.baz   = azimuth(  hdr.stlo, hdr.stla, hdr.evlo, hdr.evla)
-            hdr.az    = azimuth(  hdr.evlo, hdr.evla, hdr.stlo, hdr.stla)
+            self.hdr.lcalda = 1
+            self.hdr.gcarc = haversine(hdr.stlo, hdr.stla, hdr.evlo, hdr.evla)
+            self.hdr.baz   = azimuth(  hdr.stlo, hdr.stla, hdr.evlo, hdr.evla)
+            self.hdr.az    = azimuth(  hdr.evlo, hdr.evla, hdr.stlo, hdr.stla)
     def read2(self, fnm, tmark, t1, t2, lcalda=False, scale=False, verbose=False ):
         """
         Read from a file with cutting method.
@@ -1143,16 +1143,16 @@ class c_sactrace:
         buf = libsac.read_sac2(fnm.encode('utf8'), self.hdr, tmark, t1, t2, scale, verbose)
         if buf == ffi.NULL: ## NAN happend in the data
             return
-        self.dat = deepcopy( np.frombuffer(ffi.buffer(buf, 4*self.hdr.npts), dtype=np.float32 )[:] )
-        ffi.gc(buf, libsac.free)
+        buf = ffi.gc(buf, libsac.free)
+        self.dat = np.frombuffer(ffi.buffer(buf, 4*self.hdr.npts), dtype=np.float32 )
         ###
         hdr = self.hdr
-        hdr.e = hdr.b + hdr.delta * (hdr.npts - 1)
+        self.hdr.e = hdr.b + hdr.delta * (hdr.npts - 1)
         if lcalda and self.hdr.lcalda != 1:
-            hdr.lcalda = 1
-            hdr.gcarc = haversine(hdr.stlo, hdr.stla, hdr.evlo, hdr.evla)
-            hdr.baz   = azimuth(  hdr.stlo, hdr.stla, hdr.evlo, hdr.evla)
-            hdr.az    = azimuth(  hdr.evlo, hdr.evla, hdr.stlo, hdr.stla)
+            self.hdr.lcalda = 1
+            self.hdr.gcarc = haversine(hdr.stlo, hdr.stla, hdr.evlo, hdr.evla)
+            self.hdr.baz   = azimuth(  hdr.stlo, hdr.stla, hdr.evlo, hdr.evla)
+            self.hdr.az    = azimuth(  hdr.evlo, hdr.evla, hdr.stlo, hdr.stla)
     def write(self, fnm, verbose=False):
         """
         Write to a file in sac formate.

@@ -152,7 +152,7 @@ float* read_sac(const char *name, SACHDR *hdr, bool scale, bool verbose)
         swapflag = 1;
     }
     hdr->e = hdr->b + (hdr->npts-1)*hdr->delta; // update hdr.e in case of wrongness
-    size_t size = hdr->npts;
+    int size = hdr->npts;
     float *ptr = NULL;
     if ((ptr = (float *) malloc(size*sizeof(float) ) ) == NULL)
     {
@@ -160,7 +160,8 @@ float* read_sac(const char *name, SACHDR *hdr, bool scale, bool verbose)
         fclose(fp);
         return NULL;
     }
-    if (fread((char *) ptr, size*sizeof(float), 1, fp) != 1)
+    size_t check_npts = size;
+    if (fread((char *) ptr, sizeof(float), size, fp) != check_npts)
     {
         if(verbose) fprintf(stderr, "Error in reading SAC data from %s in read_sac(...)\n", name);
         fclose(fp);
@@ -171,7 +172,7 @@ float* read_sac(const char *name, SACHDR *hdr, bool scale, bool verbose)
         swap4bytes((char *) ptr, size*sizeof(float) );
     // Check for NAN numbers
     int nan_number = 0;
-    for(size_t idx=0; idx<size; ++idx)
+    for(int idx=0; idx<size; ++idx)
     {
         int tag = fpclassify(ptr[idx]);
         if ( tag == FP_NAN || tag == FP_INFINITE)
@@ -190,7 +191,7 @@ float* read_sac(const char *name, SACHDR *hdr, bool scale, bool verbose)
     if (scale)
     {
         float max_v = 0.0;
-        for(size_t idx=0; idx<size; ++idx)
+        for(int idx=0; idx<size; ++idx)
         {
             if (ptr[idx] > max_v)
                 max_v = ptr[idx];
@@ -204,7 +205,7 @@ float* read_sac(const char *name, SACHDR *hdr, bool scale, bool verbose)
             hdr->scale = max_v;
 
         max_v = 1.0/max_v;
-        for(size_t idx=0; idx<size; ++idx)
+        for(int idx=0; idx<size; ++idx)
             ptr[idx] *= max_v;
     }
     return ptr;
@@ -265,11 +266,11 @@ float* read_sac2(const char *name, SACHDR *hdr, int tmark, float t1, float t2, b
         return NULL;
     }
     //
-    size_t idx_t1 = (size_t) floorf((t1-hdr->b)/hdr->delta);     // this point is included
-    size_t idx_t2 = (size_t) ceilf( (t2-hdr->b)/hdr->delta) + 1; // this point is not included
+    int idx_t1 = (int) floorf((t1-hdr->b)/hdr->delta);     // this point is included
+    int idx_t2 = (int) ceilf( (t2-hdr->b)/hdr->delta) + 1; // this point is not included
     // Compute new hdr values however don't set here.
-    size_t  old_npts = hdr->npts;
-    size_t  new_npts = idx_t2-idx_t1;
+    int  old_npts = hdr->npts;
+    int  new_npts = idx_t2-idx_t1;
     float new_b    = hdr->b + (idx_t1  ) * hdr->delta;
     float new_e    = hdr->b + (idx_t2-1) * hdr->delta;
     //
@@ -277,18 +278,18 @@ float* read_sac2(const char *name, SACHDR *hdr, int tmark, float t1, float t2, b
     float * rd_ptr= NULL;
     if ( (ptr = (float *) calloc(new_npts, sizeof(float) ) ) ==NULL)
     {
-        if(verbose) fprintf(stderr, "Error in allocating memory for reading %s n=%ld in read_sac2(...)\n", name, new_npts);
+        if(verbose) fprintf(stderr, "Error in allocating memory for reading %s n=%d in read_sac2(...)\n", name, new_npts);
         fclose(fp);
         return NULL;
     }
     // Set parameter for reading
-    size_t rd_idx_1 = (idx_t1>0)        ? idx_t1 : 0;          // position to start in reading from file
-    size_t rd_idx_2 = (idx_t2<old_npts) ? idx_t2 : old_npts;   // position to stop  in reading from file
-    size_t rd_npts = rd_idx_2- rd_idx_1;                        // size of block to read
+    int rd_idx_1 = (idx_t1>0)        ? idx_t1 : 0;          // position to start in reading from file
+    int rd_idx_2 = (idx_t2<old_npts) ? idx_t2 : old_npts;   // position to stop  in reading from file
+    int rd_npts = rd_idx_2- rd_idx_1;                        // size of block to read
     // double-check if the reading window is valid
     if (rd_idx_1> old_npts || rd_idx_2 < 0)
     {
-        if(verbose) fprintf(stderr, "Error the cutting window (index) does not apply to %s in read_sac2(...)\n", name);
+        if(verbose) fprintf(stderr, "Error the cutting window (index %d %d) does not apply to %s in read_sac2(...)\n", rd_idx_1, rd_idx_2, name);
         free(ptr);
         fclose(fp);
         return NULL;
@@ -310,7 +311,8 @@ float* read_sac2(const char *name, SACHDR *hdr, int tmark, float t1, float t2, b
     {
         rd_ptr = ptr-idx_t1;
     }
-    if (fread( rd_ptr, sizeof(float), rd_npts, fp) != rd_npts)
+    size_t check_npts = rd_npts;
+    if (fread( rd_ptr, sizeof(float), rd_npts, fp) != check_npts)
     {
         if(verbose) fprintf(stderr, "Error in reading SAC data %s in read_sac2(...)\n", name);
         fclose(fp);
@@ -328,7 +330,7 @@ float* read_sac2(const char *name, SACHDR *hdr, int tmark, float t1, float t2, b
     hdr->npts = new_npts;
     // Check for NAN numbers
     int nan_number = 0;
-    for(size_t idx=0; idx<new_npts; ++idx)
+    for(int idx=0; idx<new_npts; ++idx)
     {
         int tag = fpclassify(ptr[idx]);
         if ( tag == FP_NAN || tag == FP_INFINITE)
@@ -347,7 +349,7 @@ float* read_sac2(const char *name, SACHDR *hdr, int tmark, float t1, float t2, b
     if (scale)
     {
         float max_v = 0.0;
-        for(size_t idx=0; idx<new_npts; ++idx)
+        for(int idx=0; idx<new_npts; ++idx)
         {
             if (ptr[idx] > max_v)
                 max_v = ptr[idx];
@@ -361,7 +363,7 @@ float* read_sac2(const char *name, SACHDR *hdr, int tmark, float t1, float t2, b
             hdr->scale = max_v;
 
         max_v = 1.0/max_v;
-        for(size_t idx=0; idx<new_npts; ++idx)
+        for(int idx=0; idx<new_npts; ++idx)
             ptr[idx] *= max_v;
     }
     return ptr;
