@@ -131,7 +131,7 @@ def temporal_normalize(tr, sampling_rate, twin_len, f1, f2, water_level_ratio= 1
         weight = taper(weight, taper_length)
     return weight
 
-pyfftw_cache_enable()
+#pyfftw_cache_enable()
 def frequency_whiten(tr, fwin_len, water_level_ratio= 1.0e-5, speedup_i1= None, speedup_i2= None, taper_length=0):
     """
     Return the whitened time series in time domain.
