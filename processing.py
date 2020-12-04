@@ -131,7 +131,7 @@ def temporal_normalize(tr, sampling_rate, twin_len, f1, f2, water_level_ratio= 1
         weight = taper(weight, taper_length)
     return weight
 
-pyfftw_cache_enable
+pyfftw_cache_enable()
 def frequency_whiten(tr, fwin_len, water_level_ratio= 1.0e-5, speedup_i1= None, speedup_i2= None, taper_length=0):
     """
     Return the whitened time series in time domain.
@@ -162,6 +162,43 @@ def frequency_whiten(tr, fwin_len, water_level_ratio= 1.0e-5, speedup_i1= None, 
     ys = taper(ys, taper_length)
     return ys
 
+@jit(nopython=True, nogil=True)
+def max_amplitude_timeseries(xs, b, delta, tref, window, method=1 ):
+    """
+    Search for the max amplitude point within a time series `xs`.
+
+    xs:    The time series;
+    b:     Its start time;
+    delta: The sampling time interval.
+
+    tref:   The search reference time point.
+    window: A tuple (t1, t2) so that the search range is (tref+t1, tref+t2)
+    method: 1 for max positive amplitude, or -1 for max negative amplitude
+    """
+    N = xs.size
+    t1, t2 = window
+    t1 += tref
+    t2 += tref
+    i1 = round( (t1-b)/delta )
+    i2 = round( (t2-b)/delta )
+    if i1 < 0:
+        i1 = 0
+    elif i1 >= N:
+        i1 = N-1
+    if i2 < 0:
+        i2 = 0
+    elif i2 >= N:
+        i2 = N-1
+    ####
+    if method != -1:
+        idx = np.argmax(xs[i1:i2] ) + i1
+        t = idx*delta + b
+        amp = xs[idx]
+    else:
+        idx = np.argmin(xs[i1:i2] ) + i1
+        t = idx*delta + b
+        amp = xs[idx]
+    return idx, t, amp
 ###
 #  taper
 ###
