@@ -513,11 +513,11 @@ def ccstack_selection_ev(spec_mat, stack_count, stlo_lst, stla_lst, az_lst, stac
                     if lo1 < lo2:
                         if x<lo1 or x>lo2 or y<la1 or y >la2:
                             flag = 1
-                            continue
+                            break
                     else:
                         if x>lo1 or x<lo2 or y<la1 or y >la2:
                             flag = 1
-                            continue
+                            break
             else:
                 (x, y), (x1, y1) = geomath.great_circle_plane_center(stlo1, stla1, stlo2, stla2)
                 if y<0:
@@ -526,11 +526,11 @@ def ccstack_selection_ev(spec_mat, stack_count, stlo_lst, stla_lst, az_lst, stac
                     if lo1 < lo2:
                         if x<lo1 or x>lo2 or y<la1 or y >la2:
                             flag = 1
-                            continue
+                            break
                     else:
                         if x>lo1 or x<lo2 or y<la1 or y >la2:
                             flag = 1
-                            continue
+                            break
             if flag == 1:
                 continue
             ### daz selection
@@ -538,7 +538,7 @@ def ccstack_selection_ev(spec_mat, stack_count, stlo_lst, stla_lst, az_lst, stac
             if daz > 180.0:
                 daz = 360.0-daz
             if daz > 90.0:
-                daz = 90.0-daz
+                daz = 180.0-daz
             if daz < daz1 or daz > daz2:
                 continue
             ### gcd selection
