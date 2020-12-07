@@ -504,19 +504,19 @@ def ccstack_selection_ev(spec_mat, stack_count, stlo_lst, stla_lst, az_lst, stac
             if dist < dist1 or dist > dist2:
                 continue
             ### rect selection
-            flag = 0
+            flag = 1 # 1 means the (clo, cla) is out of any rectangles
             if isac1==isac2 or (abs(stlo1-stlo2)<1.0e-3 and abs(stla1-stla2)<1.0e-3 ):
                 (x, y), (x1, y1) = geomath.great_circle_plane_center(evlo, evla, stlo1, stla1)
                 if y<0:
                     x, y = x1, y1
                 for lo1, lo2, la1, la2 in zip(center_clo1, center_clo2, center_cla1, center_cla2):
-                    if lo1 < lo2:
-                        if x<lo1 or x>lo2 or y<la1 or y >la2:
-                            flag = 1
+                    if lo1 <= lo2:
+                        if lo1 <= x <= lo2 and la1 <= y <= la2:
+                            flag = 0
                             break
                     else:
-                        if x>lo1 or x<lo2 or y<la1 or y >la2:
-                            flag = 1
+                        if (x>=lo1 or x<=lo2)  and la1 <= y <= la2:
+                            flag = 0
                             break
             else:
                 (x, y), (x1, y1) = geomath.great_circle_plane_center(stlo1, stla1, stlo2, stla2)
@@ -524,12 +524,12 @@ def ccstack_selection_ev(spec_mat, stack_count, stlo_lst, stla_lst, az_lst, stac
                     x, y = x1, y1
                 for lo1, lo2, la1, la2 in zip(center_clo1, center_clo2, center_cla1, center_cla2):
                     if lo1 < lo2:
-                        if x<lo1 or x>lo2 or y<la1 or y >la2:
-                            flag = 1
+                        if lo1 <= x <= lo2 and la1 <= y <= la2:
+                            flag = 0
                             break
                     else:
-                        if x>lo1 or x<lo2 or y<la1 or y >la2:
-                            flag = 1
+                        if (x>=lo1 or x<=lo2)  and la1 <= y <= la2:
+                            flag = 0
                             break
             if flag == 1:
                 continue
