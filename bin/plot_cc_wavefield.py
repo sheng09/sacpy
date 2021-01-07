@@ -75,7 +75,7 @@ def run(h5_filename, figname, dist_range=None, cc_time_range=None, lines= None,
     ax1.set_xlim(dist_range)
     ax1.set_xlabel('Inter-receiver distance ($\degree$)')
     if ylabel:
-        ax1.set_ylabel('Correlation time (s)')
+        ax1.set_ylabel('Time (s)')
     else:
         ax1.set_yticklabels([])
     if grid:
@@ -94,7 +94,7 @@ def run(h5_filename, figname, dist_range=None, cc_time_range=None, lines= None,
             ax2.set_ylabel('Number of receiver pairs')
         else:
             ax2.set_yticklabels([])
-    plt.savefig(figname, bbox_inches = 'tight', pad_inches = 0.2)
+    plt.savefig(figname, bbox_inches = 'tight', pad_inches = 0.05)
     plt.close()
 
 def plt_options(args):

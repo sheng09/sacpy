@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 from matplotlib.pyplot import figure
+from numpy.core.numeric import extend_all
 from h5py import File as h5_File
 import matplotlib.pyplot as plt
 from getopt import getopt
@@ -38,7 +39,7 @@ def slant_stack(mat, delta, dist, slowness_range= (-4, 0), nroot=1 ):
 
 def run(h5_filename, figname, dist_range=None, cc_time_range=None, slowness_range = (-4, 0),
         filter_setting =(None, 0.02, 0.0666), nroot= 1,
-        figsize= (3, 4), title='', interpolation= 'gaussian', ylabel= True, maxpoint=True ):
+        figsize= (3, 4), title='', interpolation= 'gaussian', ylabel= True, maxpoint=True, extent=None ):
     """
     """
     fid = h5_File(h5_filename, 'r')
@@ -78,19 +79,23 @@ def run(h5_filename, figname, dist_range=None, cc_time_range=None, slowness_rang
     ###
     fig, ax = plt.subplots(1, 1, figsize= figsize)
     ax.imshow(taup_mat, extent=(slowness_range[0], slowness_range[1], cc_t0, cc_t1), origin='lower', aspect='auto', cmap='gray', interpolation=  interpolation)
-    ax.contour(taup_mat, [-0.9], colors='C3', origin='lower', extent=(slowness_range[0], slowness_range[1], cc_t0, cc_t1))
+    ax.contour(taup_mat, [-0.9], colors='#ffbb00', origin='lower', extent=(slowness_range[0], slowness_range[1], cc_t0, cc_t1))
     if maxpoint:
-        ax.plot(slowness_range, [t, t], 'r', linewidth= 0.6, alpha= 0.8)
-        ax.plot([p, p], [cc_t0, cc_t1], 'r', linewidth= 0.6, alpha= 0.8)
-        ax.plot(p, t, 'r.', alpha= 0.8)
+        ax.plot(slowness_range, [t, t], '#ffbb00', linewidth= 0.6, alpha= 0.8)
+        ax.plot([p, p], [cc_t0, cc_t1], '#ffbb00', linewidth= 0.6, alpha= 0.8)
+        ax.plot(p, t, '.', color='#ffbb00', alpha= 0.8)
+        ax.text(slowness_range[0], t, '%.1f s' % (t), color='#ffbb00', fontsize=18 )
     if ylabel:
         ax.set_ylabel('Time (s)')
     else:
         ax.set_yticklabels([])
     ax.set_xlabel('Slowness (s/$\degree$)')
     ax.set_title(title)
+    if extent != None:
+        ax.set_xlim((extent[0], extent[1]) )
+        ax.set_ylim((extent[2], extent[3]) )
     ###
-    plt.savefig(figname, bbox_inches = 'tight', pad_inches = 0.2)
+    plt.savefig(figname, bbox_inches = 'tight', pad_inches = 0.05)
     plt.close()
 
 
@@ -102,6 +107,7 @@ def plt_options(args):
     title = ''
     ylabel = True
     maxpoint = True
+    extent = None
     ###
     for it in args.split(','):
         opt, value = it.split('=')
@@ -115,7 +121,9 @@ def plt_options(args):
             ylabel = True if value == 'True' else False
         elif opt == 'maxpoint':
             maxpoint = True if value == 'True' else False
-    return figsize, interpolation, title, ylabel, maxpoint
+        elif opt == 'extent':
+            extent = tuple( [float(it) for it in value.split('/') ] )
+    return figsize, interpolation, title, ylabel, maxpoint, extent
 
 if __name__ == "__main__":
     #run(filename, figname, None)
@@ -131,6 +139,7 @@ if __name__ == "__main__":
     title = ''
     ylabel = True
     maxpoint = True
+    extent = None
     #### line along which to normalize
     norm_settings = (None, 'pos', (-10, 10) )
     #### lines to plot
@@ -139,7 +148,7 @@ if __name__ == "__main__":
     ####
     HMSG = """
     %s -I in.h5 -P img.png [-D 0/50] [-T 0/3000] [-S -4/0] [--filter bandpass/0.02/0.0666] [--nroot 1]
-        [--plt figsize=3/4,interpolation=gaussian,title=all,maxpoint=False] [-H]
+        [--plt figsize=3/4,interpolation=gaussian,title=all,maxpoint=False,extent=-4/-1/100/300] [-H]
     """ % argv[0]
     if len(argv) < 2:
         print(HMSG)
@@ -163,7 +172,7 @@ if __name__ == "__main__":
             filter_setting[2] = float(filter_setting[2] )
             filter_setting = tuple(filter_setting)
         elif opt in ('--plt'):
-            figsize, interpolation, title, ylabel, maxpoint = plt_options(arg)
+            figsize, interpolation, title, ylabel, maxpoint, extent = plt_options(arg)
         elif opt in ('--nroot'):
             nroot = int(arg)
         else:
@@ -171,7 +180,7 @@ if __name__ == "__main__":
             exit(0)
     ####
     ####
-    run(h5_fnm, figname, dist_range, cc_time_range, slowness_range, filter_setting, nroot, figsize, title, interpolation, ylabel, maxpoint )
+    run(h5_fnm, figname, dist_range, cc_time_range, slowness_range, filter_setting, nroot, figsize, title, interpolation, ylabel, maxpoint, extent )
 
 
 
