@@ -8,7 +8,7 @@ from getopt import getopt
 from sys import exit, argv
 import numpy as np
 from sacpy.processing import max_amplitude_timeseries, filter
-
+from copy import deepcopy
 
 def slant_stack(mat, delta, dist, slowness_range= (-4, 0), nroot=1 ):
     """
@@ -37,9 +37,9 @@ def slant_stack(mat, delta, dist, slowness_range= (-4, 0), nroot=1 ):
     ###
     return taup_mat.transpose()
 
-def run(h5_filename, figname, dist_range=None, cc_time_range=None, slowness_range = (-4, 0),
+def run(h5_filename, figname, dist_range=None, cc_time_range=None, slowness_range = (-4, 0), search_range= None,
         filter_setting =(None, 0.02, 0.0666), nroot= 1,
-        figsize= (3, 4), title='', interpolation= 'gaussian', ylabel= True, maxpoint=True, extent=None ):
+        figsize= (3, 4), title='', interpolation= 'gaussian', ylabel= True, maxpoint=True, extent=None, contour=None, vmin_scale=1.0, vmax_scale=1.0 ):
     """
     """
     fid = h5_File(h5_filename, 'r')
@@ -72,14 +72,34 @@ def run(h5_filename, figname, dist_range=None, cc_time_range=None, slowness_rang
     ### slant stacking
     taup_mat = slant_stack(mat, delta, dist, slowness_range, nroot )
     taup_mat *= (-1.0/taup_mat.min() )
+    ###
+    fig, ax = plt.subplots(1, 1, figsize= figsize)
+    taup_mat_copy = deepcopy( taup_mat )
+    ### set those outside the search range to ZERO
+    if search_range != None:
+        x1, x2, y1, y2 = search_range
+        ix1, ix2 = int( (x1-slowness_range[0])/delta), int( (x2-slowness_range[0])/delta )
+        iy1, iy2 = int( (y1-cc_t0)/delta ), int( (y2-cc_t0)/delta )
+        taup_mat[:iy1,:] = 0.0
+        taup_mat[iy2:,:]  = 0.0
+        taup_mat[iy1:iy2,:ix1] = 0.0
+        taup_mat[iy1:iy2,ix2:] = 0.0
+        pass
     ### the optimal point
     irow, icol = np.unravel_index(taup_mat.argmin(), taup_mat.shape)
     t = cc_t0 + irow*delta
     p = slowness_range[0] + delta*icol
+    
+    #####
+    vmin = vmin_scale * np.min(taup_mat)
+    vmax = vmax_scale * np.max(taup_mat)
     ###
-    fig, ax = plt.subplots(1, 1, figsize= figsize)
-    ax.imshow(taup_mat, extent=(slowness_range[0], slowness_range[1], cc_t0, cc_t1), origin='lower', aspect='auto', cmap='gray', interpolation=  interpolation)
-    ax.contour(taup_mat, [-0.9], colors='#ffbb00', origin='lower', extent=(slowness_range[0], slowness_range[1], cc_t0, cc_t1))
+    ax.imshow(taup_mat_copy, extent=(slowness_range[0], slowness_range[1], cc_t0, cc_t1), origin='lower', aspect='auto', cmap='gray', interpolation=  interpolation, vmin=vmin, vmax=vmax)
+    if contour != None:
+        if contour < 0:
+            ax.contour(taup_mat, [contour*abs(np.min(taup_mat)) ], colors='#ffbb00', origin='lower', extent=(slowness_range[0], slowness_range[1], cc_t0, cc_t1))
+        if contour > 0:
+            ax.contour(taup_mat, [contour*abs(np.max(taup_mat)) ], colors='#ffbb00', origin='lower', extent=(slowness_range[0], slowness_range[1], cc_t0, cc_t1))
     if maxpoint:
         ax.plot(slowness_range, [t, t], '#ffbb00', linewidth= 0.6, alpha= 0.8)
         ax.plot([p, p], [cc_t0, cc_t1], '#ffbb00', linewidth= 0.6, alpha= 0.8)
@@ -108,6 +128,8 @@ def plt_options(args):
     ylabel = True
     maxpoint = True
     extent = None
+    contour = None
+    vmin_scale, vmax_scale = 1.0, 1.0
     ###
     for it in args.split(','):
         opt, value = it.split('=')
@@ -123,7 +145,13 @@ def plt_options(args):
             maxpoint = True if value == 'True' else False
         elif opt == 'extent':
             extent = tuple( [float(it) for it in value.split('/') ] )
-    return figsize, interpolation, title, ylabel, maxpoint, extent
+        elif opt == 'contour':
+            contour = float(value)
+        elif opt == 'vmin_scale':
+            vmin_scale = abs( float(value) )
+        elif opt == 'vmax_scale':
+            vmax_scale = abs( float(value))
+    return figsize, interpolation, title, ylabel, maxpoint, extent, contour, vmin_scale, vmax_scale
 
 if __name__ == "__main__":
     #run(filename, figname, None)
@@ -132,6 +160,7 @@ if __name__ == "__main__":
     dist_range = None
     cc_time_range = None
     slowness_range = (-4, 0)
+    search_range= None
     nroot = 1
     #### pyplot options
     figsize = (3, 4)
@@ -140,6 +169,8 @@ if __name__ == "__main__":
     ylabel = True
     maxpoint = True
     extent = None
+    contour = None
+    vmin, vmax = None, None
     #### line along which to normalize
     norm_settings = (None, 'pos', (-10, 10) )
     #### lines to plot
@@ -147,14 +178,14 @@ if __name__ == "__main__":
     filter_setting = (None, 0.02, 0.0666)
     ####
     HMSG = """
-    %s -I in.h5 -P img.png [-D 0/50] [-T 0/3000] [-S -4/0] [--filter bandpass/0.02/0.0666] [--nroot 1]
-        [--plt figsize=3/4,interpolation=gaussian,title=all,maxpoint=False,extent=-4/-1/100/300] [-H]
+    %s -I in.h5 -P img.png [-D 0/50] [-T 0/3000] [-S -4/-1] [--search_range=-3/-2/100/250]  [--filter bandpass/0.02/0.0666] [--nroot 1]
+        [--plt figsize=3/4,interpolation=gaussian,title=all,maxpoint=False,extent=-4/-1/100/300,contour=-0.9] [-H]
     """ % argv[0]
     if len(argv) < 2:
         print(HMSG)
         exit(0)
     ####
-    options, remainder = getopt(argv[1:], 'I:P:D:T:S:VHh?', ['filter=', 'plt=', 'nroot='] )
+    options, remainder = getopt(argv[1:], 'I:P:D:T:S:VHh?', ['filter=', 'plt=', 'nroot=', 'search_range='] )
     for opt, arg in options:
         if opt in ('-I'):
             h5_fnm = arg
@@ -172,15 +203,17 @@ if __name__ == "__main__":
             filter_setting[2] = float(filter_setting[2] )
             filter_setting = tuple(filter_setting)
         elif opt in ('--plt'):
-            figsize, interpolation, title, ylabel, maxpoint, extent = plt_options(arg)
+            figsize, interpolation, title, ylabel, maxpoint, extent, contour, vmin_scale, vmax_scale = plt_options(arg)
         elif opt in ('--nroot'):
             nroot = int(arg)
+        elif opt in ('--search_range'):
+            search_range = tuple( [float(it) for it in arg.split('/') ] )
         else:
             print(HMSG)
             exit(0)
     ####
     ####
-    run(h5_fnm, figname, dist_range, cc_time_range, slowness_range, filter_setting, nroot, figsize, title, interpolation, ylabel, maxpoint, extent )
+    run(h5_fnm, figname, dist_range, cc_time_range, slowness_range, search_range, filter_setting, nroot, figsize, title, interpolation, ylabel, maxpoint, extent, contour, vmin_scale, vmax_scale )
 
 
 
