@@ -34,7 +34,7 @@ def run(h5_filename, figname, dist_range=None, cc_time_range=None, lines= None,
         i2 = int( np.round((cc_time_range[1]-cc_t0)/delta) )
         mat = mat[:, i1:i2]
         cc_t0, cc_t1 = cc_time_range
-    ### normalize the waveform is necessary
+    ### normalize the waveform if necessary
     if not (norm_settings[0] is None):
         (xs, ts), method, search_window, outfnm = norm_settings
         tpos, tneg = np.zeros(dist.size), np.zeros(dist.size)
