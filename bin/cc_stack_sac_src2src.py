@@ -475,7 +475,6 @@ def ccstack(spec_mat, stack_count, evlo_lst, evla_lst, stack_mat, dist_step, ind
             spec2 = spec_mat[isac2]
             ###
             dist = geomath.haversine(evlo1, evla1, evlo2, evla2)
-            print(dist)
             idx = int( np.round((dist-dist_start) / dist_step) )
             w   = np.conj(spec1[i1:i2]) * spec2[i1:i2]
             stack_mat[idx][i1:i2] += w
