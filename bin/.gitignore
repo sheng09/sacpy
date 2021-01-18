@@ -3,4 +3,3 @@ tmp/
 dt.png
 dt_sa.png
 bin/dataset/cc_feature_time.pkl
-dataset/**
