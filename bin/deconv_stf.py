@@ -50,16 +50,20 @@ def main(fnm_wildcard, out_root_dir, log_prefnm,
         ot = datetime.strptime(time_str, '%Y-%j-%H-%M-%S-%f')
         search_str = '%04d-%02d-%02d-%02d-%02d-%06.3f' % (year, ot.month, ot.day, h, m, s )
         ######
+        timediff = 0.0
         if search_str not in stf_keys_set:
             tmp = [ot-it for it in stf_ots_lst]
             idx = np.argmin( [abs(it.total_seconds()) for it in tmp] )
+            timediff = abs( tmp[idx].total_seconds() )
+            if timediff > 2.0:
+                continue
             search_str = stf_keys_lst[idx]
         ###### prepare the out direc
         out_dir = out_root_dir + '/' + '/'.join( it_direc.split('/')[1:] )
         if not os.path.exists(out_dir):
             os.makedirs(out_dir)
         ######
-        print('Running...', it_direc, out_dir, ot, file=mpi_log_fid, flush=True )
+        print('Running...', it_direc, out_dir, ot, timediff, file=mpi_log_fid, flush=True )
         ###### obtain and resample the STF
         grp = stf_fid[search_str]
         ns = grp.attrs['ns']
