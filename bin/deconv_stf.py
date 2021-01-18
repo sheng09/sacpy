@@ -186,7 +186,7 @@ def main(fnm_wildcard, out_root_dir, log_prefnm,
                 continue
     ##################
     mpi_log_fid.close()
-
+    stf_fid.close()
 
 
 if __name__ == "__main__":
