@@ -164,7 +164,6 @@ def main(fnm_wildcard, out_root_dir, log_prefnm,
         for it_sacfnm in sacfnms:
             ###
             out_sacfnm = out_dir + '/' + it_sacfnm.split('/')[-1] + '.deconv'
-            print(it_sacfnm, out_sacfnm)
             tr = c_rd_sac(it_sacfnm)
             tr.rmean(); tr.detrend(); tr.taper(0.005)
             tr1 = np.convolve(tr.dat, deconv_inv, 'same')
@@ -172,7 +171,6 @@ def main(fnm_wildcard, out_root_dir, log_prefnm,
             tr.write(out_sacfnm)
             ###
             out_sacfnm = out_dir + '/' + it_sacfnm.split('/')[-1] + '.cc'
-            print(it_sacfnm, out_sacfnm)
             tr = c_rd_sac(it_sacfnm)
             tr.rmean(); tr.detrend(); tr.taper(0.005)
             tr1 = np.convolve(tr.dat, cc_inv, 'same')
