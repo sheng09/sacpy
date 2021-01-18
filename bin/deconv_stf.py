@@ -41,12 +41,6 @@ def main(fnm_wildcard, out_root_dir, log_prefnm,
     sac_wildcards = fnm_wildcard.split('/')[-1]
     local_directories = directories[mpi_rank::mpi_ncpu]
     for it_direc in local_directories:
-        ###### prepare the out direc
-        out_dir = out_root_dir + '/' + '/'.join( it_direc.split('/')[1:] )
-        if not os.path.exists(out_dir):
-            os.makedirs(out_dir)
-        ######
-        print(it_direc, out_dir, file=mpi_log_fid, flush=True )
         ######
         sacfnms = sorted( glob(it_direc + '/' + sac_wildcards) )
         hdr0 = c_rd_sachdr(sacfnms[0] )
@@ -60,6 +54,12 @@ def main(fnm_wildcard, out_root_dir, log_prefnm,
             tmp = [ot-it for it in stf_ots_lst]
             idx = np.argmin( [abs(it.total_seconds()) for it in tmp] )
             search_str = stf_keys_lst[idx]
+        ###### prepare the out direc
+        out_dir = out_root_dir + '/' + '/'.join( it_direc.split('/')[1:] )
+        if not os.path.exists(out_dir):
+            os.makedirs(out_dir)
+        ######
+        print('Running...', it_direc, out_dir, ot, file=mpi_log_fid, flush=True )
         ###### obtain and resample the STF
         grp = stf_fid[search_str]
         ns = grp.attrs['ns']
@@ -163,19 +163,23 @@ def main(fnm_wildcard, out_root_dir, log_prefnm,
         ###### apply the deconv to seismogram
         for it_sacfnm in sacfnms:
             ###
-            out_sacfnm = out_dir + '/' + it_sacfnm.split('/')[-1] + '.deconv'
-            tr = c_rd_sac(it_sacfnm)
-            tr.rmean(); tr.detrend(); tr.taper(0.005)
-            tr1 = np.convolve(tr.dat, deconv_inv, 'same')
-            tr.dat=tr1
-            tr.write(out_sacfnm)
-            ###
-            out_sacfnm = out_dir + '/' + it_sacfnm.split('/')[-1] + '.cc'
-            tr = c_rd_sac(it_sacfnm)
-            tr.rmean(); tr.detrend(); tr.taper(0.005)
-            tr1 = np.convolve(tr.dat, cc_inv, 'same')
-            tr.dat=tr1
-            tr.write(out_sacfnm)
+            try:
+                out_sacfnm = out_dir + '/' + it_sacfnm.split('/')[-1] + '.deconv'
+                tr = c_rd_sac(it_sacfnm)
+                tr.rmean(); tr.detrend(); tr.taper(0.005)
+                tr1 = np.convolve(tr.dat, deconv_inv, 'same')
+                tr.dat=tr1
+                tr.write(out_sacfnm)
+                ###
+                out_sacfnm = out_dir + '/' + it_sacfnm.split('/')[-1] + '.cc'
+                tr = c_rd_sac(it_sacfnm)
+                tr.rmean(); tr.detrend(); tr.taper(0.005)
+                tr1 = np.convolve(tr.dat, cc_inv, 'same')
+                tr.dat=tr1
+                tr.write(out_sacfnm)
+            except:
+                print('Err %s', it_sacfnm, file=mpi_log_fid, flush=True)
+                continue
     ##################
     mpi_log_fid.close()
 
