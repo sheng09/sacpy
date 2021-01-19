@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 
 
-from mpi4py import MPI
 import sacpy
 from sacpy.sac import c_rd_sac, c_rd_sachdr, plot_sac_lst
 import h5py
@@ -17,6 +16,8 @@ from scipy.signal import tukey
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
+
+from mpi4py import MPI
 
 def main(fnm_wildcard, out_root_dir, log_prefnm,
          plot_stf_flag=False, plot_freq_range=(0, 1),

@@ -6,7 +6,6 @@ from sacpy.processing import filter, taper, tukey_jit, temporal_normalize, frequ
 from sacpy.sac import c_rd_sac, c_wrt_sac, c_mk_sachdr_time
 import time
 import sacpy.geomath as geomath
-from mpi4py import MPI
 import h5py
 import pyfftw
 import numpy as np
@@ -14,6 +13,8 @@ import sys
 import getopt
 from glob import glob
 from numba import jit
+
+from mpi4py import MPI
 
 def main(   fnm_wildcard, tmark, t1, t2, delta, pre_detrend=True, pre_taper_ratio= 0.005, pre_filter= None,
             temporal_normalization_parameter = (128.0, 0.02, 0.066666), spectral_whiten_parameter= 0.02,
