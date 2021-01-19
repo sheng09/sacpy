@@ -86,8 +86,26 @@ def main(fnm_wildcard, out_root_dir, log_prefnm,
         window = tukey(wavelet.size, 0.05)
         deconv_inv = window*irfft(deconv_inv_spec, wavelet.size ) # deconvolution-inverse
         deconv_inv *= (1.0/np.sum(deconv_inv) )
+        deconv_spike = np.convolve(wavelet, deconv_inv, 'full')
+        deconv_spike *= (1.0/np.max(deconv_spike) )
+        deconv_spike_ts = np.arange(deconv_spike.size) * resample_dt + (1-wavelet.size)*resample_dt
         cc_inv = window*irfft(nu, wavelet.size) # cc-inverse
         cc_inv *= (1.0/np.sum(cc_inv) )
+        cc_spike = np.convolve(wavelet, cc_inv, 'full')
+        cc_spike *= (1.0/np.max(cc_spike) )
+        cc_spike_ts = np.arange(cc_spike.size) * resample_dt + (1-wavelet.size)*resample_dt
+        ###### output the STF and its inverse
+        stf_inv_fnm = '%s/%s_stf.h5' % (out_dir, search_str)
+        stf_inv_fid = h5py.File(stf_inv_fnm, 'w')
+        stf_inv_fid.attrs['dt'] = resample_dt
+        stf_inv_fid.create_dataset('ts', data=new_ts)
+        stf_inv_fid.create_dataset('stf', data=wavelet)
+        stf_inv_fid.create_dataset('deconv_inv', data=deconv_inv)
+        stf_inv_fid.create_dataset('spike_ts', data=deconv_spike_ts)
+        stf_inv_fid.create_dataset('deconv_spike', data=deconv_spike)
+        stf_inv_fid.create_dataset('cc_inv', data=cc_inv)
+        stf_inv_fid.create_dataset('cc_spike', data=cc_spike)
+        stf_inv_fid.close()
         ###### plot the STF and its inverse
         if plot_stf_flag:
             fig_name = '%s/%s.png' % (out_dir, search_str)
@@ -125,10 +143,7 @@ def main(fnm_wildcard, out_root_dir, log_prefnm,
             ax_deconv[1].set_xlabel('Frequency (Hz)')
             ax_deconv[1].legend(loc='upper right')
             ###
-            spike = np.convolve(wavelet, deconv_inv, 'full')
-            spike *= (1.0/np.max(spike) )
-            spike_ts = np.arange(spike.size) * resample_dt + (1-wavelet.size)*resample_dt
-            ax_deconv[2].plot(spike_ts, spike, label='Spike test', color='k')
+            ax_deconv[2].plot(deconv_spike_ts, deconv_spike, label='Spike test', color='k')
             ax_deconv[2].set_xlim((-20, 20) )
             ax_deconv[2].set_xlabel('Time (s)')
             ax_deconv[2].legend(loc='upper right')
@@ -150,10 +165,7 @@ def main(fnm_wildcard, out_root_dir, log_prefnm,
             ax_cc[1].set_xlabel('Frequency (Hz)')
             ax_cc[1].legend(loc='upper right')
             ###
-            spike = np.convolve(wavelet, cc_inv, 'full')
-            spike *= (1.0/np.max(spike) )
-            spike_ts = np.arange(spike.size) * resample_dt + (1-wavelet.size)*resample_dt
-            ax_cc[2].plot(spike_ts, spike, label='Spike test', color='k')
+            ax_cc[2].plot(cc_spike_ts, cc_spike, label='Spike test', color='k')
             ax_cc[2].set_xlim((-20, 20) )
             ax_cc[2].set_xlabel('Time (s)')
             ax_cc[2].legend(loc='upper right')
