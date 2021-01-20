@@ -18,7 +18,7 @@ from mpi4py import MPI
 
 def main(   fnm_wildcard, tmark, t1, t2, delta, pre_detrend=True, pre_taper_ratio= 0.005, pre_filter= None,
             temporal_normalization_parameter = (128.0, 0.02, 0.066666), spectral_whiten_parameter= 0.02,
-            dist_range = (0.0, 180.0), dist_step= 1.0, dbaz_range= None, gcd_rcv_range= None, gc_center_rect= None,
+            dist_range = (0.0, 180.0), dist_step= 1.0, min_ev_per_rcv=1, dbaz_range= None, gcd_rcv_range= None, gc_center_rect= None,
             post_folding = True, post_taper_ratio = 0.005, post_filter = ('bandpass', 0.02, 0.066666), post_norm = True, post_cut= None,
             log_prefnm= 'cc_mpi_log',
             output_pre_fnm= 'junk', output_format= ['hdf5'] ):
@@ -134,6 +134,7 @@ def main(   fnm_wildcard, tmark, t1, t2, delta, pre_detrend=True, pre_taper_rati
     # logging
     if True:
         mpi_print_log(mpi_log_fid, 0, False, 'Set selection criteria')
+        mpi_print_log(mpi_log_fid, 1, False, 'min_ev_per_rcv: ', min_ev_per_rcv )
         mpi_print_log(mpi_log_fid, 1, False, 'dbaz:    ', dbaz_range )
         mpi_print_log(mpi_log_fid, 1, False, 'gcd_rcv: ', gcd_rcv_range )
         mpi_print_log(mpi_log_fid, 1, False, 'selection of gc-center rect: ', gc_center_rect )
@@ -197,10 +198,13 @@ def main(   fnm_wildcard, tmark, t1, t2, delta, pre_detrend=True, pre_taper_rati
         mpi_print_log(mpi_log_fid, 1, True, '-',idx_job+1, wildcards)
         ### 1. read and pre-processing and whitening
         t_start = time.time()
-        whitened_spectra_mat, stlo, stla, evlo, evla, az, baz = rd_preproc_whiten_single(wildcards, delta, tmark, t1, t2, npts,
-                                                                                            pre_detrend, pre_taper_ratio, pre_filter,
-                                                                                            fftsize, nrfft_valid, wt_size, wt_f1, wt_f2, wf_size, w_speedup_i1, w_speedup_i2, taper_size,
-                                                                                            mpi_log_fid)
+        tmptmptmp = rd_preproc_whiten_single(wildcards, delta, tmark, t1, t2, npts, min_ev_per_rcv,
+                                                pre_detrend, pre_taper_ratio, pre_filter,
+                                                fftsize, nrfft_valid, wt_size, wt_f1, wt_f2, wf_size, w_speedup_i1, w_speedup_i2, taper_size,
+                                                mpi_log_fid)
+        if tmptmptmp == None:
+            continue
+        whitened_spectra_mat, stlo, stla, evlo, evla, az, baz = tmptmptmp
         ### check if the obtained whitened_spectra_mat is valid
         if whitened_spectra_mat is None:
             mpi_print_log(mpi_log_fid, 2, True, '+ None of sac time series are valid, and hence we jump over to the next.' )
@@ -356,6 +360,7 @@ def mpi_print_log(file, n_pre, flush, *objects, end='\n'):
     print(*objects, file=file, flush=flush, end=end )
 
 def rd_preproc_whiten_single(sacfnm_template, delta, tmark, t1, t2, npts,
+                                min_ev_per_rcv,
                                 pre_detrend, pre_taper_ratio , pre_filter, # preproc args
                                 fftsize, nrfft_valid, wnd_size_t, w_f1, w_f2, wnd_size_freq, speedup_i1, speedup_i2, whiten_taper_ratio, # whitening args
                                 mpi_log_fid):
@@ -379,6 +384,8 @@ def rd_preproc_whiten_single(sacfnm_template, delta, tmark, t1, t2, npts,
     ###
     fnms = sorted( glob(sacfnm_template) )
     nsac = len(fnms)
+    if nsac < min_ev_per_rcv:
+        return None
     ###
     sampling_rate = 1.0/delta
     btype, f1, f2 = pre_filter if pre_filter != None else (None, None, None)
@@ -571,6 +578,7 @@ if __name__ == "__main__":
 
     dist_range = (0.0, 180.0)
     dist_step= 1.0
+    min_ev_per_rcv = 1
     dbaz_range = None
     gcd_rcv_range = None
     gc_center_rect = None
@@ -589,6 +597,7 @@ if __name__ == "__main__":
     HMSG = """Cross-correlation and stack for receiver-to-receiver pairs.\n
     %s  -I "in*/*.sac" -T -5/10800/32400 -D 0.1 -O cc_stack --out_format hdf5
         [--pre_detrend] [--pre_taper 0.005] [--pre_filter bandpass/0.005/0.1] 
+        [--min_ev_per_rcv 100]
         --stack_dist 0/180/1 [--dbaz -0.1/15] [--gcd_rcv -0.1/20] [--gc_center_rect 120/180/0/40,180/190/0/10]
         [--w_temporal 128.0/0.02/0.06667] [--w_spec 0.02] 
         [--post_fold] [--post_taper 0.05] [--post_filter bandpass/0.02/0.0666] [--post_norm] [--post_cut]
@@ -613,6 +622,7 @@ Args:
     --stack_dist :
     [--dbaz]      :
     [--gcd_rcv]   :
+    [--min_ev_per_rcv] :
     [--gc_center_rect] : a list of rect (lo1, lo2, la1, la2) to exclude some receiver pairs.
 
     #4. post-processing parameters:
@@ -630,6 +640,7 @@ E.g.,
         --pre_detrend --pre_taper 0.005 
         --w_temporal 128.0/0.02/0.06667 --w_spec 0.02
         --stack_dist 0/180/1
+        --min_ev_per_rcv 100
         --dbaz -0.1/20 --gcd_rcv -0.1/30 --gc_center_rect 120/180/0/40
         --post_fold --post_taper 0.005 --post_filter bandpass/0.001/0.06667 --post_norm  --post_cut 0/5000
         --log cc_log  
@@ -644,7 +655,7 @@ E.g.,
     options, remainder = getopt.getopt(sys.argv[1:], 'I:T:D:O:',
                             ['pre_detrend', 'pre_taper=', 'pre_filter=',
                              'w_temporal=', 'w_spec=',
-                             'stack_dist=', 'dbaz=', 'gcd_rcv=', 'gc_center_rect=',
+                             'stack_dist=', 'min_ev_per_rcv=', 'dbaz=', 'gcd_rcv=', 'gc_center_rect=',
                              'post_fold', 'post_taper=', 'post_filter=', 'post_norm', 'post_cut=',
                              'log=', 'out_format='] )
     for opt, arg in options:
@@ -669,6 +680,8 @@ E.g.,
         elif opt in ('--stack_dist'):
             x, y, z = [float(it) for it in arg.split('/') ]
             dist_range, dist_step = (x, y), z
+        elif opt in ('--min_ev_per_rcv'):
+            min_ev_per_rcv = int(arg)
         elif opt in ('--dbaz'):
             dbaz_range = [float(it) for it in arg.split('/') ]
         elif opt in ('--gcd_rcv'):
@@ -700,7 +713,7 @@ E.g.,
     #######
     main(fnm_wildcard, tmark, t1, t2, delta, pre_detrend, pre_taper_ratio, pre_filter,
             temporal_normalization_parameter, spectral_whiten_parameter,
-            dist_range, dist_step, dbaz_range, gcd_rcv_range, gc_center_rect,
+            dist_range, dist_step, min_ev_per_rcv, dbaz_range, gcd_rcv_range, gc_center_rect,
             post_folding, post_taper_ratio, post_filter, post_norm, post_cut,
             log_prefnm, output_pre_fnm, output_format )
     ########
