@@ -7,12 +7,17 @@ from getopt import getopt
 from sys import exit, argv
 import numpy as np
 from sacpy.processing import max_amplitude_timeseries, filter
+import os, os.path
 
 def run(h5_filename, figname, dist_range=None, cc_time_range=None, lines= None, 
         filter_setting =(None, 0.02, 0.0666), norm_settings = (None, 'pos', (-10, 10) ),
         figsize= (6, 15), interpolation= None, title='', vmax= 1.0, axhist=True, ylabel=True, grid=False ):
     """
     """
+    fig_outdir = '/'.join( figname.split('/')[:-1] )
+    if not os.path.exists(fig_outdir):
+        os.makedirs(fig_outdir)
+    ###
     fid = h5_File(h5_filename, 'r')
     cc_t0, cc_t1, delta = fid['ccstack'].attrs['cc_t0'], fid['ccstack'].attrs['cc_t1'], fid['ccstack'].attrs['delta']
     mat = fid['ccstack'][:]
