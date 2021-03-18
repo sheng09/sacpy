@@ -97,7 +97,7 @@ def run(h5_filename, figname, dist_range=None, cc_time_range=None, lines= None,
         tmp = stack_count[stack_count>0]
         ax2.bar(dist, stack_count, align='center', color='gray', width= dist[1]-dist[0] )
         ax2.set_xlim(dist_range)
-        ax2.set_ylim((0, sorted(tmp)[-2] * 1.1) )
+        ax2.set_ylim(bottom=0 )
         ax2.set_xlabel('Inter-receiver distance ($\degree$)')
 
         fmt = '{x:,.0f}'
