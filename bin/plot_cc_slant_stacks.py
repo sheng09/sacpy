@@ -9,6 +9,8 @@ from sys import exit, argv
 import numpy as np
 from sacpy.processing import max_amplitude_timeseries, filter
 from copy import deepcopy
+from scipy.ndimage.filters import gaussian_filter
+
 
 def slant_stack(mat, delta, dist, slowness_range= (-4, 0), nroot=1 ):
     """
@@ -96,15 +98,16 @@ def run(h5_filename, figname, dist_range=None, cc_time_range=None, slowness_rang
     ###
     ax.imshow(taup_mat_copy, extent=(slowness_range[0], slowness_range[1], cc_t0, cc_t1), origin='lower', aspect='auto', cmap='gray', interpolation=  interpolation, vmin=vmin, vmax=vmax)
     if contour != None:
+        tmp = gaussian_filter(taup_mat, sigma=0.3)
         if contour < 0:
-            ax.contour(taup_mat, [contour*abs(np.min(taup_mat)) ], colors='#ffbb00', origin='lower', extent=(slowness_range[0], slowness_range[1], cc_t0, cc_t1))
+            ax.contour(tmp, [contour*abs(np.min(taup_mat)) ], colors='#ffbb00', origin='lower', extent=(slowness_range[0], slowness_range[1], cc_t0, cc_t1))
         if contour > 0:
-            ax.contour(taup_mat, [contour*abs(np.max(taup_mat)) ], colors='#ffbb00', origin='lower', extent=(slowness_range[0], slowness_range[1], cc_t0, cc_t1))
+            ax.contour(tmp, [contour*abs(np.max(taup_mat)) ], colors='#ffbb00', origin='lower', extent=(slowness_range[0], slowness_range[1], cc_t0, cc_t1))
     if maxpoint:
         ax.plot(slowness_range, [t, t], '#ffbb00', linewidth= 0.6, alpha= 0.8)
         ax.plot([p, p], [cc_t0, cc_t1], '#ffbb00', linewidth= 0.6, alpha= 0.8)
-        ax.plot(p, t, '.', color='#ffbb00', alpha= 0.8)
-        ax.text(slowness_range[0], t, '%.1f s' % (t), color='#ffbb00', fontsize=18 )
+        ax.plot(p, t, 's', color='#ffbb00', alpha= 0.8)
+        ax.text(slowness_range[0], t+1, '%.1f s' % (t), color='#ffbb00', fontsize=18 )
     if ylabel:
         ax.set_ylabel('Time (s)')
     else:

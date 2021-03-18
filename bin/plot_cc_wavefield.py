@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
-
+import matplotlib
+matplotlib.rcParams['font.sans-serif'] = "Arial"
+matplotlib.rcParams['font.family'] = "sans-serif"
 from matplotlib.pyplot import figure
 from h5py import File as h5_File
 import matplotlib.pyplot as plt
@@ -8,10 +10,11 @@ from sys import exit, argv
 import numpy as np
 from sacpy.processing import max_amplitude_timeseries, filter
 import os, os.path
+import matplotlib.ticker as mtick
 
 def run(h5_filename, figname, dist_range=None, cc_time_range=None, lines= None, 
         filter_setting =(None, 0.02, 0.0666), norm_settings = (None, 'pos', (-10, 10) ),
-        figsize= (6, 15), interpolation= None, title='', vmax= 1.0, axhist=True, ylabel=True, grid=False ):
+        figsize= (6, 15), interpolation= None, title='', vmax= 1.0, axhist=True, yticks='all', ylabel='all', grid=False ):
     """
     """
     fig_outdir = '/'.join( figname.split('/')[:-1] )
@@ -65,7 +68,7 @@ def run(h5_filename, figname, dist_range=None, cc_time_range=None, lines= None,
     ###
     ax1, ax2 = None, None
     if axhist:
-        fig, (ax1, ax2) = plt.subplots(2, 1, figsize= figsize, gridspec_kw={'height_ratios': [5, 1]} )
+        fig, (ax1, ax2) = plt.subplots(2, 1, figsize= figsize, gridspec_kw={'height_ratios': [4, 1]} )
     else:
         fig, ax1 = plt.subplots(1, 1, figsize= figsize )
     ###
@@ -78,10 +81,11 @@ def run(h5_filename, figname, dist_range=None, cc_time_range=None, lines= None,
     ###
     dist_range = (dist[0], dist[-1] ) if dist_range == None else dist_range
     ax1.set_xlim(dist_range)
-    ax1.set_xlabel('Inter-receiver distance ($\degree$)')
-    if ylabel:
+    if not axhist:
+        ax1.set_xlabel('Inter-receiver distance ($\degree$)')
+    if ylabel == 'all' or ylabel == 'cc':
         ax1.set_ylabel('Time (s)')
-    else:
+    if yticks == None or yticks == 'hist':
         ax1.set_yticklabels([])
     if grid:
         ax1.grid(linestyle=':', color='k' )
@@ -95,10 +99,18 @@ def run(h5_filename, figname, dist_range=None, cc_time_range=None, lines= None,
         ax2.set_xlim(dist_range)
         ax2.set_ylim((0, sorted(tmp)[-2] * 1.1) )
         ax2.set_xlabel('Inter-receiver distance ($\degree$)')
-        if ylabel:
-            ax2.set_ylabel('Number of receiver pairs')
-        else:
+
+        fmt = '{x:,.0f}'
+        tick = mtick.StrMethodFormatter(fmt)
+        ax2.yaxis.set_major_formatter(tick)
+        #ax2.ticklabel_format(axis='y', style='sci', scilimits=(0, 0) )
+
+        if ylabel == 'all' or ylabel == 'hist':
+            ax2.set_ylabel('Number of\n receiver pairs')
+
+        if yticks == None or yticks == 'cc':
             ax2.set_yticklabels([])
+    #plt.tight_layout()
     plt.savefig(figname, bbox_inches = 'tight', pad_inches = 0.05)
     plt.close()
 
@@ -110,7 +122,8 @@ def plt_options(args):
     title = ''
     vmax = 1.0
     axhist = True
-    ylabel = True
+    yticks = None
+    ylabel = None
     grid   = False
     ###
     for it in args.split(','):
@@ -125,11 +138,21 @@ def plt_options(args):
             vmax = float(value)
         elif opt == 'axhist':
             axhist = True if value == 'True' else False
+        elif opt == 'yticks':
+            yticks = value
+            if yticks == 'True':
+                yticks = 'all'
+            elif yticks == 'False' or yticks == 'None':
+                yticks = None
         elif opt == 'ylabel':
-            ylabel = True if value == 'True' else False
+            ylabel = value
+            if value == 'True':
+                ylabel = 'all'
+            elif value == 'False' or value == 'None':
+                ylabel = None
         elif opt == 'grid':
             grid = True if value == 'True' else False
-    return figsize, interpolation, title, vmax, axhist, ylabel, grid
+    return figsize, interpolation, title, vmax, axhist, yticks, ylabel, grid
 
 def get_lines(fnms):
     """
@@ -174,7 +197,8 @@ if __name__ == "__main__":
     title = ''
     vmax = 1.0
     axhist = True
-    ylabel = True
+    yticks = 'all'
+    ylabel = 'all'
     grid = False
     #### line along which to normalize
     norm_settings = (None, 'pos', (-10, 10) )
@@ -210,12 +234,12 @@ if __name__ == "__main__":
         elif opt in ('--lines'):
             lines = get_lines(arg)
         elif opt in ('--plt'):
-            figsize, interpolation, title, vmax, axhist, ylabel, grid = plt_options(arg)
+            figsize, interpolation, title, vmax, axhist, yticks, ylabel, grid = plt_options(arg)
         else:
             print(HMSG)
             exit(0)
     ####
     run(h5_fnm, figname, dist_range, cc_time_range, lines, 
             filter_setting, norm_settings,
-            figsize, interpolation, title, vmax, axhist, ylabel, grid)
+            figsize, interpolation, title, vmax, axhist, yticks, ylabel, grid)
 
