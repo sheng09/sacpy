@@ -20,8 +20,8 @@ def main(mode,
             fnm_wildcard, tmark, t1, t2, delta, input_format='sac', pre_detrend=True, pre_taper_ratio= 0.005, pre_filter= None,
             tnorm = (128.0, 0.02, 0.066666), swht= 0.02,
             stack_dist_range = (0.0, 180.0), stadist_step= 1.0, 
-            daz_range= None, gcd_range= None, gc_center_rect= None,
-            post_fold = True, post_taper_ratio = 0.005, post_filter = ('bandpass', 0.02, 0.066666), post_norm = True, post_cut= None,
+            daz_range= None, gcd_range= None, gc_center_rect= None, epdd=False,
+            post_fold = False, post_taper_ratio = 0.005, post_filter=None, post_norm = False, post_cut= None,
             output_pre_fnm= 'junk', output_format= ['hdf5'],
             log_prefnm= 'cc_mpi_log', log_mode=None ):
     """
@@ -92,7 +92,7 @@ def main(mode,
     elif mode in ('s2s', 'src', 'src2src', 'src-to-src'):
         flag_mode = 1
     if True:
-        mpi_print_log(mpi_log_fid, 0, True, 'mode: ', flag_mode  )
+        mpi_print_log(mpi_log_fid, 0, True, 'mode: ', mode  )
     ############################################################################################################################################
     ### 1. Init parameters for reading sac files and pre-processing
     ############################################################################################################################################
@@ -122,20 +122,31 @@ def main(mode,
     ############################################################################################################################################
     wt_size, wt_f1, wt_f2, wf_size = None, None, None, None
     if tnorm != None:
-        wt, wt_f1, wt_f2 = tnorm
-        wt_size = (int(np.round(wt / delta) ) //2 ) * 2 + 1
+        junk, wt_f1, wt_f2 = tnorm
+        wt_size = (int(np.round(junk / delta) ) //2 ) * 2 + 1
     if swht != None:
-        wf = swht  # Hz
-        wf_size = (int(np.round(wf / df) ) //2 ) * 2 + 1
-    # acceleration for spectral whitening and spectral cross-correlation
-    spec_acc_threshold = 0.001
-    acc_range = None, None
-    acc_range = acc_bound(fftsize, sampling_rate, post_filter[1], post_filter[2], spec_acc_threshold)
+        junk = swht  # Hz
+        wf_size = (int(np.round(junk / df) ) //2 ) * 2 + 1
     # logging
     if True: # user-defined parameters
         mpi_print_log(mpi_log_fid, 0, False, 'Set whitening parameters')
         mpi_print_log(mpi_log_fid, 1, False, 'Temporal normalization: ', tnorm, 'size:', wt_size)
         mpi_print_log(mpi_log_fid, 1, True,  'Spetral whitening:      ', swht, 'size:', wf_size)
+    ############################################################################################################################################
+    ### 2.1 Optional acceleration for spectral whitening and spectral cross-correlation
+    ############################################################################################################################################
+    acc_range = None, None
+    if post_filter != None:
+        spec_acc_threshold = 0.001
+        junk1, junk2 = post_filter[1], post_filter[2]
+        if swht != None:
+            junk2 = junk2 + swht
+        acc_range = acc_bound(fftsize, sampling_rate, junk1, junk2, spec_acc_threshold)
+
+        if True:
+            mpi_print_log(mpi_log_fid, 0, False, 'Enable spectral acceleration')
+            mpi_print_log(mpi_log_fid, 1, True,  'Threshold parameter: %f (will abandon the spectra outside (%f, %f) Hz.)' % (
+                            spec_acc_threshold, acc_range[0]*df, acc_range[1]*df ) )
     ############################################################################################################################################
     #### 3. Init selection criteria
     ############################################################################################################################################
@@ -159,10 +170,6 @@ def main(mode,
         mpi_print_log(mpi_log_fid, 1, False, 'Post taper taio:   ', post_taper_ratio )
         mpi_print_log(mpi_log_fid, 1, False, 'Post filter:       ', post_filter )
         mpi_print_log(mpi_log_fid, 1, True,  'Post normalizaion: ', post_norm )
-    if True:
-        mpi_print_log(mpi_log_fid, 0, False, 'Enable spectral acceleration')
-        mpi_print_log(mpi_log_fid, 1, True,  'Threshold parameter: %f (will abandon the spectra outside (%f, %f) Hz.)' % (
-                        spec_acc_threshold, acc_range[0]*df, acc_range[1]*df ) )
     ############################################################################################################################################
     ### 5. Init cross-correlation stack buf
     ############################################################################################################################################
@@ -184,7 +191,7 @@ def main(mode,
                             ', '.join(['%.1f' % it for it in dist[:3] ] ), '...',
                             ', '.join(['%.1f' % it for it in dist[-1:] ]), )
     ############################################################################################################################################
-    ### Distribut MPI
+    ### 6. Distribut MPI
     ############################################################################################################################################
     global_wildcards, local_wildcards, flag_input_format = list(), list(), 0
     if input_format in ('sac', 'SAC'):
@@ -198,23 +205,23 @@ def main(mode,
         mpi_print_log(mpi_log_fid, 1, False, 'Total job size:    ', len(global_wildcards) )
         mpi_print_log(mpi_log_fid, 1, True,  'Jobs on this node: ', len(local_wildcards) )
     ############################################################################################################################################
-    ### start running
+    ### 7. start running
     ############################################################################################################################################
     if True:
         mpi_print_log(mpi_log_fid, 0, False, 'Start running...')
     tc_rdw, tc_cc = 0.0, 0.0
     for idx_job, it in enumerate(local_wildcards):
         mpi_print_log(mpi_log_fid, 1, True, '-',idx_job+1, it)
-        ### 1. read and pre-processing and whitening
+        ### (1). read and pre-processing and whitening
         tc_junk = time.time()
-        whitened_spectra_mat, stlo, stla, evlo, evla, az, baz= None, None, None, None, None, None, None
+        whitened_spectra_mat, stlo, stla, evlo, evla, az, baz, gcarc= None, None, None, None, None, None, None, None
         if flag_input_format == 0: # input sac
             tmp = rd_wh_sac(it, delta, tmark, t1, t2, npts,
                             pre_detrend, pre_taper_ratio, pre_filter,
                             wt_size, wt_f1, wt_f2, wf_size, acc_range[0], acc_range[1], pre_taper_ratio,
                             fftsize, nrfft_valid, mpi_log_fid)
-            whitened_spectra_mat, stlo, stla, evlo, evla, az, baz = tmp
-        ### check if the obtained whitened_spectra_mat is valid
+            whitened_spectra_mat, stlo, stla, evlo, evla, az, baz, gcarc = tmp
+        ### (2) check if the obtained whitened_spectra_mat is valid
         if whitened_spectra_mat is None:
             mpi_print_log(mpi_log_fid, 2, True, '+ None of sac time series are valid, and hence we jump over to the next.' )
             continue
@@ -222,11 +229,11 @@ def main(mode,
         nsac = stlo.size
         local_tc_rdw = time.time()-tc_junk
 
-        ### r2r or s2s mode
+        ### (3) r2r or s2s mode
         lon, lat, azimuth = (stlo, stla, az) if flag_mode == 0 else (evlo, evla, baz)
         pt_lon, pt_lat = (evlo[0], evla[0]) if flag_mode == 0 else (stlo[0], stla[0])
 
-        ### 3.1 cc and stack
+        ### (4) cc and stack
         tc_junk = time.time()
         if daz_range != None or gcd_range != None or gc_center_rect != None:
             center_clo1 = np.array( [rect[0] for rect in gc_center_rect] )
@@ -234,14 +241,14 @@ def main(mode,
             center_cla1 = np.array( [rect[2] for rect in gc_center_rect] )
             center_cla2 = np.array( [rect[3] for rect in gc_center_rect] )
 
-            local_ncc = spec_ccstack2(whitened_spectra_mat, lon, lat,
+            local_ncc = spec_ccstack2(whitened_spectra_mat, lon, lat, gcarc, epdd,
                                         spec_stack_mat, stack_count,
                                         dist_range[0], dist_range[1], dist_step, acc_range[0], acc_range[1],
                                         azimuth, pt_lon, pt_lat, daz_range[0], daz_range[1], gcd_range[0], gcd_range[1],
                                         center_clo1, center_clo2, center_cla1, center_cla2 )
         else:
-            local_ncc = spec_ccstack(whitened_spectra_mat, lon, lat, 
-                                        spec_stack_mat, stack_count, 
+            local_ncc = spec_ccstack(whitened_spectra_mat, lon, lat, gcarc, epdd,
+                                        spec_stack_mat, stack_count,
                                         dist_range[0], dist_range[1], dist_step, acc_range[0], acc_range[1])
         local_tc_cc = time.time()-tc_junk
 
@@ -258,7 +265,7 @@ def main(mode,
         mpi_print_log(mpi_log_fid, 1, True, 'Time consumption summary: (rd&whiten: %.1fs(%d%%)， ccstack %.1fs(%d%%) )' % (
                         tc_rdw, tc_rdw/tc*100, tc_cc, tc_cc/tc*100 ) )
     ############################################################################################################################################
-    ### 3.1.2 MPI collecting
+    ### 8. MPI collecting
     ############################################################################################################################################
     if True:
         mpi_print_log(mpi_log_fid, 0, True, 'MPI collecting(reducing) to RANK0...')
@@ -268,9 +275,9 @@ def main(mode,
 
     ############################################################################################################################################
     ### On RANK0
-    ### 3.2 ifft and
-    ### 4.  post processing
-    ### 5. output
+    ### 9 ifft and
+    ### 10. post processing
+    ### 11. output
     ############################################################################################################################################
     if mpi_rank == 0:
         absolute_amp = np.ones(dist.size, dtype=np.float32)
@@ -330,6 +337,7 @@ def rd_wh_sac(fnm_wildcard, delta, tmark, t1, t2, npts,
     evla = np.zeros(nsac, dtype=np.float32 )
     az   = np.zeros(nsac, dtype=np.float32 )
     baz  = np.zeros(nsac, dtype=np.float32 )
+    gcarc= np.zeros(nsac, dtype=np.float32 )
     ###
     index = 0
     for it in fnms:
@@ -371,6 +379,7 @@ def rd_wh_sac(fnm_wildcard, delta, tmark, t1, t2, npts,
         evla[index] = hdr.evla
         az[index]   = hdr.az
         baz[index]  = hdr.baz
+        gcarc[index]= hdr.gcarc
         index = index + 1
     ###
     if 0 < index < nsac:
@@ -381,11 +390,12 @@ def rd_wh_sac(fnm_wildcard, delta, tmark, t1, t2, npts,
         evla = evla[:index]
         az   = az[:index]
         baz  = baz[:index]
+        gcarc= gcarc[:index]
     ###
     if index > 0:
-        return spectra, stlo, stla, evlo, evla, az, baz
+        return spectra, stlo, stla, evlo, evla, az, baz, gcarc
     else:
-        return None, None, None, None, None, None, None
+        return None, None, None, None, None, None, None, None
 def acc_bound(fftsize, sampling_rate, f1, f2, critical_level= 0.001):
     """
     Return the acceleration bound (i1, i2) for spetral computation.
@@ -405,7 +415,8 @@ def acc_bound(fftsize, sampling_rate, f1, f2, critical_level= 0.001):
         i2 = fftsize
     return i1, i2
 @jit(nopython=True, nogil=True)
-def spec_ccstack(spec_mat, lon, lat, stack_mat, stack_count, dist_min, dist_max, dist_step, acc_idx_min, acc_idx_max):
+def spec_ccstack(spec_mat, lon, lat, gcarc, epdd, stack_mat, stack_count, 
+                    dist_min, dist_max, dist_step, acc_idx_min, acc_idx_max):
     """
     spec_mat: Input spectra that is a 2D matrix. Each row is for a single time series.
     lon, lat: A list of longitude/latitude. Can be stlo/stla for rcv-to-rcv correlations, 
@@ -424,13 +435,15 @@ def spec_ccstack(spec_mat, lon, lat, stack_mat, stack_count, dist_min, dist_max,
     d1, d2 = dist_min-dist_step*0.5, dist_max+dist_step*0.5
     nsac = spec_mat.shape[0]
     for isac1 in range(nsac):
-        lo1, la1 = lon[isac1], lat[isac1]
+        lo1, la1, gcarc1 = lon[isac1], lat[isac1], gcarc[isac1]
         spec1 = spec_mat[isac1]
         for isac2 in range(isac1, nsac):
-            lo2, la2 = lon[isac2], lat[isac2]
+            lo2, la2, gcarc2 = lon[isac2], lat[isac2], gcarc[isac2]
             spec2 = spec_mat[isac2]
             ###
-            dist = geomath.haversine(lo1, la1, lo2, la2)
+            dist = abs(gcarc1-gcarc2)
+            if not epdd:
+                dist = geomath.haversine(lo1, la1, lo2, la2)
             if dist > d2 or dist < d1:
                 continue
             idx = int( np.round((dist-dist_min) / dist_step) )
@@ -462,9 +475,10 @@ def round_daz(daz):
         daz = 180.0-daz
     return daz
 @jit(nopython=True, nogil=True)
-def spec_ccstack2(spec_mat, lon, lat, stack_mat, stack_count, dist_min, dist_max, dist_step, acc_idx_min, acc_idx_max,
-                  azimuth, pt_lon, pt_lat, daz_min, daz_max, gcd_min, gcd_max,
-                  rect_clo1, rect_clo2, rect_cla1, rect_cla2):
+def spec_ccstack2(spec_mat, lon, lat, gcarc, epdd, stack_mat, stack_count, 
+                    dist_min, dist_max, dist_step, acc_idx_min, acc_idx_max,
+                    azimuth, pt_lon, pt_lat, daz_min, daz_max, gcd_min, gcd_max,
+                    rect_clo1, rect_clo2, rect_cla1, rect_cla2):
     """
     spec_mat: Input spectra that is a 2D matrix. Each row is for a single time series.
     lon, lat: A list of longitude/latitude. Can be stlo/stla for rcv-to-rcv correlations, 
@@ -489,12 +503,14 @@ def spec_ccstack2(spec_mat, lon, lat, stack_mat, stack_count, dist_min, dist_max
     i1, i2 = acc_idx_min, acc_idx_max
     nsac = spec_mat.shape[0]
     for isac1 in range(nsac):
-        lo1, la1, az1 = lon[isac1], lat[isac1], azimuth[isac1]
+        lo1, la1, az1, gcarc1 = lon[isac1], lat[isac1], azimuth[isac1], gcarc[isac1]
         spec1 = spec_mat[isac1]
         for isac2 in range(isac1, nsac):
-            lo2, la2, az2 = lon[isac2], lat[isac2], azimuth[isac2]
+            lo2, la2, az2, gcarc2 = lon[isac2], lat[isac2], azimuth[isac2], gcarc[isac2]
             ### dist selection
-            dist = geomath.haversine(lo1, la1, lo2, la2)
+            dist = abs(gcarc1-gcarc2)
+            if not epdd:
+                dist = geomath.haversine(lo1, la1, lo2, la2)
             if dist < dist1 or dist > dist2:
                 continue
             idx = int( np.round((dist-dist_min) / dist_step) )
@@ -622,7 +638,7 @@ def output( stack_mat, stack_count, dist, absolute_amp,
 
 HMSG = """%s  -I "in*/*.sac" -T -5/10800/32400 -D 0.1 -O cc_stack --out_format hdf5
     [--pre_detrend] [--pre_taper 0.005] [--pre_filter bandpass/0.005/0.1] 
-    --stack_dist 0/180/1 [--daz -0.1/15] [--gcd -0.1/20] [--gc_center_rect 120/180/0/40,180/190/0/10]
+    --stack_dist 0/180/1 [--daz -0.1/15] [--gcd -0.1/20] [--gc_center_rect 120/180/0/40,180/190/0/10] [--epdd]
     [--w_temporal 128.0/0.02/0.06667] [--w_spec 0.02] 
     [--post_fold] [--post_taper 0.05] [--post_filter bandpass/0.02/0.0666] [--post_norm] [--post_cut]
      --log cc_log  --log_mode 0
@@ -647,10 +663,11 @@ Args:
     [--w_spec] : spectral whitening. (default is disabled)
 
     #3. stacking method
-    --stack_dist                        :
+    --stack_dist  :
     [--daz]/[--dbaz]                    :
     [--gcd_ev]/[--gcd_ev]/[--gcd_rcv]   :
     [--gc_center_rect] : a list of rect (lo1, lo2, la1, la2) to exclude some receiver pairs.
+    [--epdd] : Use epi-distance difference instead of inter-receiver or inter-source distance.
 
     #4. post-processing parameters:
     [--post_fold]
@@ -665,13 +682,13 @@ Args:
                 E.g.: `--log_mode=all`, `--log_mode=0`, `--log_mode=0,1,2,3,10`.
 
 E.g.,
-    %s -I "in*/*.sac" -T -5/10800/32400 -D 0.1 -O cc --out_format hdf5,sac
-        --pre_detrend --pre_taper 0.005 
+    %s --mode r2r -I "in*/*.sac" -T -5/10800/32400 -D 0.1 --pre_detrend --pre_taper 0.005
+        -O cc --out_format hdf5,sac
         --w_temporal 128.0/0.02/0.06667 --w_spec 0.02
         --stack_dist 0/180/1
-        --daz -0.1/20 --gcd_ev -0.1/30 --gc_center_rect 120/180/0/40
+        --daz -0.1/20 --gcd -0.1/30 --gc_center_rect 120/180/0/40
         --post_fold --post_taper 0.005 --post_filter bandpass/0.001/0.06667 --post_norm  --post_cut 0/5000
-        --log cc_log  
+        --log cc_log --log_mode=0
 
     """
 if __name__ == "__main__":
@@ -696,10 +713,11 @@ if __name__ == "__main__":
     daz_range = None
     gcd_range = None
     gc_center_rect = None
+    epdd = False
 
     post_fold = False
     post_taper_ratio = 0.005
-    post_filter = ('bandpass', 0.02, 0.066666)
+    post_filter = None #('bandpass', 0.02, 0.066666)
     post_norm = False
     post_cut = None
 
@@ -713,9 +731,10 @@ if __name__ == "__main__":
     ######################
     options, remainder = getopt.getopt(sys.argv[1:], 'I:T:D:O:',
                             ['mode=',
-                             'out_format=', 'pre_detrend', 'pre_taper=', 'pre_filter=',
+                             'in_format=', 'pre_detrend', 'pre_taper=', 'pre_filter=',
+                             'out_format=',
                              'w_temporal=', 'w_spec=',
-                             'stack_dist=', 'daz=', 'dbaz=', 'gcd=', 'gcd_ev=', 'gcd_ev=', 'gc_center_rect=',
+                             'stack_dist=', 'daz=', 'dbaz=', 'gcd=', 'gcd_ev=', 'gcd_ev=', 'gc_center_rect=', 'epdd='
                              'post_fold', 'post_taper=', 'post_filter=', 'post_norm', 'post_cut=',
                              'log=', 'log_mode='] )
     for opt, arg in options:
@@ -728,6 +747,8 @@ if __name__ == "__main__":
             tmark = int(tmark)
             t1 = float(t1)
             t2 = float(t2)
+        elif opt in ('-D'):
+            delta = float(arg)
         elif opt in ('--pre_detrend'):
             pre_detrend = True
         elif opt in ('--pre_taper'):
@@ -735,6 +756,8 @@ if __name__ == "__main__":
         elif opt in ('--pre_filter'):
             junk1, junk2, junk3 = arg.split('/')
             pre_filter = (junk1, float(junk2), float(junk3) )
+        elif opt in ('--in_format'):
+            input_format = arg # need dev
         elif opt in ('-O'):
             output_pre_fnm = arg
         elif opt in ('--out_format'):
@@ -757,6 +780,8 @@ if __name__ == "__main__":
                 tmp[0] = tmp[0] % 360.0
                 tmp[1] = tmp[1] % 360.0
                 gc_center_rect.append( tmp )
+        elif opt in ('--epdd'):
+            epdd = True
         elif opt in ('--post_fold'):
             post_fold = True
         elif opt in ('--post_taper'):
@@ -781,7 +806,7 @@ if __name__ == "__main__":
     main(mode, fnm_wildcard, tmark, t1, t2, delta, input_format,
                 pre_detrend, pre_taper_ratio, pre_filter, 
                 tnorm, swht, dist_range, dist_step, 
-                daz_range, gcd_range, gc_center_rect,
+                daz_range, gcd_range, gc_center_rect, epdd,
                 post_fold, post_taper_ratio, post_filter, post_norm, post_cut, 
                 output_pre_fnm, output_format, 
                 log_prefnm, log_mode)
