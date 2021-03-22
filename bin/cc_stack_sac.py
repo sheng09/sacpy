@@ -741,7 +741,7 @@ if __name__ == "__main__":
                              'in_format=', 'pre_detrend', 'pre_taper=', 'pre_filter=',
                              'out_format=',
                              'w_temporal=', 'w_spec=',
-                             'stack_dist=', 'daz=', 'dbaz=', 'gcd=', 'gcd_ev=', 'gcd_ev=', 'gc_center_rect=', 'min_recordings=', 'epdd='
+                             'stack_dist=', 'daz=', 'dbaz=', 'gcd=', 'gcd_ev=', 'gcd_ev=', 'gc_center_rect=', 'min_recordings=', 'min_ev_per_rcv=', 'min_rcv_per_ev=', 'epdd='
                              'post_fold', 'post_taper=', 'post_filter=', 'post_norm', 'post_cut=',
                              'log=', 'log_mode='] )
     for opt, arg in options:
