@@ -130,7 +130,7 @@ def main(mode,
     # acceleration for spectral whitening and spectral cross-correlation
     spec_acc_threshold = 0.001
     acc_range = None, None
-    acc_range = acc_bound(fftsize, sampling_rate, post_filter[1], post_filter[2]+swht, spec_acc_threshold)
+    acc_range = acc_bound(fftsize, sampling_rate, post_filter[1], post_filter[2], spec_acc_threshold)
     # logging
     if True: # user-defined parameters
         mpi_print_log(mpi_log_fid, 0, False, 'Set whitening parameters')

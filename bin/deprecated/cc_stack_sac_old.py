@@ -18,7 +18,7 @@ from mpi4py import MPI
 
 def main(   fnm_wildcard, tmark, t1, t2, delta, pre_detrend=True, pre_taper_ratio= 0.005, pre_filter= None,
             temporal_normalization_parameter = (128.0, 0.02, 0.066666), spectral_whiten_parameter= 0.02,
-            dist_range = (0.0, 180.0), dist_step= 1.0, min_ev_per_rcv=1, dbaz_range= None, gcd_rcv_range= None, gc_center_rect= None,
+            dist_range = (0.0, 180.0), dist_step= 1.0, daz_range= None, gcd_ev_range= None, gc_center_rect= None,
             post_folding = True, post_taper_ratio = 0.005, post_filter = ('bandpass', 0.02, 0.066666), post_norm = True, post_cut= None,
             log_prefnm= 'cc_mpi_log',
             output_pre_fnm= 'junk', output_format= ['hdf5'] ):
@@ -49,9 +49,9 @@ def main(   fnm_wildcard, tmark, t1, t2, delta, pre_detrend=True, pre_taper_rati
     - 3. cross-correlation and stacking:
         dist_range:   inter-distance range (e.g., dist_range=(0.0, 180.0) ).
         dist_step:    inter-distance step. The generated dist list will be `np.arange(dist_range[0], dist_range[1] + dist_step )`.
-        dbaz_range:   selection criterion for dbaz range. Set `None` to disable. (e.g., dbaz_range=(-0.1, 15.0) )
-        gcd_rcv_range:selection criterion for the distance from the receiver to the two source great-circle path.
-                      Set `None` to disable. (e.g., gcd_rcv_range= (-0.1, 20) )
+        daz_range:    selection criterion for daz range. Set `None` to disable. (e.g., daz_range=(-0.1, 15.0) )
+        gcd_ev_range: selection criterion for the distance from the event to two receivers great-circle path.
+                      Set `None` to disable. (e.g., gcd_ev_range= (-0.1, 20) )
         gc_center_rect: selection criterion for the center of the great-circle plane formed by the two receivers.
                         If the center is outside the area, then it is not used in the cross-correlation stacks.
                         Can be a list of rect (lo1, lo2, la1, la2).
@@ -127,16 +127,15 @@ def main(   fnm_wildcard, tmark, t1, t2, delta, pre_detrend=True, pre_taper_rati
     ############################################################################################################################################
     #### 3. Init selection criteria
     ############################################################################################################################################
-    if dbaz_range != None or gcd_rcv_range != None or gc_center_rect != None:
-        dbaz_range     = (-0.1, 90.1) if dbaz_range == None else dbaz_range
-        gcd_rcv_range  = (-0.1, 90.1) if gcd_rcv_range == None else gcd_rcv_range
+    if daz_range != None or gcd_ev_range != None or gc_center_rect != None:
+        daz_range      = (-0.1, 90.1) if daz_range == None else daz_range
+        gcd_ev_range   = (-0.1, 90.1) if gcd_ev_range == None else gcd_ev_range
         gc_center_rect = [(-9999, 9999, -9999, 9999)] if gc_center_rect == None else gc_center_rect
     # logging
     if True:
         mpi_print_log(mpi_log_fid, 0, False, 'Set selection criteria')
-        mpi_print_log(mpi_log_fid, 1, False, 'min_ev_per_rcv: ', min_ev_per_rcv )
-        mpi_print_log(mpi_log_fid, 1, False, 'dbaz:    ', dbaz_range )
-        mpi_print_log(mpi_log_fid, 1, False, 'gcd_rcv: ', gcd_rcv_range )
+        mpi_print_log(mpi_log_fid, 1, False, 'daz:    ', daz_range )
+        mpi_print_log(mpi_log_fid, 1, False, 'gcd_ev: ', gcd_ev_range )
         mpi_print_log(mpi_log_fid, 1, False, 'selection of gc-center rect: ', gc_center_rect )
     ############################################################################################################################################
     ### 4. Init post-processing parameters
@@ -198,35 +197,32 @@ def main(   fnm_wildcard, tmark, t1, t2, delta, pre_detrend=True, pre_taper_rati
         mpi_print_log(mpi_log_fid, 1, True, '-',idx_job+1, wildcards)
         ### 1. read and pre-processing and whitening
         t_start = time.time()
-        tmptmptmp = rd_preproc_whiten_single(wildcards, delta, tmark, t1, t2, npts, min_ev_per_rcv,
-                                                pre_detrend, pre_taper_ratio, pre_filter,
-                                                fftsize, nrfft_valid, wt_size, wt_f1, wt_f2, wf_size, w_speedup_i1, w_speedup_i2, taper_size,
-                                                mpi_log_fid)
-        if tmptmptmp == None:
-            continue
-        whitened_spectra_mat, stlo, stla, evlo, evla, az, baz = tmptmptmp
+        whitened_spectra_mat, stlo, stla, evlo, evla, az, baz = rd_preproc_whiten_single(wildcards, delta, tmark, t1, t2, npts,
+                                                                                            pre_detrend, pre_taper_ratio, pre_filter,
+                                                                                            fftsize, nrfft_valid, wt_size, wt_f1, wt_f2, wf_size, w_speedup_i1, w_speedup_i2, pre_taper_ratio,
+                                                                                            mpi_log_fid)
         ### check if the obtained whitened_spectra_mat is valid
         if whitened_spectra_mat is None:
             mpi_print_log(mpi_log_fid, 2, True, '+ None of sac time series are valid, and hence we jump over to the next.' )
             continue
         ###
-        nsac = evlo.size
+        nsac = stlo.size
         local_time_rd_whiten = time.time()-t_start
 
         ### 3.1 cc and stack
         t_start = time.time()
-        if dbaz_range != None or gcd_rcv_range != None or gc_center_rect != None:
+        if daz_range != None or gcd_ev_range != None or gc_center_rect != None:
             center_clo1 = np.array( [rect[0] for rect in gc_center_rect] )
             center_clo2 = np.array( [rect[1] for rect in gc_center_rect] )
             center_cla1 = np.array( [rect[2] for rect in gc_center_rect] )
             center_cla2 = np.array( [rect[3] for rect in gc_center_rect] )
 
-            local_ncc = ccstack_selection_ev(whitened_spectra_mat, stack_count, evlo, evla, baz, spec_stack_mat,
-                            stlo[0], stla[0], dbaz_range[0], dbaz_range[1], gcd_rcv_range[0], gcd_rcv_range[1], dist_range[0], dist_range[1],
+            local_ncc = ccstack_selection_ev(whitened_spectra_mat, stack_count, stlo, stla, az, spec_stack_mat, evlo[0], evla[0],
+                            daz_range[0], daz_range[1], gcd_ev_range[0], gcd_ev_range[1], dist_range[0], dist_range[1],
                             center_clo1, center_clo2, center_cla1, center_cla2,
                             dist_step, cc_index_range, dist_range[0] )
         else:
-            local_ncc = ccstack(whitened_spectra_mat, stack_count, evlo, evla, spec_stack_mat, dist_step, cc_index_range, dist_range[0] )
+            local_ncc = ccstack(whitened_spectra_mat, stack_count, stlo, stla, spec_stack_mat, dist_step, cc_index_range, dist_range[0] )
         local_time_ccstack = time.time()-t_start
 
         ### time summary
@@ -327,7 +323,6 @@ def main(   fnm_wildcard, tmark, t1, t2, delta, pre_detrend=True, pre_taper_rati
                 mpi_print_log(mpi_log_fid, 1, True, 'hdf5: ', h5_fnm)
             f = h5py.File(h5_fnm, 'w' )
             dset = f.create_dataset('ccstack', data=stack_mat )
-            dset.attrs['info']  = 'src-to-src correlation stacks'
             dset.attrs['cc_t0'] = cc_t1
             dset.attrs['cc_t1'] = cc_t2
             dset.attrs['delta'] = delta
@@ -342,7 +337,7 @@ def main(   fnm_wildcard, tmark, t1, t2, delta, pre_detrend=True, pre_taper_rati
             for irow, it in enumerate(dist):
                 fnm = '%s_%05.1f_.sac' % (output_pre_fnm, it)
                 out_hdr.user2 = dist[irow]
-                out_hdr.user3 = stack_count[irow]
+                out_hdr.user3 = global_stack_count[irow]
                 out_hdr.user4 = absolute_amp[irow]
                 c_wrt_sac(fnm, stack_mat[irow], out_hdr, True)
     ########################################################################################################################################
@@ -360,7 +355,6 @@ def mpi_print_log(file, n_pre, flush, *objects, end='\n'):
     print(*objects, file=file, flush=flush, end=end )
 
 def rd_preproc_whiten_single(sacfnm_template, delta, tmark, t1, t2, npts,
-                                min_ev_per_rcv,
                                 pre_detrend, pre_taper_ratio , pre_filter, # preproc args
                                 fftsize, nrfft_valid, wnd_size_t, w_f1, w_f2, wnd_size_freq, speedup_i1, speedup_i2, whiten_taper_ratio, # whitening args
                                 mpi_log_fid):
@@ -384,8 +378,6 @@ def rd_preproc_whiten_single(sacfnm_template, delta, tmark, t1, t2, npts,
     ###
     fnms = sorted( glob(sacfnm_template) )
     nsac = len(fnms)
-    if nsac < min_ev_per_rcv:
-        return None
     ###
     sampling_rate = 1.0/delta
     btype, f1, f2 = pre_filter if pre_filter != None else (None, None, None)
@@ -469,20 +461,20 @@ def get_bound(fftsize, sampling_rate, f1, f2, critical_level= 0.01):
     return i1, i2
 
 @jit(nopython=True, nogil=True)
-def ccstack(spec_mat, stack_count, evlo_lst, evla_lst, stack_mat, dist_step, index_range, dist_start=0.0):
+def ccstack(spec_mat, stack_count, stlo_lst, stla_lst, stack_mat, dist_step, index_range, dist_start=0.0):
     """
     """
     count = 0
     i1, i2 = index_range
     nsac = spec_mat.shape[0]
     for isac1 in range(nsac):
-        evlo1, evla1 = evlo_lst[isac1], evla_lst[isac1]
+        stlo1, stla1 = stlo_lst[isac1], stla_lst[isac1]
         spec1 = spec_mat[isac1]
         for isac2 in range(isac1, nsac):
-            evlo2, evla2 = evlo_lst[isac2], evla_lst[isac2]
+            stlo2, stla2 = stlo_lst[isac2], stla_lst[isac2]
             spec2 = spec_mat[isac2]
             ###
-            dist = geomath.haversine(evlo1, evla1, evlo2, evla2)
+            dist = geomath.haversine(stlo1, stla1, stlo2, stla2)
             idx = int( np.round((dist-dist_start) / dist_step) )
             w   = np.conj(spec1[i1:i2]) * spec2[i1:i2]
             stack_mat[idx][i1:i2] += w
@@ -491,31 +483,31 @@ def ccstack(spec_mat, stack_count, evlo_lst, evla_lst, stack_mat, dist_step, ind
     return count
 
 @jit(nopython=True, nogil=True)
-def ccstack_selection_ev(spec_mat, stack_count, evlo_lst, evla_lst, baz_lst, stack_mat,
-                        stlo, stla, dbaz_min, dbaz_max, gcd_rcv_min, gcd_rcv_max, dist_min, dist_max,
+def ccstack_selection_ev(spec_mat, stack_count, stlo_lst, stla_lst, az_lst, stack_mat,
+                        evlo, evla, daz_min, daz_max, gcd_ev_min, gcd_ev_max, dist_min, dist_max,
                         center_clo1, center_clo2, center_cla1, center_cla2,
                         dist_step, index_range, dist_start=0.0):
     """
     """
-    dbaz1, dbaz2 = dbaz_min, dbaz_max
-    gcd1, gcd2  = gcd_rcv_min, gcd_rcv_max
+    daz1, daz2 = daz_min, daz_max
+    gcd1, gcd2 = gcd_ev_min, gcd_ev_max
     dist1, dist2 = dist_min-dist_step*0.5, dist_max+dist_step*0.5
     count = 0
     i1, i2 = index_range
     nsac = spec_mat.shape[0]
     for isac1 in range(nsac):
-        evlo1, evla1, baz1 = evlo_lst[isac1], evla_lst[isac1], baz_lst[isac1]
+        stlo1, stla1, az1 = stlo_lst[isac1], stla_lst[isac1], az_lst[isac1]
         spec1 = spec_mat[isac1]
         for isac2 in range(isac1, nsac):
-            evlo2, evla2, baz2 = evlo_lst[isac2], evla_lst[isac2], baz_lst[isac2]
+            stlo2, stla2, az2 = stlo_lst[isac2], stla_lst[isac2], az_lst[isac2]
             ### dist selection
-            dist = geomath.haversine(evlo1, evla1, evlo2, evla2)
+            dist = geomath.haversine(stlo1, stla1, stlo2, stla2)
             if dist < dist1 or dist > dist2:
                 continue
             ### rect selection
             flag = 1 # 1 means the (clo, cla) is out of any rectangles
-            if isac1==isac2 or (abs(evlo1-evlo2)<1.0e-3 and abs(evla1-evla2)<1.0e-3 ):
-                (x, y), (x1, y1) = geomath.great_circle_plane_center(evlo1, evla1, stlo, stla)
+            if isac1==isac2 or (abs(stlo1-stlo2)<1.0e-3 and abs(stla1-stla2)<1.0e-3 ):
+                (x, y), (x1, y1) = geomath.great_circle_plane_center(evlo, evla, stlo1, stla1)
                 if y<0:
                     x, y = x1, y1
                 for lo1, lo2, la1, la2 in zip(center_clo1, center_clo2, center_cla1, center_cla2):
@@ -528,7 +520,7 @@ def ccstack_selection_ev(spec_mat, stack_count, evlo_lst, evla_lst, baz_lst, sta
                             flag = 0
                             break
             else:
-                (x, y), (x1, y1) = geomath.great_circle_plane_center(evlo1, evla1, evlo2, evla2)
+                (x, y), (x1, y1) = geomath.great_circle_plane_center(stlo1, stla1, stlo2, stla2)
                 if y<0:
                     x, y = x1, y1
                 for lo1, lo2, la1, la2 in zip(center_clo1, center_clo2, center_cla1, center_cla2):
@@ -542,16 +534,16 @@ def ccstack_selection_ev(spec_mat, stack_count, evlo_lst, evla_lst, baz_lst, sta
                             break
             if flag == 1:
                 continue
-            ### dbaz selection
-            dbaz = (baz1-baz2) % 360.0
-            if dbaz > 180.0:
-                dbaz = 360.0-dbaz
-            if dbaz > 90.0:
-                dbaz = 180.0-dbaz
-            if dbaz < dbaz1 or dbaz > dbaz2:
+            ### daz selection
+            daz = (az1-az2) % 360.0
+            if daz > 180.0:
+                daz = 360.0-daz
+            if daz > 90.0:
+                daz = 180.0-daz
+            if daz < daz1 or daz > daz2:
                 continue
             ### gcd selection
-            gcd = abs( geomath.point_distance_to_great_circle_plane(stlo, stla, evlo1, evla1, evlo2, evla2) )
+            gcd = abs( geomath.point_distance_to_great_circle_plane(evlo, evla, stlo1, stla1, stlo2, stla2) )
             if gcd < gcd1 or gcd > gcd2:
                 continue
 
@@ -578,9 +570,8 @@ if __name__ == "__main__":
 
     dist_range = (0.0, 180.0)
     dist_step= 1.0
-    min_ev_per_rcv = 1
-    dbaz_range = None
-    gcd_rcv_range = None
+    daz_range = None
+    gcd_ev_range = None
     gc_center_rect = None
 
     post_folding = False
@@ -594,11 +585,10 @@ if __name__ == "__main__":
     output_format='hdf5'
 
     ######################
-    HMSG = """Cross-correlation and stack for receiver-to-receiver pairs.\n
-    %s  -I "in*/*.sac" -T -5/10800/32400 -D 0.1 -O cc_stack --out_format hdf5
+    HMSG = """\n
+    %s  -I "in*/*.sac" -T 0/10800/32400 -D 0.1 -O cc_stack --out_format hdf5
         [--pre_detrend] [--pre_taper 0.005] [--pre_filter bandpass/0.005/0.1] 
-        [--min_ev_per_rcv 100]
-        --stack_dist 0/180/1 [--dbaz -0.1/15] [--gcd_rcv -0.1/20] [--gc_center_rect 120/180/0/40,180/190/0/10]
+        --stack_dist 0/180/1 [--daz -0.1/15] [--gcd_ev -0.1/20] [--gc_center_rect 120/180/0/40,180/190/0/10]
         [--w_temporal 128.0/0.02/0.06667] [--w_spec 0.02] 
         [--post_fold] [--post_taper 0.05] [--post_filter bandpass/0.02/0.0666] [--post_norm] [--post_cut]
          --log cc_log
@@ -620,9 +610,8 @@ Args:
 
     #3. stacking method
     --stack_dist :
-    [--dbaz]      :
-    [--gcd_rcv]   :
-    [--min_ev_per_rcv] :
+    [--daz]      :
+    [--gcd_ev]   :
     [--gc_center_rect] : a list of rect (lo1, lo2, la1, la2) to exclude some receiver pairs.
 
     #4. post-processing parameters:
@@ -636,12 +625,11 @@ Args:
     --log : log filename prefix.
 
 E.g.,
-    %s -I "in*/*.sac" -T -5/10800/32400 -D 0.1 -O cc --out_format hdf5,sac
+    %s -I "in*/*.sac" -T 0/10800/32400 -D 0.1 -O cc --out_format hdf5,sac
         --pre_detrend --pre_taper 0.005 
         --w_temporal 128.0/0.02/0.06667 --w_spec 0.02
         --stack_dist 0/180/1
-        --min_ev_per_rcv 100
-        --dbaz -0.1/20 --gcd_rcv -0.1/30 --gc_center_rect 120/180/0/40
+        --daz -0.1/20 --gcd_ev -0.1/30 --gc_center_rect 120/180/0/40
         --post_fold --post_taper 0.005 --post_filter bandpass/0.001/0.06667 --post_norm  --post_cut 0/5000
         --log cc_log  
 
@@ -655,7 +643,7 @@ E.g.,
     options, remainder = getopt.getopt(sys.argv[1:], 'I:T:D:O:',
                             ['pre_detrend', 'pre_taper=', 'pre_filter=',
                              'w_temporal=', 'w_spec=',
-                             'stack_dist=', 'min_ev_per_rcv=', 'dbaz=', 'gcd_rcv=', 'gc_center_rect=',
+                             'stack_dist=', 'daz=', 'gcd_ev=', 'gc_center_rect=',
                              'post_fold', 'post_taper=', 'post_filter=', 'post_norm', 'post_cut=',
                              'log=', 'out_format='] )
     for opt, arg in options:
@@ -680,12 +668,10 @@ E.g.,
         elif opt in ('--stack_dist'):
             x, y, z = [float(it) for it in arg.split('/') ]
             dist_range, dist_step = (x, y), z
-        elif opt in ('--min_ev_per_rcv'):
-            min_ev_per_rcv = int(arg)
-        elif opt in ('--dbaz'):
-            dbaz_range = [float(it) for it in arg.split('/') ]
-        elif opt in ('--gcd_rcv'):
-            gcd_rcv_range = [float(it) for it in arg.split('/') ]
+        elif opt in ('--daz'):
+            daz_range = [float(it) for it in arg.split('/') ]
+        elif opt in ('--gcd_ev'):
+            gcd_ev_range = [float(it) for it in arg.split('/') ]
         elif opt in ('--gc_center_rect'):
             gc_center_rect = []
             for rect in arg.split(','):
@@ -713,7 +699,7 @@ E.g.,
     #######
     main(fnm_wildcard, tmark, t1, t2, delta, pre_detrend, pre_taper_ratio, pre_filter,
             temporal_normalization_parameter, spectral_whiten_parameter,
-            dist_range, dist_step, min_ev_per_rcv, dbaz_range, gcd_rcv_range, gc_center_rect,
+            dist_range, dist_step, daz_range, gcd_ev_range, gc_center_rect,
             post_folding, post_taper_ratio, post_filter, post_norm, post_cut,
             log_prefnm, output_pre_fnm, output_format )
     ########
