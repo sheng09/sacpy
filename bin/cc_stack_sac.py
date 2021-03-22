@@ -20,7 +20,7 @@ def main(mode,
             fnm_wildcard, tmark, t1, t2, delta, input_format='sac', pre_detrend=True, pre_taper_ratio= 0.005, pre_filter= None,
             tnorm = (128.0, 0.02, 0.066666), swht= 0.02,
             stack_dist_range = (0.0, 180.0), stadist_step= 1.0, 
-            daz_range= None, gcd_range= None, gc_center_rect= None, epdd=False,
+            daz_range= None, gcd_range= None, gc_center_rect= None, min_recordings=0, epdd=False,
             post_fold = False, post_taper_ratio = 0.005, post_filter=None, post_norm = False, post_cut= None,
             output_pre_fnm= 'junk', output_format= ['hdf5'],
             log_prefnm= 'cc_mpi_log', log_mode=None ):
@@ -160,6 +160,7 @@ def main(mode,
         mpi_print_log(mpi_log_fid, 1, False, 'daz: ', daz_range )
         mpi_print_log(mpi_log_fid, 1, False, 'gcd: ', gcd_range )
         mpi_print_log(mpi_log_fid, 1, False, 'selection of gc-center rect: ', gc_center_rect )
+        mpi_print_log(mpi_log_fid, 1, False, 'minmal number of recordings: ', min_recordings )
     ############################################################################################################################################
     ### 4. Init post-processing parameters
     ############################################################################################################################################
@@ -227,6 +228,10 @@ def main(mode,
             continue
         ###
         nsac = stlo.size
+        if nsac < min_recordings:
+            mpi_print_log(mpi_log_fid, 2, True, '+ Insufficient number of recordings (%d), and hence we jump over to the next.' % (nsac) )
+            continue
+        ###
         local_tc_rdw = time.time()-tc_junk
 
         ### (3) r2r or s2s mode
@@ -638,7 +643,7 @@ def output( stack_mat, stack_count, dist, absolute_amp,
 
 HMSG = """%s  -I "in*/*.sac" -T -5/10800/32400 -D 0.1 -O cc_stack --out_format hdf5
     [--pre_detrend] [--pre_taper 0.005] [--pre_filter bandpass/0.005/0.1] 
-    --stack_dist 0/180/1 [--daz -0.1/15] [--gcd -0.1/20] [--gc_center_rect 120/180/0/40,180/190/0/10] [--epdd]
+    --stack_dist 0/180/1 [--daz -0.1/15] [--gcd -0.1/20] [--gc_center_rect 120/180/0/40,180/190/0/10] [--min_recordings 10] [--epdd]
     [--w_temporal 128.0/0.02/0.06667] [--w_spec 0.02] 
     [--post_fold] [--post_taper 0.05] [--post_filter bandpass/0.02/0.0666] [--post_norm] [--post_cut]
      --log cc_log  --log_mode 0
@@ -667,6 +672,7 @@ Args:
     [--daz]/[--dbaz]                    :
     [--gcd_ev]/[--gcd_ev]/[--gcd_rcv]   :
     [--gc_center_rect] : a list of rect (lo1, lo2, la1, la2) to exclude some receiver pairs.
+    [--min_recordings]/[--min_ev_per_rcv]/[--min_rcv_per_ev] : minmal number of recordings for a single event or for a single receiver.
     [--epdd] : Use epi-distance difference instead of inter-receiver or inter-source distance.
 
     #4. post-processing parameters:
@@ -713,6 +719,7 @@ if __name__ == "__main__":
     daz_range = None
     gcd_range = None
     gc_center_rect = None
+    min_recordings = 0
     epdd = False
 
     post_fold = False
@@ -734,7 +741,7 @@ if __name__ == "__main__":
                              'in_format=', 'pre_detrend', 'pre_taper=', 'pre_filter=',
                              'out_format=',
                              'w_temporal=', 'w_spec=',
-                             'stack_dist=', 'daz=', 'dbaz=', 'gcd=', 'gcd_ev=', 'gcd_ev=', 'gc_center_rect=', 'epdd='
+                             'stack_dist=', 'daz=', 'dbaz=', 'gcd=', 'gcd_ev=', 'gcd_ev=', 'gc_center_rect=', 'min_recordings=', 'epdd='
                              'post_fold', 'post_taper=', 'post_filter=', 'post_norm', 'post_cut=',
                              'log=', 'log_mode='] )
     for opt, arg in options:
@@ -780,6 +787,8 @@ if __name__ == "__main__":
                 tmp[0] = tmp[0] % 360.0
                 tmp[1] = tmp[1] % 360.0
                 gc_center_rect.append( tmp )
+        elif opt in ('--min_recordings', '--min_ev_per_rcv', '--min_rcv_per_ev'):
+            min_recordings = int(arg)
         elif opt in ('--epdd'):
             epdd = True
         elif opt in ('--post_fold'):
@@ -806,7 +815,7 @@ if __name__ == "__main__":
     main(mode, fnm_wildcard, tmark, t1, t2, delta, input_format,
                 pre_detrend, pre_taper_ratio, pre_filter, 
                 tnorm, swht, dist_range, dist_step, 
-                daz_range, gcd_range, gc_center_rect, epdd,
+                daz_range, gcd_range, gc_center_rect, min_recordings, epdd,
                 post_fold, post_taper_ratio, post_filter, post_norm, post_cut, 
                 output_pre_fnm, output_format, 
                 log_prefnm, log_mode)
