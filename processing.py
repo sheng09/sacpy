@@ -159,7 +159,7 @@ def frequency_whiten(tr, fwin_len, water_level_ratio= 1.0e-5, speedup_i1= None, 
     ys = irfft(spec, fftsize )
     if len(tr) != fftsize:
         ys = ys[:-1]
-    ys = taper(ys, taper_length)
+    taper_in_place(ys, taper_length)
     return ys
 
 @jit(nopython=True, nogil=True)
@@ -250,11 +250,35 @@ def taper(tr, n):
     x[-n:] *= w[-n:]
     return x
 
+@jit(nopython=True, nogil=True)
+def taper_in_place(tr, n):
+    """
+    Taper a trace `tr` in place. The `tr` will be revised after running.
+    0 <= n <= len(tr)/2
+    """
+    tr[0] = 0.0
+    tr[-1] = 0.0
+    junk = np.pi/n
+    for idx in range(0, n):
+        c = 0.5*( 1+np.cos(junk*(idx-n) ) )
+        tr[idx] *= c
+        tr[-1-idx] *= c
+
 if __name__ == "__main__":
     import copy
     import sacpy.sac as sac
     import sys
     import matplotlib.pyplot as plt
+    x = np.ones(10000)
+    x2 = tukey_jit(10000, 0.5)
+    taper_in_place(x, 500)
+    plt.plot(x)
+    plt.plot(x2, '--')
+
+    y = frequency_whiten(x, 100, water_level_ratio= 1.0e-5, speedup_i1= None, speedup_i2= None, taper_length=10)
+    plt.plot(y, ':')
+    plt.show()
+    sys.exit(0)
 
     #sys.exit(0)
 

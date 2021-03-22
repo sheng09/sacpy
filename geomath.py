@@ -107,8 +107,29 @@ def great_circle_plane_center(lon1, lat1, lon2, lat2):
     else:
         return antipode(lon, lat), (lon, lat)
 
-
-
+@jit(types.UniTuple(types.UniTuple(float64, 2), 2)(float64, float64, float64, float64, float64, float64, float64), nopython=True, nogil=True)
+def great_circle_plane_center_triple(lon1, lat1, lon2, lat2, ptlo, ptla, critical_distance):
+    """
+    Return two center points coordinate (clon1, clat1), (clon2, clat2) for the great circle plane formed by
+    the two input points (lon1, lat1) and (lon2, lat2).
+    If the two points are too close (distance below `critical_distance`), then the great circle plane
+    is the one passing through the two points and the third point (ptlo, ptla)
+    """
+    x1, y1, z1 = rlola_to_xyz(1.0, lon1, lat1)
+    x2, y2, z2 = 0.0, 0.0, 0.0
+    if abs(lon1-lon2)>critical_distance and abs(lat1-lat2)>critical_distance:
+        x2, y2, z2 = rlola_to_xyz(1.0, lon2, lat2)
+    else:
+        x2, y2, z2 = rlola_to_xyz(1.0, ptlo, ptla)
+    x3, y3, z3 = y1*z2-y2*z1, z1*x2-z2*x1, x1*y2-x2*y1
+    lat = np.arctan2(z3, np.sqrt(x3*x3+y3*y3))
+    lon = np.arctan2(y3, x3)
+    #print(x3, y3, z3)
+    lon, lat = np.rad2deg(lon) % 360.0, np.rad2deg(lat)
+    if lat > 0.0:
+        return (lon, lat), antipode(lon, lat)
+    else:
+        return antipode(lon, lat), (lon, lat)
 
 
 ##################################################################################################################
