@@ -39,7 +39,7 @@ def slant_stack(mat, delta, dist, dist_ref=0, slowness_range= (-4, 0), nroot=1 )
     ###
     return taup_mat.transpose()
 
-def run(h5_filename, figname, dist_range=None, cc_time_range=None, slowness_range = (-4, 0), dist_ref=0, search_range= None,
+def run(h5_filename, figname, dist_range=None, cc_time_range=None, slowness_range = (-4, 0), dist_ref=0, search_range= None, search_type='pos',
         filter_setting =(None, 0.02, 0.0666), nroot= 1,
         figsize= (3, 4), title='', interpolation= 'gaussian', ylabel= True, maxpoint=True, extent=None, contour=None, vmin_scale=1.0, vmax_scale=1.0 ):
     """
@@ -88,7 +88,11 @@ def run(h5_filename, figname, dist_range=None, cc_time_range=None, slowness_rang
         taup_mat[iy1:iy2,ix2:] = 0.0
         pass
     ### the optimal point
-    irow, icol = np.unravel_index(taup_mat.argmin(), taup_mat.shape)
+    irow, icol = 0, 0
+    if search_type == 'neg':
+        irow, icol = np.unravel_index(taup_mat.argmin(), taup_mat.shape)
+    else:
+        irow, icol = np.unravel_index(taup_mat.argmax(), taup_mat.shape)
     t = cc_t0 + irow*delta
     p = slowness_range[0] + delta*icol
     
@@ -165,6 +169,7 @@ if __name__ == "__main__":
     slowness_range = (-4, 0)
     dist_ref = 0
     search_range= None
+    search_type= 'pos'
     nroot = 1
     #### pyplot options
     figsize = (3, 4)
@@ -182,7 +187,7 @@ if __name__ == "__main__":
     filter_setting = (None, 0.02, 0.0666)
     ####
     HMSG = """
-    %s -I in.h5 -P img.png [-D 0/50] [-T 0/3000] [-S -4/-1] --Dref=10 [--search_range=-3/-2/100/250]
+    %s -I in.h5 -P img.png [-D 0/50] [-T 0/3000] [-S -4/-1] --Dref=10 [--search_range=-3/-2/100/250] [--search_type=pos]
         [--filter bandpass/0.02/0.0666] [--nroot 1]
         [--plt figsize=3/4,interpolation=gaussian,title=all,maxpoint=False,extent=-4/-1/100/300,contour=-0.9] [-H]
     """ % argv[0]
@@ -190,7 +195,7 @@ if __name__ == "__main__":
         print(HMSG)
         exit(0)
     ####
-    options, remainder = getopt(argv[1:], 'I:P:D:T:S:VHh?', ['Dref=', 'filter=', 'plt=', 'nroot=', 'search_range='] )
+    options, remainder = getopt(argv[1:], 'I:P:D:T:S:VHh?', ['Dref=', 'filter=', 'plt=', 'nroot=', 'search_range=', 'search_type='] )
     for opt, arg in options:
         if opt in ('-I'):
             h5_fnm = arg
@@ -215,12 +220,14 @@ if __name__ == "__main__":
             nroot = int(arg)
         elif opt in ('--search_range'):
             search_range = tuple( [float(it) for it in arg.split('/') ] )
+        elif opt in ('--search_type'):
+            search_type = arg
         else:
             print(HMSG)
             exit(0)
     ####
     ####
-    run(h5_fnm, figname, dist_range, cc_time_range, slowness_range, dist_ref, search_range,
+    run(h5_fnm, figname, dist_range, cc_time_range, slowness_range, dist_ref, search_range, search_type,
         filter_setting, nroot, figsize, title, interpolation, ylabel, maxpoint, extent, contour, vmin_scale, vmax_scale )
 
 
