@@ -12,7 +12,7 @@ from copy import deepcopy
 from scipy.ndimage.filters import gaussian_filter
 
 
-def slant_stack(mat, delta, dist, slowness_range= (-4, 0), nroot=1 ):
+def slant_stack(mat, delta, dist, dist_ref=0, slowness_range= (-4, 0), nroot=1 ):
     """
     """
     slowness = np.arange(slowness_range[0], slowness_range[1]+delta, delta )
@@ -24,7 +24,7 @@ def slant_stack(mat, delta, dist, slowness_range= (-4, 0), nroot=1 ):
     ###
     for ip, p in enumerate(slowness):
         for idx, d in enumerate(dist):
-            dt = -p*d
+            dt = -p*(d-dist_ref)
             idt = int( np.round(dt/delta) )
             tmp = np.roll(mat[idx], idt)
             if idt >=0:
@@ -39,7 +39,7 @@ def slant_stack(mat, delta, dist, slowness_range= (-4, 0), nroot=1 ):
     ###
     return taup_mat.transpose()
 
-def run(h5_filename, figname, dist_range=None, cc_time_range=None, slowness_range = (-4, 0), search_range= None,
+def run(h5_filename, figname, dist_range=None, cc_time_range=None, slowness_range = (-4, 0), dist_ref=0, search_range= None,
         filter_setting =(None, 0.02, 0.0666), nroot= 1,
         figsize= (3, 4), title='', interpolation= 'gaussian', ylabel= True, maxpoint=True, extent=None, contour=None, vmin_scale=1.0, vmax_scale=1.0 ):
     """
@@ -72,7 +72,7 @@ def run(h5_filename, figname, dist_range=None, cc_time_range=None, slowness_rang
         mat = mat[i1:i2, :]
         dist = dist[i1:i2]
     ### slant stacking
-    taup_mat = slant_stack(mat, delta, dist, slowness_range, nroot )
+    taup_mat = slant_stack(mat, delta, dist, dist_ref, slowness_range, nroot )
     taup_mat *= (-1.0/taup_mat.min() )
     ###
     fig, ax = plt.subplots(1, 1, figsize= figsize)
@@ -163,6 +163,7 @@ if __name__ == "__main__":
     dist_range = None
     cc_time_range = None
     slowness_range = (-4, 0)
+    dist_ref = 0
     search_range= None
     nroot = 1
     #### pyplot options
@@ -181,14 +182,15 @@ if __name__ == "__main__":
     filter_setting = (None, 0.02, 0.0666)
     ####
     HMSG = """
-    %s -I in.h5 -P img.png [-D 0/50] [-T 0/3000] [-S -4/-1] [--search_range=-3/-2/100/250]  [--filter bandpass/0.02/0.0666] [--nroot 1]
+    %s -I in.h5 -P img.png [-D 0/50] [-T 0/3000] [-S -4/-1] --Dref=10 [--search_range=-3/-2/100/250]
+        [--filter bandpass/0.02/0.0666] [--nroot 1]
         [--plt figsize=3/4,interpolation=gaussian,title=all,maxpoint=False,extent=-4/-1/100/300,contour=-0.9] [-H]
     """ % argv[0]
     if len(argv) < 2:
         print(HMSG)
         exit(0)
     ####
-    options, remainder = getopt(argv[1:], 'I:P:D:T:S:VHh?', ['filter=', 'plt=', 'nroot=', 'search_range='] )
+    options, remainder = getopt(argv[1:], 'I:P:D:T:S:VHh?', ['Dref=', 'filter=', 'plt=', 'nroot=', 'search_range='] )
     for opt, arg in options:
         if opt in ('-I'):
             h5_fnm = arg
@@ -200,6 +202,8 @@ if __name__ == "__main__":
             cc_time_range = tuple([float(it) for it in arg.split('/') ] )
         elif opt in ('-S'):
             slowness_range = tuple( [float(it) for it in arg.split('/') ] )
+        elif opt in ('--Dref'):
+            dist_ref = float(arg)
         elif opt in ('--filter'):
             filter_setting = arg.split('/')
             filter_setting[1] = float(filter_setting[1] )
@@ -216,7 +220,8 @@ if __name__ == "__main__":
             exit(0)
     ####
     ####
-    run(h5_fnm, figname, dist_range, cc_time_range, slowness_range, search_range, filter_setting, nroot, figsize, title, interpolation, ylabel, maxpoint, extent, contour, vmin_scale, vmax_scale )
+    run(h5_fnm, figname, dist_range, cc_time_range, slowness_range, dist_ref, search_range,
+        filter_setting, nroot, figsize, title, interpolation, ylabel, maxpoint, extent, contour, vmin_scale, vmax_scale )
 
 
 
