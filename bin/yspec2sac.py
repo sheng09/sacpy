@@ -11,7 +11,7 @@ def get_meta_data(info_fnm):
     """
     Obtain delta, evlo, evla, evdp, stdp, and a list of (stlo, stla) from yspec.in file.
     """
-    with open(info_fnm) as fid:
+    with open(info_fnm, 'r') as fid:
         tmp = fid.readlines()
         delta = float( tmp[37] )
         evdp = float(tmp[52] )
@@ -50,6 +50,8 @@ def run(infnm_wildcard, outfnm_prefnm, info_fnm, component, verbose=False):
         for it_xs, it_cmp in zip( (xz, xn, xe), 'ZNE' ):
             if it_cmp in component:
                 ofnm = '%s_%04d.%s.sac' % (outfnm_prefnm, idx, it_cmp )
+                if verbose:
+                    print(it_fnm, '==>', ofnm)
                 sac.c_wrt_sac(ofnm, it_xs, hdr, verbose, True)
 
 if __name__ == "__main__":

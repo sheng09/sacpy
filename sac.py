@@ -1061,8 +1061,8 @@ def c_wrt_sac(filename, xs, hdr, verbose, lcalda=False):
     Write.
     """
     if lcalda:
-        stlo = hdr.stlo
-        stla = hdr.stla
+        evlo, evla = hdr.evlo, hdr.evla
+        stlo, stla = hdr.stlo, hdr.stla
         hdr.az = azimuth(evlo, evla, stlo, stla)
         hdr.baz = azimuth(stlo, stla, evlo, evla)
         hdr.gcarc = haversine(evlo, evla, stlo, stla)
