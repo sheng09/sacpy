@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
-
+import matplotlib
+matplotlib.rcParams['font.sans-serif'] = "Arial"
+matplotlib.rcParams['font.family'] = "sans-serif"
 from matplotlib.pyplot import figure
 from numpy.core.numeric import extend_all
 from h5py import File as h5_File
@@ -11,6 +13,7 @@ from sacpy.processing import max_amplitude_timeseries, filter
 from copy import deepcopy
 from scipy.ndimage.filters import gaussian_filter
 
+plt.rc('font', size=12) #controls default text size
 
 def slant_stack(mat, delta, dist, dist_ref=0, slowness_range= (-4, 0), nroot=1 ):
     """
@@ -111,12 +114,12 @@ def run(h5_filename, figname, dist_range=None, cc_time_range=None, slowness_rang
         ax.plot(slowness_range, [t, t], '#ffbb00', linewidth= 0.6, alpha= 0.8)
         ax.plot([p, p], [cc_t0, cc_t1], '#ffbb00', linewidth= 0.6, alpha= 0.8)
         ax.plot(p, t, 's', color='#ffbb00', alpha= 0.8)
-        ax.text(slowness_range[0], t+1, '%.1f s' % (t), color='#ffbb00', fontsize=18 )
+        ax.text(slowness_range[0], t+1, '%.1f s' % (t), color='#ffbb00', fontsize=22 )
     if ylabel:
-        ax.set_ylabel('Time (s)')
+        ax.set_ylabel('Time (s)', fontsize=15)
     else:
         ax.set_yticklabels([])
-    ax.set_xlabel('Slowness (s/$\degree$)')
+    ax.set_xlabel('Slowness (s/$\degree$)', fontsize=15)
     ax.set_title(title)
     if extent != None:
         ax.set_xlim((extent[0], extent[1]) )
