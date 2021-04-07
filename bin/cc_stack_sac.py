@@ -23,7 +23,7 @@ def main(mode,
             daz_range= None, gcd_range= None, gc_center_rect= None, gc_center_circle=None, min_recordings=0, epdd=False,
             post_fold = False, post_taper_ratio = 0.005, post_filter=None, post_norm = False, post_cut= None,
             output_pre_fnm= 'junk', output_format= ['hdf5'],
-            log_prefnm= 'cc_mpi_log', log_mode=None ):
+            log_prefnm= 'cc_mpi_log', log_mode=None, spec_acc_threshold = 0.001 ):
     """
     The main function.
 
@@ -137,7 +137,6 @@ def main(mode,
     ############################################################################################################################################
     acc_range = None, None
     if post_filter != None:
-        spec_acc_threshold = 0.001
         junk1, junk2 = post_filter[1], post_filter[2]
         if swht != None:
             junk2 = junk2 + swht
@@ -420,7 +419,10 @@ def acc_bound(fftsize, sampling_rate, f1, f2, critical_level= 0.001):
     amp = np.abs(s)
     c = amp.max() * critical_level
     i1 = np.argmax(amp>c)
-    i2 = np.argmin(amp[i1:]>c) + i1 + 1
+    if np.min(amp[i1:]) >= c:
+        i2 = fftsize
+    else:
+        i2 = np.argmin(amp[i1:]>c) + i1 + 1
     if i1 < 0:
         i1 = 0
     if i2 >= fftsize:
@@ -663,7 +665,7 @@ HMSG = """%s  -I "in*/*.sac" -T -5/10800/32400 -D 0.1 -O cc_stack --out_format h
     [--gc_center_circle 100/-20/10,90/0/15] [--min_recordings 10] [--epdd]
     [--w_temporal 128.0/0.02/0.06667] [--w_spec 0.02] 
     [--post_fold] [--post_taper 0.05] [--post_filter bandpass/0.02/0.0666] [--post_norm] [--post_cut]
-     --log cc_log  --log_mode 0
+     --log cc_log  [--log_mode 0] [--acc=0.001]
 
 Args:
     #0. Mode:
@@ -707,6 +709,9 @@ Args:
     --log_mode :
                 E.g.: `--log_mode=all`, `--log_mode=0`, `--log_mode=0,1,2,3,10`.
 
+    #6. Other options:
+    --acc : acceleration threshold. (default is 0.001)
+
 E.g.,
     %s --mode r2r -I "in*/*.sac" -T -5/10800/32400 -D 0.1 --pre_detrend --pre_taper 0.005
         -O cc --out_format hdf5,sac
@@ -714,7 +719,7 @@ E.g.,
         --stack_dist 0/180/1
         --daz -0.1/20 --gcd -0.1/30 --gc_center_rect 120/180/0/40 --gc_center_circle 100/-20/15,90/0/15
         --post_fold --post_taper 0.005 --post_filter bandpass/0.001/0.06667 --post_norm  --post_cut 0/5000
-        --log cc_log --log_mode=0
+        --log cc_log --log_mode=0 --acc 0.01
 
     """
 if __name__ == "__main__":
@@ -751,6 +756,8 @@ if __name__ == "__main__":
 
     log_prefnm= 'cc_mpi_log'
     log_mode  = None
+
+    spec_acc_threshold = 0.001
     ######################
     if len(sys.argv) <= 1:
         print(HMSG % (sys.argv[0], sys.argv[0]), flush=True)
@@ -764,7 +771,7 @@ if __name__ == "__main__":
                              'w_temporal=', 'w_spec=',
                              'stack_dist=', 'daz=', 'dbaz=', 'gcd=', 'gcd_ev=', 'gcd_rcv=', 'gc_center_rect=', 'gc_center_circle=', 'min_recordings=', 'min_ev_per_rcv=', 'min_rcv_per_ev=', 'epdd=',
                              'post_fold', 'post_taper=', 'post_filter=', 'post_norm', 'post_cut=',
-                             'log=', 'log_mode='] )
+                             'log=', 'log_mode=', 'acc='] )
     for opt, arg in options:
         if opt in ('--mode'):
             mode = arg
@@ -838,6 +845,8 @@ if __name__ == "__main__":
                 log_mode = [0]
             else:
                 log_mode = [int(it) for it in arg.split(',') ]
+        elif opt in ('--acc'):
+            spec_acc_threshold = float(arg)
     #######
     main(mode, fnm_wildcard, tmark, t1, t2, delta, input_format,
                 pre_detrend, pre_taper_ratio, pre_filter, 
@@ -845,7 +854,7 @@ if __name__ == "__main__":
                 daz_range, gcd_range, gc_center_rect, gc_center_circle, min_recordings, epdd,
                 post_fold, post_taper_ratio, post_filter, post_norm, post_cut, 
                 output_pre_fnm, output_format, 
-                log_prefnm, log_mode)
+                log_prefnm, log_mode, spec_acc_threshold)
     ########
 
 
