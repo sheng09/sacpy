@@ -420,13 +420,13 @@ def acc_bound(fftsize, sampling_rate, f1, f2, critical_level= 0.001):
     c = amp.max() * critical_level
     i1 = np.argmax(amp>c)
     if np.min(amp[i1:]) >= c:
-        i2 = fftsize
+        i2 = amp.size
     else:
         i2 = np.argmin(amp[i1:]>c) + i1 + 1
     if i1 < 0:
         i1 = 0
-    if i2 >= fftsize:
-        i2 = fftsize
+    if i2 >= amp.size:
+        i2 = amp.size
     return i1, i2
 @jit(nopython=True, nogil=True)
 def spec_ccstack(spec_mat, lon, lat, gcarc, epdd, stack_mat, stack_count, 
