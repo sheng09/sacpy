@@ -32,7 +32,7 @@ def run(h5_filename, figname, dist_range=None, cc_time_range=None, lines= None,
         for irow in range(dist.size):
             mat[irow] = filter(mat[irow], 1.0/delta, btype, (f1, f2), 2, 2 )
     ###
-    junk_t = 50 if cc_time_range == None else cc_time_range[0]:
+    junk_t = 50 if cc_time_range == None else cc_time_range[0]
     mat[:, :int(junk/delta)] = 0.0
     for irow in range(dist.size):
         v = mat[irow].max()
