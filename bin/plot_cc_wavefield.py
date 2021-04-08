@@ -13,9 +13,12 @@ import os, os.path
 import matplotlib.ticker as mtick
 
 def run(h5_filename, figname, dist_range=None, cc_time_range=None, lines= None, 
-        filter_setting =(None, 0.02, 0.0666), taper_sec =0., norm_settings = (None, 'pos', (-10, 10) ),
-        figsize= (6, 15), interpolation= None, title='', vmax= 1.0, axhist=True, yticks='all', ylabel='all', grid=False ):
+        filter_setting =(None, 0.02, 0.0666), adjust_time_axis = None,
+        taper_sec =0., norm_settings = (None, 'pos', (-10, 10) ),
+        figsize= (6, 15), interpolation= None, title='', vmax= 1.0, axhist=True, yticks='all', ylabel='all', grid=False, dpi=150):
     """
+    adjust_time_axis: a tupel of (sc, xc). This will change {t-x} domain into {t-sc(x-xc),x} domain. 
+                      This option help flat a steep phase.
     """
     fig_outdir = '/'.join( figname.split('/')[:-1] )
     if not os.path.exists(fig_outdir):
@@ -31,6 +34,19 @@ def run(h5_filename, figname, dist_range=None, cc_time_range=None, lines= None,
     if not (btype is None):
         for irow in range(dist.size):
             mat[irow] = filter(mat[irow], 1.0/delta, btype, (f1, f2), 2, 2 )
+    ### adjust time axis
+    if adjust_time_axis != None:
+        npts = mat.shape[1]
+        sc, xc = adjust_time_axis
+        for irow, x in enumerate(dist):
+            dt = sc*(x-xc)
+            ndt = int(np.round(dt/delta) )
+            if 0 < ndt < npts:
+                mat[irow, :-ndt] = mat[irow, ndt:]
+                mat[irow, -ndt:] = 0
+            elif -npts < ndt < 0:
+                mat[irow, -ndt:] = mat[irow, :ndt]
+                mat[irow, :-ndt] = 0
     ###
     junk_t = 50 if cc_time_range == None else cc_time_range[0]
     mat[:, :int(junk_t/delta)] = 0.0
@@ -85,14 +101,32 @@ def run(h5_filename, figname, dist_range=None, cc_time_range=None, lines= None,
     ###
     if lines != None:
         for d, t in lines:
-            ax1.plot(d, t, '.', color='C0', alpha= 0.8)
+            if adjust_time_axis != None:
+                sc, xc = adjust_time_axis
+                t = t - sc*(d-xc)
+            ax1.plot(d, t, '.', color='C0', alpha= 0.6, markersize=3)
     ###
     dist_range = (dist[0], dist[-1] ) if dist_range == None else dist_range
     ax1.set_xlim(dist_range)
     if not axhist:
-        ax1.set_xlabel('Inter-receiver distance ($\degree$)')
+        ax1.set_xlabel('Inter-receiver distance X ($\degree$)')
+    else:
+        ax1.set_xticklabels(())
     if ylabel == 'all' or ylabel == 'cc':
-        ax1.set_ylabel('Time (s)')
+        if adjust_time_axis != None:
+            sc, xc = adjust_time_axis
+            if xc != 0:
+                if sc > 0:
+                    ax1.set_ylabel(r'$T-%.1f(X-%d^\degree)$ (s)' % (sc, xc) )
+                else:
+                    ax1.set_ylabel(r'$T+%.1f(X-%d^\degree)$ (s)' % (-sc, xc) )
+            else:
+                if sc > 0:
+                    ax1.set_ylabel(r'$T-%.1fX$ (s)' % (sc) )
+                else:
+                    ax1.set_ylabel(r'$T+%.1fX$ (s)' % (-sc) )
+        else:
+            ax1.set_ylabel('Time (s)')
     if yticks == None or yticks == 'hist':
         ax1.set_yticklabels([])
     if grid:
@@ -106,12 +140,15 @@ def run(h5_filename, figname, dist_range=None, cc_time_range=None, lines= None,
         ax2.bar(dist, stack_count, align='center', color='gray', width= dist[1]-dist[0] )
         ax2.set_xlim(dist_range)
         ax2.set_ylim(bottom=0 )
-        ax2.set_xlabel('Inter-receiver distance ($\degree$)')
+        ax2.set_xlabel('Inter-receiver distance $X$ ($\degree$)')
 
-        fmt = '{x:,.0f}'
-        tick = mtick.StrMethodFormatter(fmt)
-        ax2.yaxis.set_major_formatter(tick)
+        #fmt = '{x:,.0f}'
+        #tick = mtick.StrMethodFormatter(fmt)
+        #ax2.yaxis.set_major_formatter(tick)
+
         #ax2.ticklabel_format(axis='y', style='sci', scilimits=(0, 0) )
+
+        ax2.yaxis.set_major_formatter(mtick.FormatStrFormatter('%.0e'))
 
         if ylabel == 'all' or ylabel == 'hist':
             ax2.set_ylabel('Number of\n receiver pairs')
@@ -119,7 +156,7 @@ def run(h5_filename, figname, dist_range=None, cc_time_range=None, lines= None,
         if yticks == None or yticks == 'cc':
             ax2.set_yticklabels([])
     #plt.tight_layout()
-    plt.savefig(figname, bbox_inches = 'tight', pad_inches = 0.05)
+    plt.savefig(figname, bbox_inches = 'tight', pad_inches = 0.05, dpi=dpi)
     plt.close()
 
 def plt_options(args):
@@ -133,6 +170,7 @@ def plt_options(args):
     yticks = None
     ylabel = None
     grid   = False
+    dpi    = 150
     ###
     for it in args.split(','):
         opt, value = it.split('=')
@@ -160,7 +198,9 @@ def plt_options(args):
                 ylabel = None
         elif opt == 'grid':
             grid = True if value == 'True' else False
-    return figsize, interpolation, title, vmax, axhist, yticks, ylabel, grid
+        elif opt == 'dpi':
+            dpi = float(value)
+    return figsize, interpolation, title, vmax, axhist, yticks, ylabel, grid, dpi
 
 def get_lines(fnms):
     """
@@ -208,18 +248,21 @@ if __name__ == "__main__":
     yticks = 'all'
     ylabel = 'all'
     grid = False
+    dpi = 100
     #### line along which to normalize
     norm_settings = (None, 'pos', (-10, 10) )
     #### lines to plot
     lines = None
     filter_setting = (None, 0.02, 0.0666)
+    adjust_time_axis = None
     taper_sec = 10
     ####
     HMSG = """
 Plot cc wavefield in hdf5 file generated by cc_stack_sac.py.
-    %s -I in.h5 -P img.png [-D 0/50] [-T 0/3000] [--filter bandpass/0.02/0.0666] [--taper_sec 100 ]
+    %s -I in.h5 -P img.png [-D 0/50] [-T 0/3000] [--filter bandpass/0.02/0.0666] [--adjust_time_axis 5/0]
+    [--taper_sec 100 ]
     [--norm fnm=in.txt,method=pos,outfnm=o.txt] [--lines fnm1,fnm2,fnm3]
-    [--plt figsize=6/12,interpolation=gaussian,title=all,vmax=1.0,axhist=False,yticks=all,ylabel=True,grid=False] [-H]
+    [--plt figsize=6/12,interpolation=gaussian,title=all,vmax=1.0,axhist=False,yticks=all,ylabel=True,grid=False,dpi=150] [-H]
 
 Args:
     --plt: plot options.
@@ -230,13 +273,14 @@ Args:
             axhist: True or False to turn on or off the histogram of number of receiver pairs.
             yticks: 'all', or 'cc', or 'hist'
             ylabel: 'all', or 'cc', or 'hist'
-            grid;   True or False to turn on or off the grid lines.
+            grid:   True or False to turn on or off the grid lines.
+            dpi: dpi
     """ % argv[0]
     if len(argv) < 2:
         print(HMSG)
         exit(0)
     ####
-    options, remainder = getopt(argv[1:], 'I:P:D:T:VHh?', ['filter=', 'taper_sec=', 'norm=', 'search=', 'lines=', 'plt='] )
+    options, remainder = getopt(argv[1:], 'I:P:D:T:VHh?', ['filter=', 'adjust_time_axis=', 'taper_sec=', 'norm=', 'search=', 'lines=', 'plt='] )
     for opt, arg in options:
         if opt in ('-I'):
             h5_fnm = arg
@@ -251,6 +295,8 @@ Args:
             filter_setting[1] = float(filter_setting[1] )
             filter_setting[2] = float(filter_setting[2] )
             filter_setting = tuple(filter_setting)
+        elif opt in ('--adjust_time_axis'):
+            adjust_time_axis = [float(it) for it in arg.split('/')]
         elif opt in ('--taper_sec'):
             taper_sec = float(arg)
         elif opt in ('--norm', '--search'):
@@ -258,12 +304,13 @@ Args:
         elif opt in ('--lines'):
             lines = get_lines(arg)
         elif opt in ('--plt'):
-            figsize, interpolation, title, vmax, axhist, yticks, ylabel, grid = plt_options(arg)
+            figsize, interpolation, title, vmax, axhist, yticks, ylabel, grid, dpi = plt_options(arg)
         else:
             print(HMSG)
             exit(0)
     ####
     run(h5_fnm, figname, dist_range, cc_time_range, lines, 
-            filter_setting, taper_sec, norm_settings,
-            figsize, interpolation, title, vmax, axhist, yticks, ylabel, grid)
+            filter_setting, adjust_time_axis,
+            taper_sec, norm_settings,
+            figsize, interpolation, title, vmax, axhist, yticks, ylabel, grid, dpi)
 
