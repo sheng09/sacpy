@@ -100,7 +100,8 @@ def main(mode,
     sampling_rate = 1.0/delta
     npts          = int( np.round((t2-t1)/delta) ) + 1
     fftsize       = npts * 2
-    df            = 1.0/(delta*fftsize)
+    df            = 1.0/(delta*npts) if npts % 2 == 0 else 1.0/(delta*(npts+1)) # df of raw traces
+    cc_df            = 1.0/(delta*fftsize) # df of cross-correlation
     if True: # user-defined parameters
         mpi_print_log(mpi_log_fid, 0, False, 'Set reading and pre-processing parameters')
         mpi_print_log(mpi_log_fid, 1, False, 'fnm_wildcard:   ', fnm_wildcard)
@@ -135,17 +136,22 @@ def main(mode,
     ############################################################################################################################################
     ### 2.1 Optional acceleration for spectral whitening and spectral cross-correlation
     ############################################################################################################################################
-    acc_range = None, None
+    acc_range_raw = None, None # for npts
+    acc_range_cc  = None, None  # for fftsize
     if post_filter != None:
         junk1, junk2 = post_filter[1], post_filter[2]
         if swht != None:
             junk2 = junk2 + swht
-        acc_range = acc_bound(fftsize, sampling_rate, junk1, junk2, spec_acc_threshold)
+        tmp_npts = npts if npts % 2 ==0 else npts+1
+        acc_range_raw = acc_bound(tmp_npts, sampling_rate, junk1, junk2, spec_acc_threshold)
+        acc_range_cc = acc_bound(fftsize, sampling_rate, junk1, junk2, spec_acc_threshold)
 
         if True:
             mpi_print_log(mpi_log_fid, 0, False, 'Enable spectral acceleration')
-            mpi_print_log(mpi_log_fid, 1, True,  'Threshold parameter: %f (will abandon the spectra outside (%f, %f) Hz.)' % (
-                            spec_acc_threshold, acc_range[0]*df, acc_range[1]*df ) )
+            mpi_print_log(mpi_log_fid, 1, True,  'Threshold parameter: %f (will abandon the spectra outside (%f, %f) (%f, %f) Hz.)' % (
+                            spec_acc_threshold,
+                            acc_range_raw[0]*df, acc_range_raw[1]*df,
+                            acc_range_cc[0]*cc_df, acc_range_cc[1]*cc_df ) )
     ############################################################################################################################################
     #### 3. Init selection criteria
     ############################################################################################################################################
@@ -176,7 +182,7 @@ def main(mode,
     ### 5. Init cross-correlation stack buf
     ############################################################################################################################################
     dist           = np.arange(dist_range[0], dist_range[1]+dist_step, dist_step )
-    nrfft_valid    = acc_range[1] # spectra bigger than this are not useful given the post-filter processing
+    nrfft_valid    = acc_range_cc[1] # spectra bigger than this are not useful given the post-filter processing
     spec_stack_mat = np.zeros( (dist.size, nrfft_valid), dtype= np.complex64 )
     stack_count    = np.zeros( dist.size, dtype=np.int32 )
 
@@ -220,7 +226,7 @@ def main(mode,
         if flag_input_format == 0: # input sac
             tmp = rd_wh_sac(it, delta, tmark, t1, t2, npts,
                             pre_detrend, pre_taper_ratio, pre_filter,
-                            wt_size, wt_f1, wt_f2, wf_size, acc_range[0], acc_range[1], pre_taper_ratio,
+                            wt_size, wt_f1, wt_f2, wf_size, acc_range_raw[0], acc_range_raw[1], pre_taper_ratio,
                             fftsize, nrfft_valid, mpi_log_fid)
             whitened_spectra_mat, stlo, stla, evlo, evla, az, baz, gcarc = tmp
         ### (2) check if the obtained whitened_spectra_mat is valid
@@ -253,14 +259,14 @@ def main(mode,
 
             local_ncc = spec_ccstack2(whitened_spectra_mat, lon, lat, gcarc, epdd,
                                         spec_stack_mat, stack_count,
-                                        dist_range[0], dist_range[1], dist_step, acc_range[0], acc_range[1],
+                                        dist_range[0], dist_range[1], dist_step, acc_range_cc[0], acc_range_cc[1],
                                         azimuth, pt_lon, pt_lat, daz_range[0], daz_range[1], gcd_range[0], gcd_range[1],
                                         center_clo1, center_clo2, center_cla1, center_cla2,
                                         circle_center_clo, circle_center_cla, circle_center_radius)
         else:
             local_ncc = spec_ccstack(whitened_spectra_mat, lon, lat, gcarc, epdd,
                                         spec_stack_mat, stack_count,
-                                        dist_range[0], dist_range[1], dist_step, acc_range[0], acc_range[1])
+                                        dist_range[0], dist_range[1], dist_step, acc_range_cc[0], acc_range_cc[1])
         local_tc_cc = time.time()-tc_junk
 
         ### time summary
