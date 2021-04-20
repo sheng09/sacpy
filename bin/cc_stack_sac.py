@@ -11,6 +11,7 @@ import pyfftw
 import numpy as np
 import sys
 import getopt
+from numpy.random import rand
 from glob import glob
 from numba import jit
 
@@ -471,7 +472,7 @@ def spec_ccstack(spec_mat, lon, lat, gcarc, epdd, stack_mat, stack_count,
             idx = int( np.round((dist-dist_min) / dist_step) )
             if idx < 0 or idx >= nrow:
                 continue
-            if 0 < random_sample < np.rand(): # randomly resample
+            if 0 < random_sample and  random_sample < rand(): # randomly resample
                 continue
             w   = np.conj(spec1[i1:i2]) * spec2[i1:i2]
             stack_mat[idx][i1:i2] += w
@@ -567,7 +568,7 @@ def spec_ccstack2(spec_mat, lon, lat, gcarc, epdd, stack_mat, stack_count,
             if gcd < gcd_min or gcd > gcd_max:
                 continue
             ###
-            if 0 < random_sample < np.rand(): # randomly resample
+            if 0 < random_sample and  random_sample < rand(): # randomly resample
                 continue
             spec2 = spec_mat[isac2]
             ###
