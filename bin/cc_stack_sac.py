@@ -23,7 +23,7 @@ def main(mode,
             daz_range= None, gcd_range= None, gc_center_rect= None, gc_center_circle=None, min_recordings=0, epdd=False,
             post_fold = False, post_taper_ratio = 0.005, post_filter=None, post_norm = False, post_cut= None,
             output_pre_fnm= 'junk', output_format= ['hdf5'],
-            log_prefnm= 'cc_mpi_log', log_mode=None, spec_acc_threshold = 0.001 ):
+            log_prefnm= 'cc_mpi_log', log_mode=None, spec_acc_threshold = 0.001, random_sample=-1.0 ):
     """
     The main function.
 
@@ -168,6 +168,8 @@ def main(mode,
         mpi_print_log(mpi_log_fid, 1, False, 'selection of gc-center rect: ', gc_center_rect )
         mpi_print_log(mpi_log_fid, 1, False, 'selection of gc-center circle: ', gc_center_circle )
         mpi_print_log(mpi_log_fid, 1, False, 'minmal number of recordings: ', min_recordings )
+    if random_sample > 0:
+        mpi_print_log(mpi_log_fid, 1, False, 'Random resampling: ',  random_sample )
     ############################################################################################################################################
     ### 4. Init post-processing parameters
     ############################################################################################################################################
@@ -262,11 +264,11 @@ def main(mode,
                                         dist_range[0], dist_range[1], dist_step, acc_range_cc[0], acc_range_cc[1],
                                         azimuth, pt_lon, pt_lat, daz_range[0], daz_range[1], gcd_range[0], gcd_range[1],
                                         center_clo1, center_clo2, center_cla1, center_cla2,
-                                        circle_center_clo, circle_center_cla, circle_center_radius)
+                                        circle_center_clo, circle_center_cla, circle_center_radius, random_sample)
         else:
             local_ncc = spec_ccstack(whitened_spectra_mat, lon, lat, gcarc, epdd,
                                         spec_stack_mat, stack_count,
-                                        dist_range[0], dist_range[1], dist_step, acc_range_cc[0], acc_range_cc[1])
+                                        dist_range[0], dist_range[1], dist_step, acc_range_cc[0], acc_range_cc[1], random_sample)
         local_tc_cc = time.time()-tc_junk
 
         ### time summary
@@ -436,7 +438,7 @@ def acc_bound(fftsize, sampling_rate, f1, f2, critical_level= 0.001):
     return i1, i2
 @jit(nopython=True, nogil=True)
 def spec_ccstack(spec_mat, lon, lat, gcarc, epdd, stack_mat, stack_count, 
-                    dist_min, dist_max, dist_step, acc_idx_min, acc_idx_max):
+                    dist_min, dist_max, dist_step, acc_idx_min, acc_idx_max, random_sample):
     """
     spec_mat: Input spectra that is a 2D matrix. Each row is for a single time series.
     lon, lat: A list of longitude/latitude. Can be stlo/stla for rcv-to-rcv correlations, 
@@ -469,6 +471,8 @@ def spec_ccstack(spec_mat, lon, lat, gcarc, epdd, stack_mat, stack_count,
             idx = int( np.round((dist-dist_min) / dist_step) )
             if idx < 0 or idx >= nrow:
                 continue
+            if 0 < random_sample < np.rand(): # randomly resample
+                continue
             w   = np.conj(spec1[i1:i2]) * spec2[i1:i2]
             stack_mat[idx][i1:i2] += w
             stack_count[idx] += 1
@@ -499,7 +503,7 @@ def spec_ccstack2(spec_mat, lon, lat, gcarc, epdd, stack_mat, stack_count,
                     dist_min, dist_max, dist_step, acc_idx_min, acc_idx_max,
                     azimuth, pt_lon, pt_lat, daz_min, daz_max, gcd_min, gcd_max,
                     rect_clo1, rect_clo2, rect_cla1, rect_cla2,
-                    circle_center_clo, circle_center_cla, circle_center_radius):
+                    circle_center_clo, circle_center_cla, circle_center_radius, random_sample):
     """
     spec_mat: Input spectra that is a 2D matrix. Each row is for a single time series.
     lon, lat: A list of longitude/latitude. Can be stlo/stla for rcv-to-rcv correlations, 
@@ -563,6 +567,8 @@ def spec_ccstack2(spec_mat, lon, lat, gcarc, epdd, stack_mat, stack_count,
             if gcd < gcd_min or gcd > gcd_max:
                 continue
             ###
+            if 0 < random_sample < np.rand(): # randomly resample
+                continue
             spec2 = spec_mat[isac2]
             ###
             w   = np.conj(spec1[i1:i2]) * spec2[i1:i2]
@@ -671,7 +677,7 @@ HMSG = """%s  -I "in*/*.sac" -T -5/10800/32400 -D 0.1 -O cc_stack --out_format h
     [--gc_center_circle 100/-20/10,90/0/15] [--min_recordings 10] [--epdd]
     [--w_temporal 128.0/0.02/0.06667] [--w_spec 0.02] 
     [--post_fold] [--post_taper 0.05] [--post_filter bandpass/0.02/0.0666] [--post_norm] [--post_cut]
-     --log cc_log  [--log_mode 0] [--acc=0.001]
+     --log cc_log  [--log_mode 0] [--acc=0.001] [--random_sample 0.6]
 
 Args:
     #0. Mode:
@@ -717,6 +723,7 @@ Args:
 
     #6. Other options:
     --acc : acceleration threshold. (default is 0.001)
+    --random_sample : random resample the cross-correlation functions in the stacking.  (a value between 0 and 1)
 
 E.g.,
     %s --mode r2r -I "in*/*.sac" -T -5/10800/32400 -D 0.1 --pre_detrend --pre_taper 0.005
@@ -764,6 +771,7 @@ if __name__ == "__main__":
     log_mode  = None
 
     spec_acc_threshold = 0.001
+    random_sample = -1.0
     ######################
     if len(sys.argv) <= 1:
         print(HMSG % (sys.argv[0], sys.argv[0]), flush=True)
@@ -777,7 +785,7 @@ if __name__ == "__main__":
                              'w_temporal=', 'w_spec=',
                              'stack_dist=', 'daz=', 'dbaz=', 'gcd=', 'gcd_ev=', 'gcd_rcv=', 'gc_center_rect=', 'gc_center_circle=', 'min_recordings=', 'min_ev_per_rcv=', 'min_rcv_per_ev=', 'epdd=',
                              'post_fold', 'post_taper=', 'post_filter=', 'post_norm', 'post_cut=',
-                             'log=', 'log_mode=', 'acc='] )
+                             'log=', 'log_mode=', 'acc=', 'random_sample='] )
     for opt, arg in options:
         if opt in ('--mode'):
             mode = arg
@@ -853,6 +861,8 @@ if __name__ == "__main__":
                 log_mode = [int(it) for it in arg.split(',') ]
         elif opt in ('--acc'):
             spec_acc_threshold = float(arg)
+        elif opt in ('--random_sample'):
+            random_sample = float(arg)
     #######
     main(mode, fnm_wildcard, tmark, t1, t2, delta, input_format,
                 pre_detrend, pre_taper_ratio, pre_filter, 
@@ -860,7 +870,7 @@ if __name__ == "__main__":
                 daz_range, gcd_range, gc_center_rect, gc_center_circle, min_recordings, epdd,
                 post_fold, post_taper_ratio, post_filter, post_norm, post_cut, 
                 output_pre_fnm, output_format, 
-                log_prefnm, log_mode, spec_acc_threshold)
+                log_prefnm, log_mode, spec_acc_threshold, random_sample)
     ########
 
 
