@@ -9,6 +9,7 @@ import matplotlib.pyplot as plt
 from getopt import getopt
 from sys import exit, argv
 import numpy as np
+from sacpy.sac import c_wrt_sac2
 from sacpy.processing import max_amplitude_timeseries, filter
 from copy import deepcopy
 from scipy.ndimage.filters import gaussian_filter
@@ -44,7 +45,8 @@ def slant_stack(mat, delta, dist, dist_ref=0, slowness_range= (-4, 0), nroot=1 )
 
 def run(h5_filename, figname, dist_range=None, cc_time_range=None, slowness_range = (-4, 0), dist_ref=0, search_range= None, search_type='pos',
         filter_setting =(None, 0.02, 0.0666), nroot= 1,
-        figsize= (3, 4), title='', interpolation= 'gaussian', ylabel= True, maxpoint=True, extent=None, contour=None, vmin_scale=1.0, vmax_scale=1.0 ):
+        figsize= (3, 4), title='', interpolation= 'gaussian', ylabel= True, maxpoint=True, extent=None, contour=None, vmin_scale=1.0, vmax_scale=1.0, grid=True, color='#ffbb00',
+        section=None, section_out=None ):
     """
     """
     fid = h5_File(h5_filename, 'r')
@@ -78,7 +80,17 @@ def run(h5_filename, figname, dist_range=None, cc_time_range=None, slowness_rang
     taup_mat = slant_stack(mat, delta, dist, dist_ref, slowness_range, nroot )
     taup_mat *= (-1.0/taup_mat.min() )
     ###
-    fig, ax = plt.subplots(1, 1, figsize= figsize)
+    ax = None
+    axh, axv = None, None
+    if section != None:
+        fig, ((axh, junk), (ax, axv)) = plt.subplots(2, 2, figsize= figsize, gridspec_kw={'width_ratios': [5, 1], 'height_ratios': [1, 6] } )
+        junk.axis('off')
+        if 'h' not in section:
+            axh.axis('off')
+        if 'v' not in section:
+            axv.axis('off')
+    else:
+        fig, ax = plt.subplots(1, 1, figsize= figsize)
     taup_mat_copy = deepcopy( taup_mat )
     ### set those outside the search range to ZERO
     if search_range != None:
@@ -98,7 +110,22 @@ def run(h5_filename, figname, dist_range=None, cc_time_range=None, slowness_rang
         irow, icol = np.unravel_index(taup_mat.argmax(), taup_mat.shape)
     t = cc_t0 + irow*delta
     p = slowness_range[0] + delta*icol
-    
+    ##### plot sections passing through the section
+    if section != None:
+        if 'h' in section:
+            tmp_y = taup_mat_copy[irow, :]
+            tmp_x = np.linspace(slowness_range[0], slowness_range[1], tmp_y.size)
+            axh.fill_between(tmp_x, 0, tmp_y, color='#aaaaaa')
+            axh.plot(tmp_x, tmp_y, color=color)
+        if 'v' in section:
+            tmp_y = taup_mat_copy[:, icol]
+            tmp_x = np.linspace(cc_t0, cc_t1, tmp_y.size)
+            axv.fill_between(tmp_y, 0, tmp_x, color='#aaaaaa')
+            axv.plot(tmp_y, tmp_x, color=color)
+    if section_out != None:
+        tmp_y = taup_mat_copy[:, icol]
+        fnm = '%s_v.sac' % (section_out)
+        c_wrt_sac2(fnm, tmp_y, cc_t0, delta, False)
     #####
     vmin = vmin_scale * np.min(taup_mat)
     vmax = vmax_scale * np.max(taup_mat)
@@ -107,25 +134,42 @@ def run(h5_filename, figname, dist_range=None, cc_time_range=None, slowness_rang
     if contour != None:
         tmp = gaussian_filter(taup_mat, sigma=0.3)
         if contour < 0:
-            ax.contour(tmp, [contour*abs(np.min(taup_mat)) ], colors='#ffbb00', origin='lower', extent=(slowness_range[0], slowness_range[1], cc_t0, cc_t1))
+            ax.contour(tmp, [contour*abs(np.min(taup_mat)) ], colors=color, origin='lower', extent=(slowness_range[0], slowness_range[1], cc_t0, cc_t1))
         if contour > 0:
-            ax.contour(tmp, [contour*abs(np.max(taup_mat)) ], colors='#ffbb00', origin='lower', extent=(slowness_range[0], slowness_range[1], cc_t0, cc_t1))
+            ax.contour(tmp, [contour*abs(np.max(taup_mat)) ], colors=color, origin='lower', extent=(slowness_range[0], slowness_range[1], cc_t0, cc_t1))
     if maxpoint:
-        ax.plot(slowness_range, [t, t], '#ffbb00', linewidth= 0.6, alpha= 0.8)
-        ax.plot([p, p], [cc_t0, cc_t1], '#ffbb00', linewidth= 0.6, alpha= 0.8)
-        ax.plot(p, t, 's', color='#ffbb00', alpha= 0.8)
-        ax.text(slowness_range[0], t+1, '%.1f s' % (t), color='#ffbb00', fontsize=22 )
+        ax.plot(slowness_range, [t, t], color=color, linewidth= 0.6, alpha= 0.8)
+        ax.plot([p, p], [cc_t0, cc_t1], color=color, linewidth= 0.6, alpha= 0.8)
+        ax.plot(p, t, 's', color=color, alpha= 0.8)
+        ax.text(slowness_range[0], t+1, '%.1f s' % (t), color=color, fontsize=18 )
     if ylabel:
         ax.set_ylabel('Time (s)', fontsize=15)
     else:
         ax.set_yticklabels([])
+    if grid:
+        ax.grid(linestyle=':', color='k' )
     ax.set_xlabel('Slowness (s/$\degree$)', fontsize=15)
-    ax.set_title(title)
+    if section != None:
+        if 'h' in section:
+            axh.set_title(title)
+        else:
+            ax.set_title(title)
+    else:
+        ax.set_title(title)
     if extent != None:
         ax.set_xlim((extent[0], extent[1]) )
         ax.set_ylim((extent[2], extent[3]) )
+        if section != None:
+            if 'h' in section:
+                axh.set_xlim((extent[0], extent[1]) )
+                axh.set_xticklabels([])
+                axh.set_yticks([])
+            if 'v' in section:
+                axv.set_ylim((extent[2], extent[3]) )
+                axv.set_yticklabels([])
+                axv.set_xticks([])
     ###
-    plt.savefig(figname, bbox_inches = 'tight', pad_inches = 0.05)
+    plt.savefig(figname, bbox_inches = 'tight', pad_inches = 0.05, dpi=200)
     plt.close()
 
 
@@ -140,6 +184,8 @@ def plt_options(args):
     extent = None
     contour = None
     vmin_scale, vmax_scale = 1.0, 1.0
+    grid= False
+    color = '#ffbb00'
     ###
     for it in args.split(','):
         opt, value = it.split('=')
@@ -161,7 +207,11 @@ def plt_options(args):
             vmin_scale = abs( float(value) )
         elif opt == 'vmax_scale':
             vmax_scale = abs( float(value))
-    return figsize, interpolation, title, ylabel, maxpoint, extent, contour, vmin_scale, vmax_scale
+        elif opt == 'grid':
+            grid = True if value == 'True' else False
+        elif opt == 'color':
+            color = color
+    return figsize, interpolation, title, ylabel, maxpoint, extent, contour, vmin_scale, vmax_scale, grid, color
 
 if __name__ == "__main__":
     #run(filename, figname, None)
@@ -183,6 +233,11 @@ if __name__ == "__main__":
     extent = None
     contour = None
     vmin, vmax = None, None
+    grid = True
+    color = '#ffbb00'
+    ####
+    section = None
+    section_out = None
     #### line along which to normalize
     norm_settings = (None, 'pos', (-10, 10) )
     #### lines to plot
@@ -191,14 +246,14 @@ if __name__ == "__main__":
     ####
     HMSG = """
     %s -I in.h5 -P img.png [-D 0/50] [-T 0/3000] [-S -4/-1] --Dref=10 [--search_range=-3/-2/100/250] [--search_type=pos]
-        [--filter bandpass/0.02/0.0666] [--nroot 1]
-        [--plt figsize=3/4,interpolation=gaussian,title=all,maxpoint=False,extent=-4/-1/100/300,contour=-0.9] [-H]
+        [--filter bandpass/0.02/0.0666] [--nroot 1] [--section=vh] [--section_out=prefix]
+        [--plt figsize=3/4,interpolation=gaussian,title=all,maxpoint=False,extent=-4/-1/100/300,contour=-0.9,grid=False,color=#ffbb00] [-H]
     """ % argv[0]
     if len(argv) < 2:
         print(HMSG)
         exit(0)
     ####
-    options, remainder = getopt(argv[1:], 'I:P:D:T:S:VHh?', ['Dref=', 'filter=', 'plt=', 'nroot=', 'search_range=', 'search_type='] )
+    options, remainder = getopt(argv[1:], 'I:P:D:T:S:VHh?', ['Dref=', 'filter=', 'plt=', 'nroot=', 'section=', 'section_out=', 'search_range=', 'search_type='] )
     for opt, arg in options:
         if opt in ('-I'):
             h5_fnm = arg
@@ -218,9 +273,13 @@ if __name__ == "__main__":
             filter_setting[2] = float(filter_setting[2] )
             filter_setting = tuple(filter_setting)
         elif opt in ('--plt'):
-            figsize, interpolation, title, ylabel, maxpoint, extent, contour, vmin_scale, vmax_scale = plt_options(arg)
+            figsize, interpolation, title, ylabel, maxpoint, extent, contour, vmin_scale, vmax_scale, grid, color = plt_options(arg)
         elif opt in ('--nroot'):
             nroot = int(arg)
+        elif opt in ('--section'):
+            section = arg
+        elif opt in ('--section_out'):
+            section_out = arg
         elif opt in ('--search_range'):
             search_range = tuple( [float(it) for it in arg.split('/') ] )
         elif opt in ('--search_type'):
@@ -231,7 +290,7 @@ if __name__ == "__main__":
     ####
     ####
     run(h5_fnm, figname, dist_range, cc_time_range, slowness_range, dist_ref, search_range, search_type,
-        filter_setting, nroot, figsize, title, interpolation, ylabel, maxpoint, extent, contour, vmin_scale, vmax_scale )
+        filter_setting, nroot, figsize, title, interpolation, ylabel, maxpoint, extent, contour, vmin_scale, vmax_scale, grid, color, section, section_out)
 
 
 
