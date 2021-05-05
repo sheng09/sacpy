@@ -83,7 +83,10 @@ def run(h5_filename, figname, dist_range=None, cc_time_range=None, slowness_rang
     ax = None
     axh, axv = None, None
     if section != None:
-        fig, ((axh, junk), (ax, axv)) = plt.subplots(2, 2, figsize= figsize, gridspec_kw={'width_ratios': [5, 1], 'height_ratios': [1, 6] } )
+        w, h = figsize
+        w = w *1.2 if 'h' in section else w
+        h = h *1.2 if 'v' in section else h
+        fig, ((axh, junk), (ax, axv)) = plt.subplots(2, 2, figsize= (w, h), gridspec_kw={'width_ratios': [5, 1], 'height_ratios': [1, 6] } )
         junk.axis('off')
         if 'h' not in section:
             axh.axis('off')
@@ -116,12 +119,12 @@ def run(h5_filename, figname, dist_range=None, cc_time_range=None, slowness_rang
             tmp_y = taup_mat_copy[irow, :]
             tmp_x = np.linspace(slowness_range[0], slowness_range[1], tmp_y.size)
             axh.fill_between(tmp_x, 0, tmp_y, color='#aaaaaa')
-            axh.plot(tmp_x, tmp_y, color=color)
+            axh.plot(tmp_x, tmp_y, color='k')
         if 'v' in section:
             tmp_y = taup_mat_copy[:, icol]
             tmp_x = np.linspace(cc_t0, cc_t1, tmp_y.size)
             axv.fill_between(tmp_y, 0, tmp_x, color='#aaaaaa')
-            axv.plot(tmp_y, tmp_x, color=color)
+            axv.plot(tmp_y, tmp_x, color='k')
     if section_out != None:
         tmp_y = taup_mat_copy[:, icol]
         fnm = '%s_v.sac' % (section_out)
@@ -210,7 +213,7 @@ def plt_options(args):
         elif opt == 'grid':
             grid = True if value == 'True' else False
         elif opt == 'color':
-            color = color
+            color = value
     return figsize, interpolation, title, ylabel, maxpoint, extent, contour, vmin_scale, vmax_scale, grid, color
 
 if __name__ == "__main__":
