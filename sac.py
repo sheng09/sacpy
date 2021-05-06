@@ -92,6 +92,12 @@ from sacpy.c_src._sac_io import ffi as ffi
 ###
 #  dependend methods
 ###
+def deprecated_run(func):
+    def wrapper_deprecated_run(*args, **kwargs):
+        print('%s() will be deprecated soon!' % func.__name__)
+        return func(*args, **kwargs)
+    return wrapper_deprecated_run
+@deprecated_run
 def rd_sac(filename, lcalda=False):
     """
     Read sac given `filename`, and return an object ot sactrace.
@@ -99,6 +105,7 @@ def rd_sac(filename, lcalda=False):
     tmp = sactrace()
     tmp.read(filename, lcalda=lcalda)
     return tmp
+@deprecated_run
 def rd_sac_2(filename, tmark, t1, t2, lcalda=False):
     """
     Read sac data given filename and time window, and return an object ot sactrace.
@@ -108,6 +115,7 @@ def rd_sac_2(filename, tmark, t1, t2, lcalda=False):
     tmp = sactrace()
     tmp.read_2(filename, tmark, t1, t2, lcalda=lcalda)
     return tmp
+@deprecated_run
 def rd_sachdr(filename, lcalda=False):
     """
     Read sac header given `filename`, and return an object ot sachdr.
@@ -115,6 +123,7 @@ def rd_sachdr(filename, lcalda=False):
     tmp = sachdr()
     tmp.read(filename, 'filename', lcalda=lcalda)
     return tmp
+@deprecated_run
 def rd_sac_mat(sacfnm_lst, tmark, t1, t2, norm_each='pos', bp_range=None, warning_msg=True ):
     """
     Read a list of sac files, and form 2D matrix for those time series.
@@ -165,6 +174,7 @@ def rd_sac_mat(sacfnm_lst, tmark, t1, t2, norm_each='pos', bp_range=None, warnin
             npts = tr_lst[irow].dat.size
             mat[irow,:npts] = tr_lst[irow].dat
     return hdr_lst, tr_lst, mat
+@deprecated_run
 def make_sachdr(delta, npts, b, **kwargs):
     """
     Generate sac header, and return an object of `sachdr`.
@@ -172,6 +182,7 @@ def make_sachdr(delta, npts, b, **kwargs):
     tmp = sachdr()
     tmp.init(delta, npts, b, **kwargs)
     return tmp
+@deprecated_run
 def make_sactrace_hdr(dat, hdr):
     """
     Generate and return an object of sactrace.
@@ -182,6 +193,7 @@ def make_sactrace_hdr(dat, hdr):
     tmp = sactrace()
     tmp.init(dat, hdr)
     return tmp
+@deprecated_run
 def make_sactrace_v(dat, delta, b, **kwargs):
     """
     Generate and return an object of sactrace.
@@ -193,6 +205,7 @@ def make_sactrace_v(dat, delta, b, **kwargs):
     tmp = sactrace()
     tmp.init(dat, hdr)
     return tmp
+@deprecated_run
 def wrt_sac(filename, dat, hdr):
     """
     Write sac file given dat (an object of numpy.ndarray) and hdr (an object of sachdr)
@@ -200,6 +213,7 @@ def wrt_sac(filename, dat, hdr):
     tmp = sactrace()
     tmp.init(dat, hdr, False)
     tmp.write(filename)
+@deprecated_run
 def wrt_sac_2(filename, dat, delta, b, **kwargs):
     """
     Write sac file given dat (an object of numpy.ndarray) and header settings.
@@ -207,6 +221,7 @@ def wrt_sac_2(filename, dat, delta, b, **kwargs):
     tmp = sactrace()
     tmp.init(dat, make_sachdr(delta, np.size(dat), b, **kwargs), False)
     tmp.write(filename)
+@deprecated_run
 def truncate_sac(sac_trace, tmark, t1, t2, clean_sachdr=False):
     """
     Generate a new SAC_TRACE object from an existed SAC_TRACE 
@@ -222,6 +237,7 @@ def truncate_sac(sac_trace, tmark, t1, t2, clean_sachdr=False):
     if clean_sachdr:
         return make_sactrace_v(tmp['dat'], tmp['delta'], tmp['b'])
     return tmp
+@deprecated_run
 def correlation_sac(sac_trace1, sac_trace2):
     """
     Compute the cross-correlation between two SAC_TRACE objects, and
@@ -236,6 +252,7 @@ def correlation_sac(sac_trace1, sac_trace2):
     cc = correlate(sac_trace1['dat'], sac_trace2['dat'], 'full', 'fft')
     cc_start = sac_trace1['b'] - sac_trace2['e']
     return make_sactrace_v(cc, sac_trace1['delta'], cc_start)
+@deprecated_run
 def stack_sac(sac_trace_lst, amp_norm=False):
     """
     Stack a list of `sactrace` and return an object of `sactrace`.
@@ -272,10 +289,12 @@ def stack_sac(sac_trace_lst, amp_norm=False):
         else:
             st['dat'] += tmp_sac['dat']
     return st
+@deprecated_run
 def time_shift_all_sac(sac_trace, t_shift_sec):
     st = deepcopy(sac_trace)
     st.shift_time_all(t_shift_sec)
     return st
+@deprecated_run
 def optimal_timeshift_cc_sac(st1, st2, min_timeshift=-1.e12, max_timeshift=1.e12, cc_amp= 'pos', search_time_window=None):
     """
     Use cross-correlation method to search the optimal 
@@ -293,6 +312,7 @@ def optimal_timeshift_cc_sac(st1, st2, min_timeshift=-1.e12, max_timeshift=1.e12
     cc.truncate('0', min_timeshift, max_timeshift)
     t, coef = cc.max_amplitude_time(cc_amp )
     return t, coef, cc
+@deprecated_run
 def plot_sac_lst(st_lst, ax=None):
     fig = None
     if ax == None:
@@ -1931,38 +1951,5 @@ class sachdr_pair_ev_list(list):
 ##########################
 ##########################
 if __name__ == "__main__":
-    #print(help(c_sactrace) )
-    #x = np.linspace(0, 100, 101)
-    #hdr1 = c_mk_sachdr_time(0, 1.0, x.size)
-    #hdr2 = c_mk_sachdr_time(0, 2.0, x.size)
-    #hdr1.delta = 2.0
-    #hdr2.delta = 4.0
-    #print(hdr1, hdr1.delta)
-    #print(hdr2, hdr2.delta)
-    ##
-    #c_wrt_sac('junk.sac', x, hdr1)
-    st= c_rd_sac('test_tmp/1.sac')
-    hdr = st.hdr
-    st.plot()
-    #print(type(hdr ) )
-    #print(hdr, hdr.stlo, hdr.stla, hdr.b, hdr.e, hdr.npts, hdr.delta, ffi.string(hdr.kstnm) )
-    #hdr.kstnm = b'test'
-    #print(hdr, hdr.stlo, hdr.stla, hdr.b, hdr.e, hdr.npts, hdr.delta, ffi.string(hdr.kstnm) )
-    #st.write('junk.sac')
-    #hdr = cp_sachdr_struct(hdr)
-    #print(hdr.stlo, hdr.stla, hdr.b, hdr.e, hdr.npts, hdr.delta )
-    #st = c_rd_sac('test_tmp/1.sac', -5, 100, 3000, True)
-    #st.truncate(200, 2000)
-    #st.plot()
-    #print(st.dat.dtype )
-    #st.write('junk.sac')
-    #st.dat = st.dat[:100]
-    #st.taper(0.2)
-    #hdr = st.hdr
-    #print(hdr.stlo, hdr.stla, hdr.b, hdr.e, hdr.npts, hdr.delta )
-    #st2 = st.duplicate()
-    #hdr = st2.hdr
-    #print(hdr.stlo, hdr.stla, hdr.b, hdr.e, hdr.npts, hdr.delta )
-    #st.plot(color='k')
-    #hdrs, mat = c_rd_sac_mat(['test_tmp/1.sac', 'test_tmp/1.sac'], -5, -100, 100, True)
-    #sys.exit(0) 
+    tmp = make_sachdr(1, 10, 0, user0=1234)
+    print(tmp)
