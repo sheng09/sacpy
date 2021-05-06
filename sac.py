@@ -89,6 +89,7 @@ from sacpy.processing import taper as processing_taper
 from os.path import exists as os_path_exists
 from sacpy.c_src._sac_io import lib as libsac
 from sacpy.c_src._sac_io import ffi as ffi
+from h5py import File as h5_File
 ###
 #  dependend methods
 ###
@@ -1109,6 +1110,82 @@ def c_truncate_sac(c_sactr, t1, t2):
     obj = c_sactr.duplicate()
     obj.truncate(t1, t2)
     return obj
+
+###
+#  functions to convert many sacs into a single hdf5 file
+###
+__hf_keys=( 'delta',     'depmin',    'depmax',    'scale',     'odelta',
+            'b',         'e',         'o',         'a',         'internal1',
+            't0',        't1',        't2',        't3',        't4',
+            't5',        't6',        't7',        't8',        't9',
+            'f',         'resp0',     'resp1',     'resp2',     'resp3',
+            'resp4',     'resp5',     'resp6',     'resp7',     'resp8',
+            'resp9',     'stla',      'stlo',      'stel',      'stdp',
+            'evla',      'evlo',      'evel',      'evdp',      'mag',
+            'user0',     'user1',     'user2',     'user3',     'user4',
+            'user5',     'user6',     'user7',     'user8',     'user9',
+            'dist',      'az',        'baz',       'gcarc',     'internal2',
+            'internal3', 'depmen',    'cmpaz',     'cmpinc',    'unused2',
+            'unused3',   'unused4',   'unused5',   'unused6',   'unused7',
+            'unused8',   'unused9',   'unused10',  'unused11',  'unused12' )
+__hi_keys=( 'nzyear',    'nzjday',    'nzhour',    'nzmin',     'nzsec',
+            'nzmsec',    'nvhdr',     'internal5', 'internal6', 'npts',
+            'internal7', 'internal8', 'unused13',  'unused14',  'unused15',
+            'iftype',    'idep',      'iztype',    'unused16',  'iinst',
+            'istreg',    'ievreg',    'ievtyp',    'iqual',     'isynth',
+            'unused17',  'unused18',  'unused19',  'unused20',  'unused21',
+            'unused22',  'unused23',  'unused24',  'unused25',  'unused26',
+            'leven',     'lpspol',    'lovrok',    'lcalda',    'unused27'  )
+__hs_keys=( 'kstnm',     'kevnm',
+            'khole',     'ko',        'ka',
+            'kt0',       'kt1',       'kt2',
+            'kt3',       'kt4',       'kt5',
+            'kt6',       'kt7',       'kt8',
+            'kt9',       'kf',        'kuser0',
+            'kuser1',    'kuser2',    'kcmpnm',
+            'knetwk',    'kdatrd',    'kinst'  )
+def sac2hdf5(fnm_wildcard, hdf5_fnm, lcalda=False, verbose=False, info='', ignore_data=False):
+    """
+    Convert many sac files into a single hdf5 file.
+    """
+    fnmlst = sorted(glob(fnm_wildcard) )
+    nfile = len(fnmlst)
+
+    fid = h5_File(hdf5_fnm, 'w')
+    fid.attrs['info'] = info
+    fid.attrs['nfile'] = nfile
+    grp_hdr = fid.create_group('hdr')
+    hdrs = [c_rd_sachdr(it, lcalda, verbose) for it in fnmlst]
+
+    tmp_float = [ffi.cast('float*', it) for it in hdrs] ## floating hdr values
+    for idx, nm in enumerate(__hf_keys):
+        grp_hdr.create_dataset(nm, data=[it[idx] for it in tmp_float], dtype=np.float32  )
+
+    tmp_int = [ffi.cast('int*', it) for it in hdrs] ## int hdr values
+    for idx, nm in enumerate(__hi_keys):
+        grp_hdr.create_dataset(nm, data=[it[idx+70] for it in tmp_int], dtype=np.int32  )
+
+    tmp_char = [ffi.cast('char*', it) for it in hdrs] ## string hdr values
+    ffi_string = ffi.string
+    grp_hdr.create_dataset('kstnm', data=[ffi_string(it[440:448]) for it in tmp_char],  dtype='S8' )
+    grp_hdr.create_dataset('kevnm', data=[ffi_string(it[448:464]) for it in tmp_char],  dtype='S8' )
+    for idx, nm in enumerate(__hs_keys[2:]):
+        i1, i2 = 464+idx*8, 472+idx*8
+        grp_hdr.create_dataset(nm, data=[ffi_string(it[i1:i2]) for it in tmp_char],  dtype='S8' )
+
+    if not ignore_data:
+        shape = nfile, np.max(grp_hdr['npts'])
+        mat = np.zeros(shape, dtype=np.float32 )
+        for irow, it in enumerate(fnmlst):
+            try:
+                tmp = c_rd_sac(it).dat
+                mat[irow,:tmp.size] = tmp
+            except:
+                if verbose:
+                    print('Jump over error data reading %s' % (it), file=sys.stderr)
+        fid.create_dataset('dat', data=mat, dtype=np.float32)
+    fid.close()
+    return
 ###
 #  classes based on C libraries
 ###
@@ -1951,5 +2028,5 @@ class sachdr_pair_ev_list(list):
 ##########################
 ##########################
 if __name__ == "__main__":
-    tmp = make_sachdr(1, 10, 0, user0=1234)
-    print(tmp)
+    sac2hdf5('/home/catfly/00-LARGE-IMPORTANT-PERMANENT-DATA/AU_dowload/01_resampled_bhz_to_h5/01_workspace_bhz_sac/2000_008_16_47_20_+0000/*SAC',
+                'junk.h5')
