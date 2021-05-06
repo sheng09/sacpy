@@ -9,7 +9,7 @@ import matplotlib.pyplot as plt
 from getopt import getopt
 from sys import exit, argv
 import numpy as np
-from sacpy.sac import c_wrt_sac2
+from sacpy.sac import c_wrt_sac, c_mk_sachdr_time
 from sacpy.processing import max_amplitude_timeseries, filter
 from copy import deepcopy
 from scipy.ndimage.filters import gaussian_filter
@@ -86,7 +86,7 @@ def run(h5_filename, figname, dist_range=None, cc_time_range=None, slowness_rang
         w, h = figsize
         w = w *1.2 if 'h' in section else w
         h = h *1.2 if 'v' in section else h
-        fig, ((axh, junk), (ax, axv)) = plt.subplots(2, 2, figsize= (w, h), gridspec_kw={'width_ratios': [5, 1], 'height_ratios': [1, 6] } )
+        fig, ((axh, junk), (ax, axv)) = plt.subplots(2, 2, figsize= (w, h), gridspec_kw={'width_ratios': [5, 1], 'height_ratios': [1, 6], 'wspace': 0.0 , 'hspace': 0.0  } )
         junk.axis('off')
         if 'h' not in section:
             axh.axis('off')
@@ -128,7 +128,9 @@ def run(h5_filename, figname, dist_range=None, cc_time_range=None, slowness_rang
     if section_out != None:
         tmp_y = taup_mat_copy[:, icol]
         fnm = '%s_v.sac' % (section_out)
-        c_wrt_sac2(fnm, tmp_y, cc_t0, delta, False)
+        hdr = c_mk_sachdr_time(cc_t0, delta, tmp_y.size)
+        hdr.user8 = t
+        c_wrt_sac(fnm, tmp_y, hdr, False)
     #####
     vmin = vmin_scale * np.min(taup_mat)
     vmax = vmax_scale * np.max(taup_mat)
