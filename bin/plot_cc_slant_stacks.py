@@ -86,7 +86,7 @@ def run(h5_filename, figname, dist_range=None, cc_time_range=None, slowness_rang
         w, h = figsize
         w = w *1.2 if 'h' in section else w
         h = h *1.2 if 'v' in section else h
-        fig, ((axh, junk), (ax, axv)) = plt.subplots(2, 2, figsize= (w, h), gridspec_kw={'width_ratios': [5, 1], 'height_ratios': [1, 6], 'wspace': 0.0 , 'hspace': 0.0  } )
+        fig, ((axh, junk), (ax, axv)) = plt.subplots(2, 2, figsize= (w, h), gridspec_kw={'width_ratios': [3.7, 1], 'height_ratios': [1, 6], 'wspace': 0.0 , 'hspace': 0.0  } )
         junk.axis('off')
         if 'h' not in section:
             axh.axis('off')
@@ -114,21 +114,35 @@ def run(h5_filename, figname, dist_range=None, cc_time_range=None, slowness_rang
     t = cc_t0 + irow*delta
     p = slowness_range[0] + delta*icol
     ##### plot sections passing through the section
+    critical_value = 0.7
     if section != None:
         if 'h' in section:
             tmp_y = taup_mat_copy[irow, :]
             tmp_x = np.linspace(slowness_range[0], slowness_range[1], tmp_y.size)
-            axh.fill_between(tmp_x, 0, tmp_y, color='#aaaaaa')
+            axh.fill_between(tmp_x, 0, tmp_y, color=color)
             axh.plot(tmp_x, tmp_y, color='k')
+            axh.plot(tmp_x, tmp_y*0.0, ':', color='gray', linewidth=0.6)
         if 'v' in section:
             tmp_y = taup_mat_copy[:, icol]
             tmp_x = np.linspace(cc_t0, cc_t1, tmp_y.size)
-            axv.fill_between(tmp_y, 0, tmp_x, color='#aaaaaa')
             axv.plot(tmp_y, tmp_x, color='k')
+            axv.plot(tmp_y*0.0, tmp_x, ':', color='gray', linewidth=0.6)
+            if search_type == 'neg':
+                junk = tmp_y<=-critical_value
+                tmp_x2 = tmp_x[junk]
+                tmp_y2 = tmp_y[junk]
+                axv.fill_betweenx(tmp_x2, tmp_y2, -critical_value, color=color)
+            else:
+                junk = tmp_y>=critical_value
+                tmp_x2 = tmp_x[junk]
+                tmp_y2 = tmp_y[junk]
+                axv.fill_betweenx(tmp_x2, tmp_y2, critical_value, color=color)
+
     if section_out != None:
         tmp_y = taup_mat_copy[:, icol]
         fnm = '%s_v.sac' % (section_out)
         hdr = c_mk_sachdr_time(cc_t0, delta, tmp_y.size)
+        hdr.user7 = p
         hdr.user8 = t
         c_wrt_sac(fnm, tmp_y, hdr, False)
     #####
@@ -170,6 +184,7 @@ def run(h5_filename, figname, dist_range=None, cc_time_range=None, slowness_rang
                 axh.set_xticklabels([])
                 axh.set_yticks([])
             if 'v' in section:
+                axv.yaxis.tick_right()
                 axv.set_ylim((extent[2], extent[3]) )
                 axv.set_yticklabels([])
                 axv.set_xticks([])
