@@ -29,6 +29,10 @@ def run(h5_filename, figname, dist_range=None, cc_time_range=None, lines= None,
     mat = fid['ccstack'][:]
     dist = fid['dist'][:]
     stack_count = fid['stack_count'][:]
+    abs_amp = fid['absolute_amp']
+    for irow, (v1, v2) in enumerate(zip(abs_amp, stack_count)):
+        if v2 > 0:
+            mat[irow,:] *= (v1/v2)
     ### filter
     btype, f1, f2 = filter_setting
     if not (btype is None):
@@ -56,16 +60,22 @@ def run(h5_filename, figname, dist_range=None, cc_time_range=None, lines= None,
         i2 = int( np.round((cc_time_range[1]-cc_t0)/delta) )
         mat = mat[:, i1:i2]
         cc_t0, cc_t1 = cc_time_range
+    if dist_range != None:
+        d1, d2 = dist_range
+        i1 = np.argmin(abs(dist-d1))
+        i2 = np.argmin(abs(dist-d2)) + 1
+        mat = mat[1:i2, :]
+    mat *= (1.0/np.max(mat) )
     ### taper
     if taper_sec > delta:
         taper_sz = int(taper_sec / delta)
-        for irow in range(dist.size):
+        for irow in range(mat.shape[0]):
             taper_in_place(mat[irow], taper_sz)
-    ### norm
-    for irow in range(dist.size):
-        v = mat[irow].max()
-        if v > 0.0:
-            mat[irow] *= (1.0/v)
+    #### norm
+    #for irow in range(mat.shape[0]):
+    #    v = mat[irow].max()
+    #    if v > 0.0:
+    #        mat[irow] *= (1.0/v)
     ### normalize the waveform if necessary
     if not (norm_settings[0] is None):
         (xs, ts), method, search_window, outfnm = norm_settings
@@ -92,11 +102,11 @@ def run(h5_filename, figname, dist_range=None, cc_time_range=None, lines= None,
     ###
     ax1, ax2 = None, None
     if axhist:
-        fig, (ax1, ax2) = plt.subplots(2, 1, figsize= figsize, gridspec_kw={'height_ratios': [4, 1]} )
+        fig, (ax1, ax2) = plt.subplots(2, 1, figsize= figsize, gridspec_kw={'height_ratios': [4.6, 1], 'hspace': 0.02 } )
     else:
         fig, ax1 = plt.subplots(1, 1, figsize= figsize )
     ###
-    ax1.imshow(mat, extent=(dist[0], dist[-1], cc_t0, cc_t1 ), aspect='auto', cmap='gray', interpolation= interpolation,
+    ax1.imshow(mat, extent=(dist_range[0], dist_range[1], cc_t0, cc_t1 ), aspect='auto', cmap='gray', interpolation= interpolation,
             vmin=-vmax, vmax=vmax, origin='lower')
     ###
     if lines != None:
@@ -111,9 +121,9 @@ def run(h5_filename, figname, dist_range=None, cc_time_range=None, lines= None,
     if search_amp != None:
         search_max_amplitude(ax1, mat, search_amp, cc_t0, delta, adjust_time_axis)
     ###
-    ax1.set_xlim(dist_range)
+    #ax1.set_xlim(dist_range)
     if not axhist:
-        ax1.set_xlabel('Inter-receiver distance X ($\degree$)')
+        ax1.set_xlabel('Inter-receiver distance ($\degree$)')
     else:
         ax1.set_xticklabels(())
     if ylabel == 'all' or ylabel == 'cc':
@@ -137,14 +147,14 @@ def run(h5_filename, figname, dist_range=None, cc_time_range=None, lines= None,
         ax1.grid(linestyle=':', color='k' )
     if cc_time_range:
         ax1.set_ylim(cc_time_range)
-    ax1.set_title(title)
+    ax1.set_title(title, fontsize=15)
     ###
     if axhist:
         tmp = stack_count[stack_count>0]
         ax2.bar(dist, stack_count, align='center', color='gray', width= dist[1]-dist[0] )
         ax2.set_xlim(dist_range)
         ax2.set_ylim(bottom=0 )
-        ax2.set_xlabel('Inter-receiver distance $X$ ($\degree$)')
+        ax2.set_xlabel('Inter-receiver distance ($\degree$)')
 
         #fmt = '{x:,.0f}'
         #tick = mtick.StrMethodFormatter(fmt)
