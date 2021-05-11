@@ -398,6 +398,7 @@ class sachdr:
         """
         Empty constructor
         """
+        print('`sacpy.sac.sachdr` will be deprecated soon!')
         self.d_arch = dict()
         # default is time series
         self.d_arch['iftype'] = 1
@@ -523,6 +524,7 @@ class sactrace:
     Sac archive.
     """
     def __init__(self):
+        print('`sacpy.sac.sactrace` will be deprecated soon!')
         self.hdr = sachdr()
         self.dat = None
     ### init
@@ -1052,8 +1054,7 @@ def c_rd_sac_mat(fnms, tmark, t1, t2, lcalda=False, norm=None, filter=None, scal
     If a sac file does not exist, then zeros will be used to fill the row in the matrix `mat`,
     and None will be used for the element in the `hdrs`.
     """
-    tmp = [c_sactrace(it, tmark, t1, t2, lcalda, scale, verbose) if os_path_exists(it) else None for it in fnms ]
-    buf = [it for it in tmp if it != None]
+    buf = [c_sactrace(it, tmark, t1, t2, lcalda, scale, verbose) if os_path_exists(it) else None for it in fnms ]
     ###
     if filter:
         btype, f1, f2 = filter
@@ -1066,14 +1067,15 @@ def c_rd_sac_mat(fnms, tmark, t1, t2, lcalda=False, norm=None, filter=None, scal
     if norm != None:
         for it in buf:
             if it != None:
-                it.norm(norm) 
+                it.norm(norm)
     ###
     hdrs = [it.hdr if it !=None else None for it in buf  ]
     ###
     npts = np.max( [it.hdr.npts for it in buf if it !=None ] )
     mat = np.zeros( (len(fnms), npts), dtype=np.float32 )
     for irow, it in enumerate(buf):
-        mat[irow][:it.dat.size] = it.dat
+        if it != None:
+            mat[irow][:it.dat.size] = it.dat
     ###
     del buf
     return hdrs, mat
@@ -1102,6 +1104,7 @@ def c_wrt_sac2(filename, xs, b, delta, verbose):
     ###
     cffi_arr = ffi.cast('float*', np_arr.ctypes.data )
     libsac.write_sac2(filename.encode('utf8'), np_arr.size, b, delta, cffi_arr, verbose )
+
 def c_truncate_sac(c_sactr, t1, t2):
     """
     Truncate an object of `c_sactrace` with the time window (t1, t2).
