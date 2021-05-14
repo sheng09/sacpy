@@ -77,18 +77,16 @@ Massive data IO and processing
 import matplotlib.pyplot as plt
 from copy import deepcopy
 import numpy as np
-from scipy.signal import tukey, detrend, decimate, correlate, resample
 from struct import unpack, pack
 import sys
 from glob import glob
 import pickle
 from sacpy.geomath import haversine, azimuth, point_distance_to_great_circle_plane
-from sacpy.processing import filter as processing_filter
-from sacpy.processing import taper as processing_taper
+from sacpy.processing import iirfilter_f32, taper, rmean, detrend, cut, tnorm, fwhiten
 #import sacpy.processing as processing
 from os.path import exists as os_path_exists
-from sacpy.c_src._sac_io import lib as libsac
-from sacpy.c_src._sac_io import ffi as ffi
+from sacpy.c_src._lib_sac import lib as libsac
+from sacpy.c_src._lib_sac import ffi as ffi
 from h5py import File as h5_File
 ###
 #  dependend methods
@@ -1557,7 +1555,7 @@ class c_sactrace:
         cffi_arr = ffi.cast('float*', self.dat.astype(np.float32).ctypes.data )
         libsac.write_sac(fnm.encode('utf8'), self.hdr, cffi_arr, verbose)
     def get_time_axis(self):
-        return np.arange(self.dat.size) * self.hdr.delta + self.hdr.b
+        return np.arange(self.dat.size, dtype=np.float32) * self.hdr.delta + self.hdr.b
     def plot(self, ax=None, show=True, **kwargs):
         if ax != None:
             ax.plot(self.get_time_axis(), self.dat, **kwargs )
@@ -1589,42 +1587,47 @@ class c_sactrace:
         """
         Remove mean value
         """
-        self.dat -= np.average(self.dat)
+        self.dat -= np.mean(self.dat)
     def detrend(self):
         """
         """
-        self.dat = detrend(self.dat)
-    def taper(self, ratio):
+        detrend(self.dat)
+    def taper(self, half_ratio):
         """
         tukey window is used for the tapering.
         """
-        self.dat = processing_taper(self.dat, int(self.dat.size*ratio) )
-    def filter(self, btype, fs, order=2, npass=2):
+        taper(self.dat, int(self.dat.size*half_ratio) )
+    def filter(self, btype, fs, order=2, npass=2, aproto=0):
         """
+        btype:
+            0 : low pass
+            1 : high pass
+            2 : band pass
+            3 : band reject
+        aproto: 0 : butterworth filter
+            1 : bessel filter
+            2 : chebyshev type i
+            3 : chebyshev type ii
         """
-        self.dat = processing_filter(self.dat, 1.0/self.hdr.delta, btype, fs, order, npass)
+        if btype == 'LP':
+            btype = 0
+        elif btype == 'HP':
+            btype = 1
+        elif btype == 'BP':
+            btype = 2
+        elif btype == 'BR':
+            btype = 3
+
+        iirfilter_f32(self.dat, self.hdr.delta, aproto, btype, fs[0], fs[1], order, npass )
+        #self.dat = processing_filter(self.dat, 1.0/self.hdr.delta, btype, fs, order, npass)
     def truncate(self, t1, t2):
         """
         """
-        i1 = libsac.get_absolute_time_index(t1, self.hdr.delta, self.hdr.b)
-        i2 = libsac.get_absolute_time_index(t2, self.hdr.delta, self.hdr.b) + 1
-        new_dat = np.zeros(i2-i1, dtype= np.float32 )
-        ###
-        n1, o1 = 0, i1
-        o2 = i2
-        if i1<0:
-            n1 = -i1
-            o1 = 0
-        if i2 > self.dat.size:
-            o2 = self.dat.size
-        n2 = n1+(o2-o1)
-        new_dat[n1:n2] = self.dat[o1:o2]
-        ###
-        self.dat = new_dat
+        self.dat, nb = cut(self.dat, self.hdr.delta, self.hdr.b, t1, t2)
         hdr = self.hdr
         hdr.npts = self.dat.size
-        hdr.b = hdr.b + hdr.delta*i1
-        hdr.e = hdr.b + hdr.delta*(self.dat.size-1)
+        hdr.b = nb
+        hdr.e = nb + hdr.delta*(hdr.npts-1)
     def max_amplitude_time(self, amp, t_range):
         """
         Get the (idx, time, amplitude) for the max amplitude point in the time range `t_range`.
@@ -1642,6 +1645,10 @@ class c_sactrace:
         elif amp == 'neg':
             imin = np.argmin(x)
             return imin+i1, (imin+i1)*self.hdr.delta+self.hdr.b, x[imin]
+    def tnorm(self, winlen, f1, f2, water_level_ratio= 1.0e-5, taper_halfsize=0):
+        tnorm(self.dat, self.hdr.delta, winlen, f1, f2, water_level_ratio, taper_halfsize)
+    def fwhiten(self, winlen, water_level_ratio= 1.0e-5, taper_halfsize=0, speedup_i1= -1, speedup_i2= -1):
+        fwhiten(self.dat, self.hdr.delta, winlen, water_level_ratio, taper_halfsize, speedup_i1, speedup_i2)
 ##################################################################################################################
 # Classes/method below are usually useless
 ##################################################################################################################
