@@ -1113,7 +1113,6 @@ def c_truncate_sac(c_sactr, t1, t2):
     obj = c_sactr.duplicate()
     obj.truncate(t1, t2)
     return obj
-
 ###
 #  functions to convert many sacs into a single hdf5 file
 ###
@@ -1158,6 +1157,7 @@ def sac2hdf5(fnm_wildcard, hdf5_fnm, lcalda=False, verbose=False, info='', ignor
     fid.attrs['info'] = info
     fid.attrs['nfile'] = nfile
     fid.create_dataset('filename', data=[it.encode('ascii') for it in  fnmlst] )
+    fid.create_dataset('LL', data=[it.split('.')[-2].encode('ascii') for it in fnmlst] )
     grp_hdr = fid.create_group('hdr')
     hdrs = [c_rd_sachdr(it, lcalda, verbose) for it in fnmlst]
 
