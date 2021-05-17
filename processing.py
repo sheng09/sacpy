@@ -6,13 +6,61 @@ This is for 1D time series data processing.
 Most of functions in this module are in place computation.
 That means, after calling func(xs, ...), the xs is revised,
 and no return.
+
+Inplace IIR filter
+-------------------------
+
+>>> import numpy as np
+>>> xs = np.random.random(10000)-0.5
+>>> delta = 0.1 # sampling time interval
+>>> btype, f1, f2, ord, npass = 2, 0.2, 2.0, 2, 2
+>>> iirfilter_f32(xs, delta, 0, btype, f1, f2, ord, npass)
+>>>
+>>> ys = np.random.random(10000)-0.5
+>>> zs = np.random.random(10000)-0.5
+>>> iirfilter2_f32((xs, ys, zs), delta, 0, btype, f1, f2, ord, npass)
+>>>
+
+Inplace taper
+-------------------------
+
+>>> halfsize, times = 30, 2
+>>> taper(xs, halfsize, times) # will apply the taper for 2 times
+>>> taper((xs, ys, zs), halfsize, times)
+>>>
+
+Inplace detrend
+-------------------------
+
+>>> rmean(xs)
+>>> detrend(xs)
+>>>
+
+Not-Inplace cut
+-------------------------
+>>> t0 = 0.0
+>>> w1, w2 = 99.5, 300
+>>> new_xs, new_t0 = cut(xs, delta, t0, w1, w2)
+>>>
+
+Inplace whitening
+-------------------------
+>>> wtlen = 128.0 # sec
+>>> f1, f2 = 0.02, 0.0667
+>>> water_level_ratio, taper_halfsize = 1.0e-5, 30
+>>> tnorm_f32(xs, delta, wtlen, f1, f2, water_level_ratio, taper_halfsize)
+>>> wflen = 0.02
+>>> fwhiten_f32(xs, delta, wflen, water_level_ratio, taper_halfsize)
+>>>
 """
+
+
 
 import numpy as np
 #from pyfftw.interfaces.cache import enable as pyfftw_cache_enable
 from pyfftw.interfaces.numpy_fft import rfft, irfft
-from numba import jit, int64, int32, float64, float32, cffi_support, cgutils, types
-from numba.extending import intrinsic
+from numba import jit
+from numba.core.typing import cffi_utils as cffi_support
 
 import sacpy.c_src._lib_sac as module_lib_sac
 cffi_support.register_module(module_lib_sac)
@@ -109,8 +157,8 @@ def taper2(tuple_xs, half_size, times=1):
         xs[0] = 0.0
         xs[-1] = 0.0
         for idx in range(0, n):
-            xs[idx] *= c
-            xs[-1-idx] *= c
+            xs[idx] *= c[idx]
+            xs[-1-idx] *= c[idx]
 
 #############################################################################################################################
 # JIT in place detrend
@@ -131,7 +179,7 @@ def detrend(xs):
     ymean = np.mean(xs)
     xmean = (len-1)*len*0.5/len
 
-    tmp = np.arange(len).astype(np.float64)
+    tmp = np.arange(len, dtype=np.float64)
     s1 = np.sum(tmp*xs)
     s2 = np.sum(tmp*tmp)
 
@@ -144,7 +192,7 @@ def detrend(xs):
 #############################################################################################################################
 # JIT cut
 #############################################################################################################################
-@jit(nopython=True, nogil=True)
+#@jit(nopython=True, nogil=True)
 def cut(xs, delta, t0, new_t0, new_t1):
     """
     Return cutted time series.
@@ -156,14 +204,15 @@ def cut(xs, delta, t0, new_t0, new_t1):
     i1 = int(np.floor((new_t1-t0)/delta))+1
     new_size = i1-i0
     new_xs = np.zeros(new_size, dtype=xs.dtype)
-
+    new_t0 = i0*delta + t0
+    if i1<0 or i0>xs.size:
+        return new_xs, new_t0
     if i1 > xs.size:
         i1 = xs.size
     if i0<0:
         new_xs[-i0:i1-i0] = xs[:i1]
     else:
         new_xs[0:i1-i0] = xs[i0:i1]
-    new_t0 = i0*delta + t0
     return new_xs, new_t0
 
 #############################################################################################################################
@@ -188,7 +237,7 @@ def moving_average_abs_f32(xs, wdn_sz=1, scale=False):
     tmp = np.abs(xs).astype(np.float32)
     return moving_average_f32(tmp, wdn_sz, scale)
 @jit(nopython=True, nogil=True)
-def tnorm(xs, delta, winlen, f1, f2, water_level_ratio= 1.0e-5, taper_halfsize=0):
+def tnorm_f32(xs, delta, winlen, f1, f2, water_level_ratio= 1.0e-5, taper_halfsize=0):
     """
     Inplace temporal normalization of input trace `xs` (a numpy.ndarray(dtype=np.float32) object).
 
@@ -201,7 +250,7 @@ def tnorm(xs, delta, winlen, f1, f2, water_level_ratio= 1.0e-5, taper_halfsize=0
     wndsize = int(np.ceil(winlen/delta) )
     wndsize = (wndsize // 2)*2 +1
 
-    weight = np.copy(xs)
+    weight = np.copy(xs) # obvious it is deep copy here as xs is a 1D array. weight will have same dtype as xs.
     iirfilter_f32(weight, delta, 0, 2, f1, f2, 2, 2)
     weight = moving_average_abs_f32(weight, wndsize, False)
     weight += ( np.max(weight) * water_level_ratio )
@@ -213,7 +262,7 @@ def tnorm(xs, delta, winlen, f1, f2, water_level_ratio= 1.0e-5, taper_halfsize=0
 
     if taper_halfsize > 0:
         taper(xs, taper_halfsize)
-def fwhiten(xs, delta, winlen, water_level_ratio= 1.0e-5, taper_halfsize=0, speedup_i1= -1, speedup_i2= -1):
+def fwhiten_f32(xs, delta, winlen, water_level_ratio= 1.0e-5, taper_halfsize=0, speedup_i1= -1, speedup_i2= -1):
     """
     Inplace frequency whitening of input trace `xs` (a numpy.ndarray(dtype=np.float32) object).
 
@@ -251,26 +300,87 @@ if __name__ == "__main__":
     import matplotlib.pyplot as plt
     from copy import deepcopy
     from sacpy.sac import c_rd_sac
+    import numpy as np
     st = c_rd_sac('junk/2010/20100103_223625.a/processed/II.NNA.00.BHZ')
-    ts = st.get_time_axis()
-    st.truncate(10800, 32400)
-    #plt.plot(ts, st.dat, label='raw', alpha=0.3)
-
-    st.rmean()
+    delta = st.hdr.delta # sampling time interval
+    st.truncate(10800, 32300)
+    st.write('junk.sac')
     st.detrend()
     st.taper(0.005)
-    #plt.plot(ts, st.dat, label='preproc1', alpha=0.3)
+    ts = st.get_time_axis()
+    xs = deepcopy(st.dat)
+    ys = deepcopy(st.dat)
+    zs = deepcopy(st.dat)
 
-    st.write('raw.sac')
-    #plt.plot(ts, st.dat, label='truncate', alpha=0.3)
+    plt.subplot(311); plt.plot(ts, xs)
+    plt.subplot(312); plt.plot(ts, ys)
+    plt.subplot(313); plt.plot(ts, zs)
+    #Inplace IIR filter
+    #-------------------------
+    if False:
+        #xs = np.random.random(10000)-0.5
+        btype, f1, f2, ord, npass = 2, 0.02, 0.0666, 2, 2
+        iirfilter_f32(xs, delta, 0, btype, f1, f2, ord, npass)
 
-    st.tnorm(128, 0.02, 0.06666, 1.e-05, 1000)
-    st.write('tnorm.sac')
-    #plt.plot(ts, st.dat, label='tnorm', alpha=0.3)
+        #ys = np.random.random(10000)-0.5
+        #zs = np.random.random(10000)-0.5
+        iirfilter2_f32((xs, ys, zs), delta, 0, btype, f1, f2, ord, npass)
+        plt.subplot(311); plt.plot(ts, xs)
+        plt.subplot(312); plt.plot(ts, ys)
+        plt.subplot(313); plt.plot(ts, zs)
+        st.dat = ys
+        #st.write('junk.sac')
 
-    st.fwhiten(0.02, 1.e-5, 1000)
-    st.write('fwhiten.sac')
-    #plt.plot(ts, st.dat, label='fwhiten', alpha=0.3)
+    #Inplace taper
+    #-------------------------
+    if False:
+        halfsize, times = 3000, 2
+        taper(xs, halfsize, times) # will apply the taper for 2 times
+        taper2((xs, ys, zs), halfsize, times)
+        plt.subplot(311); plt.plot(ts, xs)
+        plt.subplot(312); plt.plot(ts, ys)
+        plt.subplot(313); plt.plot(ts, zs)
+    #Inplace detrend
+    #-------------------------
+    if False:
+        rmean(xs)
+        detrend(xs)
 
-    #plt.legend()
-    #plt.show()
+        plt.subplot(311); plt.plot(ts, xs)
+        plt.subplot(312); plt.plot(ts, ys)
+        plt.subplot(313); plt.plot(ts, zs)
+
+    #Not-Inplace cut
+    #-------------------------
+    if False:
+        t0 = st.hdr.b
+        print(t0)
+        w1, w2 = 99.5, 300
+        new_xs, new_t0 = cut(xs, delta, t0, 99.5, 300)
+        ts_x = np.arange(new_xs.size)*delta + new_t0
+
+        new_ys, new_t0 = cut(ys, delta, t0, 10900, 20000)
+        ts_y = np.arange(new_ys.size)*delta + new_t0
+
+        new_zs, new_t0 = cut(zs, delta, t0, 32000, 40000)
+        ts_z = np.arange(new_zs.size)*delta + new_t0
+
+        plt.subplot(311); plt.plot(ts_x, new_xs)
+        plt.subplot(312); plt.plot(ts_y, new_ys)
+        plt.subplot(313); plt.plot(ts_z, new_zs)
+
+
+    #Inplace whitening
+    #-------------------------
+    if True:
+        wtlen = 128.0 # sec
+        f1, f2 = 0.02, 0.0667
+        water_level_ratio, taper_halfsize = 1.0e-5, 30
+        tnorm_f32(xs, delta, wtlen, f1, f2, water_level_ratio, taper_halfsize)
+        wflen = 0.02
+        fwhiten_f32(xs, delta, wflen, water_level_ratio, taper_halfsize)
+
+        plt.subplot(311); plt.plot(ts, xs)
+        plt.subplot(312); plt.plot(ts, ys)
+        plt.subplot(313); plt.plot(ts, zs)
+    plt.show()

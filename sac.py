@@ -11,23 +11,24 @@ and convenient in both data processing, and program development.
 File IO dependent methods
 -------------------------
 
->>> # io, view,  basic processing
->>> s = rd_sac('1.sac')
->>> s.plot()       
->>> s.detrend()    
+>>> # IO, view,  basic processing
+>>> s = c_rd_sac('1.sac')
+>>> s.truncate(100, 500)
+>>> s.plot()
+>>> s.detrend()
 >>> s.taper(0.02) # ratio can be 0 ~ 0.5
->>> s.bandpass(0.5, 2.0, order= 4, npass= 2)
+>>> s.filter('BP', (0.2, 1.0), order=2, npass=2)
 >>> s.write('1_new.sac')
->>> 
+>>>
 >>> # arbitrary plot
 >>> ts = s.get_time_axis()
 >>> plt.plot(ts, s['dat'], color='black') # ...
 >>>
->>> # cut and read
->>> s = rd_sac_2('1.sac', 'e', -50, -20)
->>> s.detrend()    
->>> # some other processing...
->>> s.write('1_truncated.sac')
+>>> # read given time range
+>>> s = c_rd_sac('1.sac', -5, 100, 4000)
+>>> # -5 here means 'b. The time window is (100+b, 4000+b)
+>>> # -3 means 'o', and 0, 1,...9 for 't0', 't1',...,'t9'.
+>>>
 
 Arbitrary data writing, and processing methods
 ----------------------------------------------
@@ -36,41 +37,44 @@ Arbitrary data writing, and processing methods
 >>> dat = np.random.random(1000)
 >>> delta, b = 0.05, 50.0
 >>> # writing method 1
->>> wrt_sac_2('junk.sac', dat, delta, b, **{'kstnm': 'syn', 'stlo': 0.0, 'stla': 0.0} )
->>> 
->>> # writing method 2, with processings
->>> s = make_sactrace_v(dat, delta, b, **{'kstnm': 'syn', 'stlo': 0.0, 'stla': 0.0} )
+>>> c_wrt_sac2('junk.sac', dat, b, delta)
+>>>
+>>> # writing method 2
+>>> s = c_mk_sachdr_time(dat, b, delta)
+>>> s.hdr.stnm = 'SYN' # update sachdr...
 >>> s.taper()
 >>> s.bandpass(0.5, 2.0, order= 4, npass= 2)
 >>> s.write('junk2.sac')
 >>>
+>>> # writing method 3 assuming a hdr object is created somewhere else
+>>> c_wrt_sac('junk3.sac', data, hdr, lcalda=False, verbose=False)
 
 Sac header update and revision
 ------------------------------
 
->>> import copy
->>> s = rd_sac('1.sac')
->>> new_hdr = deepcopy(s.hdr)
->>> new_hdr['t1'] = 2.0 # meaningless value, just for example
->>> new_hdr['t2'] = 4.0
->>> new_hdr.update( **{'stlo': -10.0, 'stla': 10.0, 'delta': 0.2 } )
->>> s_new = make_sactrace_hdr(s['dat'], new_hdr)
->>> s_new.write('1_new.sac')
+>>> s = c_rd_sac('1.sac')
+>>> hdr = c_rd_sachdr('1.sac', lcalda=True)
+>>> # duplicate a hdr given the hdr is C structure object
+>>> new_hdr = c_dup_sachdr(s.hdr)
+>>> # access hdr parameters
+>>> new_hdr.t1 = 2.0 # meaningless value, just for example
+>>> new_hdr.t2 = 4.0
+>>> # make an empty hdr
+>>> empty_hdr = c_mk_empty_sachdr()
 
 
-Massive data IO and processing
+Operate massive sac files
 ------------------------------
 
->>> # read, process, and write a bunch of sac files in 3 lines
->>> fnm_lst = ['1.sac', '2.sac', '3.sac']
->>> for fnm in fnm_lst:
-...     s = rd_sac(fnm)
-...     s.detrend()
-...     s.taper()
-...     s.lowpass(1.2, order= 2, npass= 2)
-...     s.write(s['filename'].replace('.sac', '_proced.sac') )
-...
->>> 
+>>> # read sachdr given filename wildcard, and restrict b<=3600 and e>=7200
+>>> # The `vol` will be a list of (hdr, filename)
+>>> vol = c_rd_sachdr_wildcard('II.*.00.sac', lcalda=True, critical_time_window= (3600, 7200) )
+>>>
+>>> # read many sac files with same cuttin method
+>>> # Return a list `hdrs` and a matrix `mat` each line of which correspond to a sac time series
+>>> # The calling will jump over wrong/broken sac files
+>>> fnms = ('1.sac', '2.sac', '3.sac' )
+>>> hdrs, mat = c_rd_sac_mat(fnms, -3, 1000, 2000, lcalda=True, scale=True, filter=('BP', 0.2, 1.0), verbose=False )
 
 
 """
@@ -82,12 +86,13 @@ import sys
 from glob import glob
 import pickle
 from sacpy.geomath import haversine, azimuth, point_distance_to_great_circle_plane
-from sacpy.processing import iirfilter_f32, taper, rmean, detrend, cut, tnorm, fwhiten
+from sacpy.processing import iirfilter_f32, taper, rmean, detrend, cut, tnorm_f32, fwhiten_f32
 #import sacpy.processing as processing
 from os.path import exists as os_path_exists
 from sacpy.c_src._lib_sac import lib as libsac
 from sacpy.c_src._lib_sac import ffi as ffi
 from h5py import File as h5_File
+import ctypes
 ###
 #  dependend methods
 ###
@@ -728,7 +733,7 @@ class sactrace:
             '0' means to use the built-in time axis according to 'b'.
         t1, t2: float;
         """
-        if tmark is '0':
+        if tmark == '0':
             tmark = 'b'
             t1 = t1 - self['b']
             t2 = t2 - self['b']
@@ -977,42 +982,6 @@ def c_rd_sachdr(filename=None, lcalda=False, verbose=False):
         hdr.baz   = azimuth(  hdr.stlo, hdr.stla, hdr.evlo, hdr.evla)
         hdr.az    = azimuth(  hdr.evlo, hdr.evla, hdr.stlo, hdr.stla)
     return hdr
-def c_mk_sachdr_time(b, delta, npts):
-    """
-    Make a new sac header object for time series given several time related parameters.
-
-    The returned object is stored as a C Struct in the memory, and hence it doesn't support `deepcopy(...)`.
-    You can use the methods `new_hdr = c_dup_sachdr(old_hdr)` to copy/duplicate and generate a new object.
-    """
-    ###
-    hdr = c_mk_empty_sachdr()
-    ###
-    hdr.b = b
-    hdr.delta = delta
-    hdr.npts = npts
-    ###
-    hdr.e = b+(npts-1)*hdr.delta
-    hdr.iztype = libsac.IO
-    hdr.iftype = libsac.ITIME
-    hdr.leven  = 1
-    return hdr
-def c_mk_empty_sachdr():
-    """
-    Return an empty hdr.
-
-    The returned object is stored as a C Struct in the memory, and hence it doesn't support `deepcopy(...)`.
-    You can use the methods `new_hdr = c_dup_sachdr(old_hdr)` to copy/duplicate and generate a new object.
-    """
-    return c_dup_sachdr( ffi.addressof(libsac.sachdr_null) )
-def c_dup_sachdr(hdr):
-    """
-    Return a deepcopy of the existing hdr.
-
-    Please use this method to copy an existing `hdr` object instead of `deepcopy(...)` that is not supported.
-    """
-    hdr2 = ffi.new('SACHDR *')
-    libsac.copy_sachdr(hdr, hdr2)
-    return hdr2
 def c_rd_sachdr_wildcard(fnm_wildcard=None, lcalda=False, tree=False, log_file=None, critical_time_window= None):
     """
     Read and return a list of tuple (hdr, filename) given the filename wildcard.
@@ -1036,7 +1005,42 @@ def c_rd_sachdr_wildcard(fnm_wildcard=None, lcalda=False, tree=False, log_file=N
                 print('c_rd_sachdr_wildcard(%s)...' %  wildcard, file=log_file, flush=True )
             buf.append( (wildcard, c_rd_sachdr_wildcard(wildcard, lcalda, False, None, critical_time_window) ) )
         return buf
+def c_mk_empty_sachdr():
+    """
+    Return an empty hdr.
 
+    The returned object is stored as a C Struct in the memory, and hence it doesn't support `deepcopy(...)`.
+    You can use the methods `new_hdr = c_dup_sachdr(old_hdr)` to copy/duplicate and generate a new object.
+    """
+    return c_dup_sachdr( ffi.addressof(libsac.sachdr_null) )
+def c_mk_sachdr_time(b, delta, npts):
+    """
+    Make a new sac header object for time series given several time related parameters.
+
+    The returned object is stored as a C Struct in the memory, and hence it doesn't support `deepcopy(...)`.
+    You can use the methods `new_hdr = c_dup_sachdr(old_hdr)` to copy/duplicate and generate a new object.
+    """
+    ###
+    hdr = c_mk_empty_sachdr()
+    ###
+    hdr.b = b
+    hdr.delta = delta
+    hdr.npts = npts
+    ###
+    hdr.e = b+(npts-1)*hdr.delta
+    hdr.iztype = libsac.IO
+    hdr.iftype = libsac.ITIME
+    hdr.leven  = 1
+    return hdr
+def c_dup_sachdr(hdr):
+    """
+    Return a deepcopy of the existing hdr.
+
+    Please use this method to copy an existing `hdr` object instead of `deepcopy(...)` that is not supported.
+    """
+    hdr2 = ffi.new('SACHDR *')
+    libsac.copy_sachdr(hdr, hdr2)
+    return hdr2
 
 def c_rd_sac(filename, tmark=None, t1=None, t2=None, lcalda=False, scale=False, verbose=False):
     """
@@ -1046,7 +1050,7 @@ def c_rd_sac(filename, tmark=None, t1=None, t2=None, lcalda=False, scale=False, 
     if tmp.dat is None:
         return None
     return tmp
-def c_rd_sac_mat(fnms, tmark, t1, t2, lcalda=False, norm=None, filter=None, scale=False, verbose=False):
+def c_rd_sac_mat(fnms, tmark, t1, t2, lcalda=False, scale=False, filter=None, verbose=False):
     """
     Return (hdrs, mat), where `hdrs` is a list of sachdr and mat is the matrix of data.
     If a sac file does not exist, then zeros will be used to fill the row in the matrix `mat`,
@@ -1062,11 +1066,6 @@ def c_rd_sac_mat(fnms, tmark, t1, t2, lcalda=False, norm=None, filter=None, scal
                 it.detrend()
                 it.filter(btype, (f1, f2), 2, 2)
     ###
-    if norm != None:
-        for it in buf:
-            if it != None:
-                it.norm(norm)
-    ###
     hdrs = [it.hdr if it !=None else None for it in buf  ]
     ###
     npts = np.max( [it.hdr.npts for it in buf if it !=None ] )
@@ -1077,7 +1076,7 @@ def c_rd_sac_mat(fnms, tmark, t1, t2, lcalda=False, norm=None, filter=None, scal
     ###
     del buf
     return hdrs, mat
-def c_wrt_sac(filename, xs, hdr, verbose, lcalda=False):
+def c_wrt_sac(filename, xs, hdr, lcalda=False, verbose=False):
     """
     Write.
     """
@@ -1094,7 +1093,7 @@ def c_wrt_sac(filename, xs, hdr, verbose, lcalda=False):
     ###
     cffi_arr = ffi.cast('float*', np_arr.ctypes.data )
     libsac.write_sac(filename.encode('utf8'), hdr, cffi_arr, verbose)
-def c_wrt_sac2(filename, xs, b, delta, verbose):
+def c_wrt_sac2(filename, xs, b, delta, verbose=False):
     """
     Write.
     """
@@ -1103,6 +1102,15 @@ def c_wrt_sac2(filename, xs, b, delta, verbose):
     cffi_arr = ffi.cast('float*', np_arr.ctypes.data )
     libsac.write_sac2(filename.encode('utf8'), np_arr.size, b, delta, cffi_arr, verbose )
 
+def c_mk_sac(xs, b, delta):
+    """
+    Return a c_sactrace object.
+    """
+    st = c_sactrace()
+    st.dat = np.array(xs, dtype=np.float32)
+    st.hdr.b = b
+    st.hdr.delta = delta
+    return st
 def c_truncate_sac(c_sactr, t1, t2):
     """
     Truncate an object of `c_sactrace` with the time window (t1, t2).
@@ -1144,11 +1152,18 @@ __hs_keys=( 'kstnm',     'kevnm',
             'kt9',       'kf',        'kuser0',
             'kuser1',    'kuser2',    'kcmpnm',
             'knetwk',    'kdatrd',    'kinst'  )
-def sac2hdf5(fnm_wildcard, hdf5_fnm, lcalda=False, verbose=False, info='', ignore_data=False):
+def sac2hdf5(fnms, hdf5_fnm, lcalda=False, info='', ignore_data=False, verbose=False):
     """
     Convert many sac files into a single hdf5 file.
+
+    fnms:        a list of filenames for sac files.
+    hdf5_fnm:    filename for output hdf5 file.
+    lcalda:      (default is False).
+    info:        An information string that output the hdf5.
+    ignore_data: Ignore time series, and only save sachdr data in the output.
+    verbose:     (default is False).
     """
-    fnmlst = sorted(glob(fnm_wildcard) )
+    fnmlst = fnms
     nfile = len(fnmlst)
 
     fid = h5_File(hdf5_fnm, 'w')
@@ -1474,10 +1489,12 @@ def hdf52sac(hdf5_fnm, output_prefix, verbose=False):
         fnm = '%s%s' % (output_prefix, fnmlst[idx].decode('ascii').split('/')[-1] )
         if verbose:
             print(fnm)
-        c_wrt_sac(fnm, ys, hdr, False, True)
+        c_wrt_sac(fnm, ys, hdr, False, verbose)
 ###
 #  classes based on C libraries
 ###
+ffi_from_buffer = ffi.from_buffer
+ffi_cast = ffi.cast
 class c_sactrace:
     """
     The class `c_sactrace` is based on C libraries implemented in `c_src/...`.
@@ -1485,11 +1502,14 @@ class c_sactrace:
     An `c_sactrace` object has two elements: #1. `c_sactrace.hdr` and #2. `c_sactrace.dat`.
     The 1st, `c_sactrace.hdr`, is stored as a C Struct in the memory, and it does not support
     `deepcopy(...)`, and please use `new_hdr = c_dup_sachdr(old_hdr)` to copy.
-    The 2st, `c_sactrace.dat`, is a numpy.ndarray. You can manipulate it, and we suggest to 
-    use `dtype=np.float32` when manipulating it.
+    The 2st, `c_sactrace.dat`, is a numpy.ndarray(dtype=np.float32). We recommend `dtype=np.float32`
+    to avoid possible failure.
     """
     def __init__(self, fnm=None, tmark=None, t1=None, t2=None, lcalda=False, scale=False, verbose=False):
         """
+        Creat an object of c_sactrace via reading from a sac file.
+        If `fnm` is not provided, a c_sactrace object with empty hdr will be created.
+
         fnm: the sac filename that is a string.
         tmark:  default is None. can be -5, -3, 0, 1,...9 for 'b', 'o', 't0', 't1',...,'t9'.
         t1, t2: defaults are None. the time window to cut when reading.
@@ -1500,9 +1520,9 @@ class c_sactrace:
         self.dat  = None
         if fnm:
             if tmark == None or t1 == None and t2 == None:
-                self.read(fnm, lcalda, scale, verbose)
+                self.__read(fnm, lcalda, scale, verbose)
             else:
-                self.read2(fnm, tmark, t1, t2, lcalda, scale, verbose)
+                self.__read2(fnm, tmark, t1, t2, lcalda, scale, verbose)
     def duplicate(self):
         """
         Return a new object that is the duplication of this object.
@@ -1511,8 +1531,9 @@ class c_sactrace:
         obj.hdr = c_dup_sachdr(self.hdr)
         obj.dat = deepcopy(self.dat)
         return obj
-    def read(self, fnm, lcalda=False, scale=False, verbose=False ):
+    def __read(self, fnm, lcalda=False, scale=False, verbose=False ):
         """
+        Internal function.
         Read from a file.
         """
         buf = libsac.read_sac(fnm.encode('utf8'), self.hdr, scale, verbose)
@@ -1528,8 +1549,9 @@ class c_sactrace:
             self.hdr.gcarc = haversine(hdr.stlo, hdr.stla, hdr.evlo, hdr.evla)
             self.hdr.baz   = azimuth(  hdr.stlo, hdr.stla, hdr.evlo, hdr.evla)
             self.hdr.az    = azimuth(  hdr.evlo, hdr.evla, hdr.stlo, hdr.stla)
-    def read2(self, fnm, tmark, t1, t2, lcalda=False, scale=False, verbose=False ):
+    def __read2(self, fnm, tmark, t1, t2, lcalda=False, scale=False, verbose=False ):
         """
+        Internal function.
         Read from a file with cutting method.
         tmark can be -5, -3, 0, 1,...9 for 'b', 'o', 't0', 't1',...,'t9'.
         """
@@ -1552,9 +1574,12 @@ class c_sactrace:
         """
         hdr = self.hdr
         hdr.e = hdr.b + hdr.delta * (hdr.npts - 1)
-        cffi_arr = ffi.cast('float*', self.dat.astype(np.float32).ctypes.data )
-        libsac.write_sac(fnm.encode('utf8'), self.hdr, cffi_arr, verbose)
+        cffi_arr = ffi_cast('const float *', ffi_from_buffer(self.dat) ) #ffi.cast('const float*', self.dat.ctypes.data)
+        libsac.write_sac(fnm.encode('utf8'), hdr, cffi_arr, verbose)
     def get_time_axis(self):
+        """
+        Return time axis, that is an object of numpy.ndarray.
+        """
         return np.arange(self.dat.size, dtype=np.float32) * self.hdr.delta + self.hdr.b
     def plot(self, ax=None, show=True, **kwargs):
         if ax != None:
@@ -1566,7 +1591,7 @@ class c_sactrace:
             plt.show()
     def norm(self, method='abs'):
         """
-        Norm max amplitude to 1
+        Norm max amplitude to 1. Calling this function will revise hdr.scale.
         norm: 'pos' to normalize the max positive amplitude.
               'neg' ...                  negative ...
               'abs' ...                  absolute ... (default)
@@ -1575,13 +1600,18 @@ class c_sactrace:
         max_neg = -self.dat.min()
         if method  == 'pos':
             if max_pos > 0.0:
-                self.dat *= (1.0/max_pos)
+                v = (1.0/max_pos)
+                self.hdr.scale *= v
+                self.dat *= v
         elif method == 'neg':
             if max_neg > 0.0:
-                self.dat *= (1.0/max_neg)
+                (1.0/max_neg)
+                self.hdr.scale *= v
+                self.dat *= v
         else:
             v = max(max_pos, max_neg)
             if v > 0.0:
+                self.hdr.scale *= v
                 self.dat *= (1.0/ v )
     def rmean(self):
         """
@@ -1604,6 +1634,7 @@ class c_sactrace:
             1 : high pass
             2 : band pass
             3 : band reject
+        fs : cutoff frequency (f_low, f_high) for the filter.
         aproto: 0 : butterworth filter
             1 : bessel filter
             2 : chebyshev type i
@@ -1646,686 +1677,14 @@ class c_sactrace:
             imin = np.argmin(x)
             return imin+i1, (imin+i1)*self.hdr.delta+self.hdr.b, x[imin]
     def tnorm(self, winlen, f1, f2, water_level_ratio= 1.0e-5, taper_halfsize=0):
-        tnorm(self.dat, self.hdr.delta, winlen, f1, f2, water_level_ratio, taper_halfsize)
+        tnorm_f32(self.dat, self.hdr.delta, winlen, f1, f2, water_level_ratio, taper_halfsize)
     def fwhiten(self, winlen, water_level_ratio= 1.0e-5, taper_halfsize=0, speedup_i1= -1, speedup_i2= -1):
-        fwhiten(self.dat, self.hdr.delta, winlen, water_level_ratio, taper_halfsize, speedup_i1, speedup_i2)
+        fwhiten_f32(self.dat, self.hdr.delta, winlen, water_level_ratio, taper_halfsize, speedup_i1, speedup_i2)
 ##################################################################################################################
-# Classes/method below are usually useless
 ##################################################################################################################
-###
-#  sactrace container
-###
-class sactrace_list(list):
-    """
-    Is this necessary ?
-    """
-    ### 
-    def __int__(self):
-        """
-        Empty constructor
-        """
-        pass
-    ### IO
-    def read_fnm_lst(self, fnm_lst):
-        """
-        Read a list of sac filenames for initialization.
-        """
-        self.extend( [rd_sac(fnm) for fnm in fnm_lst] )
-    def read_fnm_lst_2(self, fnm_lst, tmark, t1, t2):
-        """
-        Read a list of sac filenames with given time window setting for initialization.
-        tmark, t1, t2: time window setting for read.
-        """
-        self.extend( [rd_sac_2(fnm, tmark, t1, t2) for fnm in fnm_lst] )
-    def write(self, append_str):
-        """
-        Write, with filename appended by `append_str`.
-        append_str: string; (use '' for over write)
-        """
-        for it in self:
-            it.write(self['filename']+append_str)
-    ### inplace dat revision processing
-    def truncate(self, tmark, t1, t2):
-        """
-        """
-        for it in self:
-            it.truncate(tmark, t1, 2)
-    def taper(self, ratio= 0.05):
-        for it in self:
-            it.taper(ratio= ratio)
-    def rmean(self):
-        for it in self:
-            it.rmean()
-    def detrend(self):
-        for it in self:
-            it.rmean()
-            it.detrend()
-    def bandpass(self, f1, f2, order=2, npass= 1):
-        for it in self:
-            it.bandpass(f1, f2, order= order, npass= npass)
-    def lowpass(self, f, order=2, npass= 1):
-        for it in self:
-            it.lowpass(f, order= order, npass= npass)
-    def highpass(self, f, order=2, npass= 1):
-        for it in self:
-            it.highpass(f, order= order, npass= npass)
-    ### sort
-    def sort(self, sachdr_key, sequence= 'ascend'):
-        """
-        Sort given sac header key.
-        sachdr_key: sac head key to used for sorting;
-        sequence: 'descend' or 'ascend';
-        """
-        #sorted(self, key=)
-        tmp = {'descend': -1, 'ascend': 1}
-        #print(np.argsort([it[sachdr_key] for it in self ] )[::tmp[sequence] ])
-        lst = [self[idx] for idx in  np.argsort([it[sachdr_key] for it in self ] )[::tmp[sequence] ] ]
-        self.clear()
-        self.extend(lst)
-    ### Into hdf5
-    def tohdf5(self, filename):
-        """
-        """
-        pass
-    ### plot
-    def plot1(self):
-        """
-        Similar to p1 in SAC. (need dev??)
-        """
-        ax = plt.subplot()
-        for idx, tr in enumerate(self):
-            ax.plot(tr.get_time_axis(), sactrace_list.normed(tr.dat)+idx )
-        plt.show()
-        #plt.close()
-    def plot2(self):
-        """
-        Similar to p2 in SAC.
-        """
-        ax = plt.subplot(111)
-        for  tr in self:
-            ax.plot(tr.get_time_axis(), tr.dat, label= tr['filename'] )
-        ax.legend(loc = 'upper right')
-        plt.show()
-    @staticmethod
-    def normed(trace):
-        scale = 1.0 / max(np.max(trace), -np.min(trace) )
-        return trace * scale
-###
-#  hdf5 containing list of time series in sac format
-###
-class sactrace_list_hdf5():
-    """
-    """
-    def __init__(self):
-        """
-        """
-        pass
-    def from_sactrace_list(self, filename, lst):
-        """
-        """
-        pass
-        #self.h5file = h5py.File(filename, 'w')
-        #self.h5file.cr
-###
-#  sachdr container
-#  - sachdr_list: list of `sachdr`
-#  - sachdr_dict: dict of `sachdr`
-###
-class sachdr_list(list):
-    """
-    A list object for storing sac header.
-    #
-    This is for processing sac header, and associated, informations without
-    touching time series, like selecting, sorting, pairing, etc.
-    """
-    def __init__(self):
-        """
-        Empty constructor
-        """
-        pass
-    def pickle_save(self, filename):
-        """
-        Use pickle package to save this archive.
-        filename:
-        """
-        with open(filename, 'wb') as fid:
-            pickle.dump(self, fid, pickle.HIGHEST_PROTOCOL )
-    def pickle_load(self, filename, extend=False):
-        """
-        Load archive from file saved by pickle.
-        filename:
-        """
-        if not extend:
-            self.clear()
-        with open(filename, 'rb') as fid:
-            self.extend(pickle.load(fid) )
-    def deepcopy(self):
-        """
-        Deepcopy and return a new object.
-        """
-        return deepcopy(self)
-    ### IO
-    def read_fnm_lst(self, fnm_lst):
-        """
-        Read headers from a list of sac filenames for initialization.
-        """
-        self.extend( [rd_sachdr(fnm) for fnm in fnm_lst] )
-    def write_table(self, filename, key_lst, sep='\t'):
-        """
-        Write table into file given keys.
-        filename: string of filename for output;
-        key_lst: a list contain keys for the table. (eg. ['filename', 'stlo', 'stla', 'stnm'] )
-        sep: column separator, default is tab '\t';
-        """
-        with open(filename, 'w') as fid:
-            print('\n'.join( [sep.join(['{:}'.format(it[key]) for key in key_lst]) for it in self ] ) , file=fid )
-    ### update and self-revision methods
-    def select(self, key, range):
-        """
-        Select and update inplacely given range for specific key.
-        key: key being used for selection;
-        range: a range of [low, high] for selection.
-        #
-        eg. select('mag', (6.0, 7.0) ) for selecting data with magnitude in [6.0, 7.0).
-        """
-        tmp = [it for it in self if it[key] >= range[0] and it[key] < range[1] ]
-        self.clear()
-        self.extend(tmp)
-    def select_return(self, key, range):
-        """
-        Select and return a new sachdr_list object
-        given range for specific key.
-        key: key being used for selection;
-        range: a range of [low, high] for selection.
-        #
-        eg. select_return('mag', (6.0, 7.0) ) for selecting data with magnitude in [6.0, 7.0).
-        """
-        tmp = sachdr_list()
-        tmp.extend( [it for it in self if range[0] <= it[key] < range[1] ] )
-        return tmp
-    def sort(self, key, sequence= 'ascend'):
-        """
-        Sort with respect to specified `key`.
-        key: reference for sorting; (eg. 'mag' );
-        sequence: 'descend' or 'ascend';
-        """
-        tmp = {'descend': -1, 'ascend': 1}
-        lst = [self[idx] for idx in np.argsort([it[key] for it in self ] )[::tmp[sequence] ] ]
-        self.clear()
-        self.extend(lst)
-    def rm_duplication(self):
-        """
-        Update by removing duplicated items for same `filename`.
-        Note this function will destroy the sequence.
-        """
-        tmp = self.to_sachdr_dict(False).to_sachdr_list(False)
-        self.clear()
-        self.extend(tmp)
-    def set_id(self, start_value= 0):
-        """
-        Set a increasing key `key` to `sachdr`, started from `start_value`.
-        """
-        if 'id' in self[0]:
-            print('Err: some id already set, in start_value.set_id(...)' )
-            sys.exit(0)
-        id = start_value
-        for it in self:
-            it['id'] = id
-            id = id + 1
-    ###
-    def to_sachdr_dict(self, deepcopy=True):
-        """
-        Generate and return an object of `sachdr_dict`, and duplicated filenames will be removed.
-        deepcopy: True (default) or False for deepcopy
-        """
-        vol = sachdr_dict()
-        if deepcopy:
-            for it in self:
-                fnm = it['filename']
-                if fnm not in vol:
-                    vol[fnm] = deepcopy(it)
-        else:
-            for it in self:
-                fnm = it['filename']
-                if fnm not in vol:
-                    vol[fnm] = it
-        return vol
-    def to_sachdr_pair_ev_list(self):
-        """
-        Generate and return an object of `sachdr_pair_ev_list`,
-        which contain pairs of sachdr for all possible sachdr.
-        """
-        tmp = sachdr_pair_ev_list()
-        for it1 in self:
-            tmp.extend([sachdr_pair_ev(it1, it2) for it2 in self] )
-        return tmp
-    def get_key_lst(self, key):
-        """
-        Get and return a list of sac header key values.
-        key: specified key; (eg. 'mag')
-        """
-        return [it[key] for it in self ]
-    def get_key_range(self, key):
-        """
-        Get and return (min, max) key value for all sac headers.
-        key: specified key; (eg. 'mag')
-        """
-        tmp = self.get_key_lst(key)
-        return  np.min(tmp), np.max(tmp)
-    ###
-class sachdr_dict(dict):
-    """
-    A dict object for storing sac headers. Key used here is filename.
-    #
-    This is for processing sac header, and associated, informations without
-    touching time series, like selecting, sorting, pairing, etc.
-    """
-    def __init__(self):
-        """
-        Empty constructor
-        """
-        pass
-    def deepcopy(self):
-        """
-        Deepcopy and return a new object.
-        """
-        return deepcopy(self)
-    ### IO
-    def read_fnm_lst(self, fnm_lst):
-        """
-        Read headers from a list of sac filenames for initialization.
-        """
-        for fnm in fnm_lst:
-            if fnm not in self:
-                self[fnm] = rd_sachdr(fnm)
-    def write_table(self, filename, key_lst, sep='\t'):
-        """
-        Write table into file given keys. Note that line sequence is random.
-        filename: string of filename for output;
-        key_lst: a list contain keys for the table. (eg. ['filename', 'stlo', 'stla', 'stnm'] )
-        sep: column separator, default is tab '\t';
-        """
-        with open(filename, 'w') as fid:
-            print('\n'.join( [sep.join(['{:}'.format(it[key]) for key in key_lst]) for it in self.values() ] ) , file=fid )
-    ### update and self-revision methods
-    ###
-    def to_sachdr_list(self, deepcopy=True):
-        """
-        Generate and return an object of `sachdr_list`, and its sequence is random.
-        deepcopy: True (default) or False for deepcopy
-        """
-        tmp = sachdr_list()
-        tmp.extend(list( self.values() ) )
-        return deepcopy(tmp) if deepcopy else tmp
-    ###
 
-###
-#  high-level `sachdr_list` container
-#  - sachdr_ev_dict: dict with respect to event
-#                    evkey -> `sachdr_list`
-#              HOW ABOUT A NEW VARIABLE NAME ???
-###
-class sachdr_ev_dict(dict):
-    """
-    A dict object for storing sac headers grouped with respect
-    to different events.
-    Key used here are user- defined, eg. strings, and corresponding values
-    are list of `sachdr` object for that event.
-    #
-    """
-    def __init__(self):
-        """
-        Empty constructor
-        """
-        pass
-    ### IO
-    def init_dir_template(self, fnm_template, verbose= False):
-        """
-        Read all sac file headers based on `fnm_template` to build this archive.
-        fnm_template: filenames template for header reading and grouping;
-        verbose: (default is False)
-        eg: fnm_template = '/dat/2010*/*BHZ.SAC'
-            for which, all sac files are grouped with respect to event
-            that each `/dat/2010*/` directory contains sac files having
-            same event information.
-            Then, all sac files match this template will be read, and each 
-            directory path `/dat/2010*/` will be used as key, and files
-            within will be used as corresponding dat.
-            And data structure will be:
-
-            <this archive> + ['/dat/2010_01'] ->    (sachdr of '/dat/2010_01/a.BHZ.SAC' ) 
-                           |                        (sachdr of '/dat/2010_01/b.BHZ.SAC' )
-                           |                         ...
-                           |                        (sachdr of '/dat/2010_01/?.BHZ.SAC' )
-                           |                        # list if sachdr having same event info
-                           |
-                           + ['/dat/2010_02'] ->    (sachdr of '/dat/2010_02/a.BHZ.SAC' )
-                           |                        (sachdr of '/dat/2010_02/b.BHZ.SAC' )
-                           |                         ...
-                           ...
-
-
-        """
-        root_dir = '/'.join( fnm_template.split('/')[:-1] )
-        final_template = '{:}/' + fnm_template.split('/')[-1]
-        for sub_dir in sorted(glob.glob(root_dir) ):
-            lst = sachdr_list()
-            fnm_str =  final_template.format(sub_dir)
-            lst.read_fnm_lst( sorted(glob.glob(fnm_str ) ) )
-            if verbose:
-                print('{:} : ({:d})'.format(fnm_str, len(lst) ) )
-            self.add(sub_dir, lst)
-    def pickle_save(self, filename):
-        """
-        Use pickle package to save this archive.
-        filename:
-        """
-        with open(filename, 'wb') as fid:
-            pickle.dump(self, fid, pickle.HIGHEST_PROTOCOL )
-    def pickle_load(self, filename):
-        """
-        Load archive from file saved by pickle.
-        filename:
-        """
-        with open(filename, 'rb') as fid:
-            self.update(pickle.load(fid) )
-    ### Inserting, and accessing, and updating
-    def add(self, evkey, hdr_lst):
-        """
-        Add a list of `sachdr` with same event information.
-        #
-        evkey: user- defined key, can be anything, eg. string.
-        hdr_lst: a list of `sachdr` objects;
-        """
-        if evkey not in self:
-            self[evkey] = sachdr_list()
-        self[evkey].extend(hdr_lst)
-    def set_id(self, start_id= 0):
-        """
-        Set a increasing key `key` to all `sachdr`, started from `start_value`.
-        """
-        id = start_id
-        for v in self.values():
-            v.set_id(id)
-            id = v[-1]['id'] + 1 # faster, but not good for maintain
-    def get_ev_info(self, evkey=None, sachdr_key_lst=['mag']):
-        """
-        Get event information specified by `sachdr_key_lst` given `evkey`.
-        evkey: `evkey` used to search for a single event. (None for all event)
-        sachdr_key_lst: list of sac header used to acquire info. (eg. 'mag', 'evlo', ...)
-        """
-        if evkey:
-             return [ self[evkey][0][sackey] for sackey in sachdr_key_lst]
-        return [ [v[0][sackey] for sackey in sachdr_key_lst] for v in self.values() ]
-    def get_volumn_size(self):
-        """
-        Return number of events, and number of all sac files.
-        (nev, nsac)
-        """
-        nev = len(self)
-        nsac = np.sum( [len(v) for v in self.values()] )
-        return nev, nsac
-    ###
-    def select_4_ev_return(self, sachdr_event_key, range, deepcopy=False):
-        """
-        Select and return a new `sachdr_ev_dict` object given range 
-        for specified `sachdr_event_key`;
-        sachdr_event_key: sac header key used to select; (eg: 'mag')
-        range: [x1, x2) the range for selecting.
-        deepcopy: whether use deepcopy in constructing new object (default is False);
-        """
-        tmp = sachdr_ev_dict()
-        for key, value in self.items():
-            v = value[0][sachdr_event_key] #self.get_ev_info(key, [sachdr_event_key])[0]
-            #print(v)
-            if range[0] <= v < range[1]:
-                tmp[key] = deepcopy(value) if deepcopy else value
-        return tmp
-    def select_4_st_return(self, sachdr_st_key, range, deepcopy=False):
-        """
-        Select and return a new `sachdr_ev_dict` object given range 
-        for specified `sachdr_st_key`;
-        sachdr_st_key: sac header key used to select; (eg: 'gcarc' )
-        range: [x1, x2) the range for selecting.
-        deepcopy: whether use deepcopy in constructing new object (default is False);
-        """
-        tmp = sachdr_ev_dict()
-        for key, value in self.items():
-            v = value.select_return(sachdr_st_key, range)
-            tmp[key] = deepcopy(v) if deepcopy else v
-        return tmp
-    ### 
-    def to_sachdr_pair_ev_list(self):
-        """
-        Generate and return an object of sachdr_pair_ev_list, which 
-        contains all pair of sachdr with same event information.
-        """
-        tmp = sachdr_pair_ev_list()
-        for v in self.values():
-            tmp.extend(v.to_sachdr_pair_ev_list() )
-        return tmp
-    ###
-    #def __mk_key(self, evlo, evla, evdp_km, mag, otime):
-    #    """
-    #    Make key given a set of event information.
-    #    #
-    #    evlo, evla, evdp_km, mag, otime: event information;
-    #    """
-    #    return (evlo, evla, evdp_km, mag, otime)
-    #    #{'evlo': evlo, 'evla': evla, 'evdp': evdp_km, 'mag': mag, 'otime': otime}
-
-###
-#  sachdr_pair
-#  - sachdr_pair:    base class
-#  - sachdr_pair_ev: class for pair having same event
-###
-class sachdr_pair(dict):
-    """
-    A pair of two sac header. Note that the order of two sac header is important.
-    
-    Two headers can be access by:
-    eg['hdr1'], eg['hdr2'].
-    And, more keys can be added into this object.
-    """
-    def __init__(self, h1, h2):
-        """
-        Construtor.
-        h1, h2: `sachdr` object;
-        """
-        self.set_hdr(h1, h2)
-    def set_hdr(self, h1, h2):
-        """
-        Set two sac headers.
-        h1, h2: `sachdr` object;
-        """
-        #self.h1 = h1
-        #self.h2 = h2
-        self['hdr1'] = h1
-        self['hdr2'] = h2
-    def __eq__(self, other):
-        """
-        Check whether two `sachdr_pair_ev` object are equal based on filenames.
-        """
-        return self.h1['filename'] == other.h1['filename'] and self.h2['filename'] == other.h2['filename']
-    ### accessing
-    def get_sachdr(self, sachdr_key_lst):
-        """
-        Return header variables for two headers, given specified key names.
-        sachdr_key_lst: list of sac header variable names; (eg. ['kstnm', 'id', ...] )
-        """
-        return [self['hdr1'][key] for key in sachdr_key_lst], [self['hdr2'][key] for key in sachdr_key_lst ]
-class sachdr_pair_ev(sachdr_pair):
-    """
-    A pair of two sac header with same event. Note that the order of two sac header is important.
-
-    Critical key are:
-        ['hdr1']      : 1st sachdr object
-        ['hdr1']      : 2nd sachdr object
-        ['st_dist']   : inter-station distance in degree;
-        ['daz']       : azimuth difference;
-        ['dbaz']      : back- azimuth difference;
-        ['gc2ev']     : distance from event to great circle formed by two stations;
-        ['gc2st1']    : distance from the 1st station to great circle formed by event and the 2nd station;
-        ['gc2st2']    : distance from the 2nd station to great circle formed by event and the 1st station;
-    """
-    def __init__(self, h1, h2):
-        """
-        Construtor.
-        h1, h2: `sachdr` object;
-        """
-        sachdr_pair.__init__(self, h1, h2)
-        #print(self.h1, self.h2)
-        evlo, evla  = h1['evlo'], h1['evla']
-        stlo1, stla1 = h1['stlo'], h1['stla']
-        stlo2, stla2 = h2['stlo'], h2['stla']
-        h1['az'] = azimuth(evlo, evla, stlo1, stla1)
-        h2['az'] = azimuth(evlo, evla, stlo2, stla2)
-        h1['baz'] = azimuth(stlo1, stla1, evlo, evla)
-        h2['baz'] = azimuth(stlo1, stla1, evlo, evla)
-        h1['gcarc'] = haversine(evlo, evla, stlo1, stla1)
-        h2['gcarc'] = haversine(evlo, evla, stlo2, stla2)
-        self['ddist'  ] = np.abs( h1['gcarc'] - h2['gcarc']  )
-        self['st_dist'] = haversine(stlo1, stla1, stlo2, stla2 )
-        self['daz'       ] = np.abs(h1['az']  - h2['az']  )
-        self['dbaz'      ] = np.abs(h1['baz'] - h2['baz'] )
-        self['gc2ev'     ] = np.abs( point_distance_to_great_circle_plane(evlo, evla, stlo1, stla1, stlo2, stla2) )
-        self['gc2st1'    ] = np.abs( point_distance_to_great_circle_plane(stlo1, stla1, evlo, evla, stlo2, stla2) )
-        self['gc2st2'    ] = np.abs( point_distance_to_great_circle_plane(stlo2, stla2, evlo, evla, stlo1, stla1) )
-    def __str__(self):
-        s = sachdr_pair.__str__(self)
-        #s += '\n'
-        #s += '\n'.join( ['{:<9s}: {:f}'.format(key, self[key]) for key in ['st_dist', 'daz', 'dbaz', 'gc2ev', 'gc2st1', 'gc2st2'] ] )
-        return s
-
-###
-#  sachdr_pair container
-#  - sachdr_pair_ev_list: list of `sachdr_pair_ev`
-###
-class sachdr_pair_ev_list(list):
-    """
-    """
-    def __init__(self):
-        """
-        A list object for storing `sachdr_pair_ev`.
-        """
-        pass
-    ### IO
-    def write_table(self, filename, sachdr_key_lst, pair_key_lst, sep='\t'):
-        """
-        Write table into file given keys.
-        filename: string of filename for output;
-        sachdr_key_lst: a list containing sachdr keys for the table. 
-            (eg. ['filename', 'stlo', ...], or other user defined keys )
-        pair_key_lst:   a list containing sachdr_pair_ev keys for the table.
-            (eg. ['st_dist', 'daz', ...], or other user defined keys )
-        sep: column separator, default is tab '\t';
-        """
-        with open(filename, 'w') as fid:
-            s = []
-            for it in self:
-                tmp = []
-                #print(it['hdr1'])
-                tmp.extend([ '{:}'.format(it['hdr1'][key]) for key in sachdr_key_lst] )
-                tmp.extend([ '{:}'.format(it['hdr2'][key]) for key in sachdr_key_lst] )
-                tmp.extend([ '{:}'.format(it[key]        ) for key in pair_key_lst  ] )
-                s.append(sep.join(tmp) )
-                #s = '\n'.join( [sep.join([it.hd1[key] for key in sachdr_key_lst] ) + sep +
-                #                sep.join([it.hd2[key] for key in sachdr_key_lst] ) + sep +
-                #                sep.join([it[key] for key in pair_key_lst] ) 
-                #                for it in self] )
-            print('\n'.join(s), file= fid)
-    def select(self, key, range):
-        """
-        Select and update given range for specific key.
-        key: key being used for selection, can be 'st_dist', 'daz', 'dbaz', 'gc2ev', 'gc2st1', 
-             'gc2st2', as defined in `sachdr_pair_ev`, or other user defined key;
-        range: a range of [low, high] for selection.
-        #
-        eg. select('daz', (-5.0, 5.0) ) for selecting data with daz in (-5.0, 5.0).
-        """
-        tmp = [it for it in self if it[key] >= range[0] and it[key] < range[1] ]
-        self.clear()
-        self.extend(tmp)
-    def select_4_return(self, key, range):
-        """
-        Select and return a new `sachdr_pair_ev_list` object given range for specific key.
-        key: key being used for selection, can be 'st_dist', 'daz', 'dbaz', 'gc2ev', 'gc2st1', 
-             'gc2st2', as defined in `sachdr_pair_ev`, or other user defined key;
-        range: a range of [low, high] for selection.
-        #
-        eg. select('daz', (0.0, 5.0) ) for selecting data with daz in (0.0, 5.0).
-        """
-        tmp = sachdr_pair_ev_list()
-        tmp.extend( [it for it in self if it[key] >= range[0] and it[key] < range[1] ] )
-        return tmp
-    def pickle_save(self, filename):
-        """
-
-        """
-        """
-        Use pickle package to save this archive.
-        filename:
-        """
-        with open(filename, 'wb') as fid:
-            pickle.dump(self, fid, pickle.HIGHEST_PROTOCOL )
-    def pickle_load(self, filename):
-        """
-        Load archive from file saved by pickle.
-        filename:
-        """
-        with open(filename, 'rb') as fid:
-            self.clear()
-            self.extend(pickle.load(fid) )
-    ### accesing
-    def get_sachdr_lst(self, sachdr_key_lst):
-        """
-        Return list of two sac header variables, given specified key names.
-        sachdr_key_lst: list of sac header variable names; (eg. ['kstnm', 'id', ...] )
-        """
-        return [it.get_sachdr(sachdr_key_lst) for it in self ]
-    def to_sachdr_dict(self, deepcopy=True ):
-        """
-        Generate and return an object of `sachdr_dict` for all sac files used.
-        """
-        tmp = sachdr_dict()
-        if deepcopy:
-            for it_pair in self:
-                for it in [it_pair['hdr1'], it_pair['hdr2'] ]:
-                    fnm = it['filename']
-                    if fnm not in tmp:
-                        tmp[fnm] = deepcopy(it)
-        else:
-            for it_pair in self:
-                for it in [it_pair['hdr1'], it_pair['hdr2'] ]:
-                    fnm = it['filename']
-                    if fnm not in tmp:
-                        tmp[fnm] = it
-        return tmp
-    def to_sachdr_list(self, deepcopy=True):
-        """
-        Generate and return an object of `sachdr_list` for all sac files used with duplication removed.
-        """
-        return self.to_sachdr_dict(deepcopy=False).to_sachdr_list(deepcopy=deepcopy)
-    def write_id_pair(self, fid, stack_id = None):
-        """
-        Write two columns of ids into file opened as `fid`.
-        fid: file object
-        stack_id: used for third column. 
-                  If set to None(default), third column will be empty.
-        """
-        if stack_id:
-            print( '\n'.join(['{:d} {:d} {:d}'.format(it['hdr1']['id'], it['hdr2']['id'], stack_id) for it in self] ), file= fid )
-        else:
-            print( '\n'.join(['{:d} {:d}'.format(it['hdr1']['id'], it['hdr2']['id']) for it in self] ), file= fid )
-###
-#  high-level `sachdr_pair_ev_list` container
-###
-#class
-
-##########################
-##########################
-##########################
 if __name__ == "__main__":
     #sac2hdf5('/home/catfly/00-LARGE-IMPORTANT-PERMANENT-DATA/AU_dowload/01_resampled_bhz_to_h5/01_workspace_bhz_sac/2000_008_16_47_20_+0000/*SAC',
     #            'junk.h5')
-    hdf52sac('junk.h5', 'junk/sac_', True)
+    #hdf52sac('junk.h5', 'junk/sac_', True)
+    pass
