@@ -32,7 +32,7 @@ def run(filename_wildcard, output_prefix, pos, verbose, hdr_only):
         hdf5_fnm = '%s%s.h5' % (output_prefix, k)
         if verbose and mpi_rank == 0:
             print('[iproc:%02d] %s ==> %s' % (mpi_rank, it, hdf5_fnm) )
-        sac2hdf5(it, hdf5_fnm, lcalda=True, verbose=verbose, info='', ignore_data=hdr_only)
+        sac2hdf5(sorted(glob(it)), hdf5_fnm, lcalda=True, verbose=verbose, info='', ignore_data=hdr_only)
 
 HMSG = """Transform many sac files downloaded with obspyDMT into hdf5 files.
 

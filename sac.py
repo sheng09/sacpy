@@ -1574,7 +1574,10 @@ class c_sactrace:
         """
         hdr = self.hdr
         hdr.e = hdr.b + hdr.delta * (hdr.npts - 1)
-        cffi_arr = ffi_cast('const float *', ffi_from_buffer(self.dat) ) #ffi.cast('const float*', self.dat.ctypes.data)
+        xs = self.dat
+        if xs.dtype != np.float32:
+            xs = xs.astype(np.float32)
+        cffi_arr = ffi_cast('const float *', ffi_from_buffer(xs) ) #ffi.cast('const float*', xs.ctypes.data)
         libsac.write_sac(fnm.encode('utf8'), hdr, cffi_arr, verbose)
     def get_time_axis(self):
         """
@@ -1680,7 +1683,6 @@ class c_sactrace:
         tnorm_f32(self.dat, self.hdr.delta, winlen, f1, f2, water_level_ratio, taper_halfsize)
     def fwhiten(self, winlen, water_level_ratio= 1.0e-5, taper_halfsize=0, speedup_i1= -1, speedup_i2= -1):
         fwhiten_f32(self.dat, self.hdr.delta, winlen, water_level_ratio, taper_halfsize, speedup_i1, speedup_i2)
-##################################################################################################################
 ##################################################################################################################
 
 if __name__ == "__main__":

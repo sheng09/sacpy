@@ -10,7 +10,7 @@ from getopt import getopt
 from sys import exit, argv
 import numpy as np
 from sacpy.sac import c_wrt_sac, c_mk_sachdr_time
-from sacpy.processing import max_amplitude_timeseries, filter
+from sacpy.processing import iirfilter_f32
 from copy import deepcopy
 from scipy.ndimage.filters import gaussian_filter
 
@@ -58,7 +58,7 @@ def run(h5_filename, figname, dist_range=None, cc_time_range=None, slowness_rang
     btype, f1, f2 = filter_setting
     if not (btype is None):
         for irow in range(dist.size):
-            mat[irow] = filter(mat[irow], 1.0/delta, btype, (f1, f2), 2, 2 )
+            iirfilter_f32(mat[irow], delta, 0, 2, f1, f2, 2, 2)
     ### cut time
     mat[:, :1000] = 0.0
     for irow in range(dist.size):
@@ -289,6 +289,8 @@ if __name__ == "__main__":
             dist_ref = float(arg)
         elif opt in ('--filter'):
             filter_setting = arg.split('/')
+            vol = {'LP':0, 'HP':1, 'BP': 2, 'BR': 3, 'lowpass':0, 'highpass':1, 'bandpass':2}
+            filter_setting[0] = vol[filter_setting[0]]
             filter_setting[1] = float(filter_setting[1] )
             filter_setting[2] = float(filter_setting[2] )
             filter_setting = tuple(filter_setting)

@@ -8,7 +8,7 @@ import matplotlib.pyplot as plt
 from getopt import getopt
 from sys import exit, argv
 import numpy as np
-from sacpy.processing import max_amplitude_timeseries, filter, taper_in_place
+from sacpy.processing import iirfilter_f32, taper
 import os, os.path
 import matplotlib.ticker as mtick
 
@@ -37,7 +37,8 @@ def run(h5_filename, figname, dist_range=None, cc_time_range=None, lines= None,
     btype, f1, f2 = filter_setting
     if not (btype is None):
         for irow in range(dist.size):
-            mat[irow] = filter(mat[irow], 1.0/delta, btype, (f1, f2), 2, 2 )
+            iirfilter_f32(mat[irow], delta, 0, 2, f1, f2, 2, 2)
+            #mat[irow] = filter(mat[irow], 1.0/delta, btype, (f1, f2), 2, 2 )
     ### adjust time axis
     if adjust_time_axis != None:
         npts = mat.shape[1]
@@ -70,7 +71,7 @@ def run(h5_filename, figname, dist_range=None, cc_time_range=None, lines= None,
     if taper_sec > delta:
         taper_sz = int(taper_sec / delta)
         for irow in range(mat.shape[0]):
-            taper_in_place(mat[irow], taper_sz)
+            taper(mat[irow], taper_sz)
     #### norm
     #for irow in range(mat.shape[0]):
     #    v = mat[irow].max()
@@ -351,6 +352,8 @@ Args:
             cc_time_range = tuple([float(it) for it in arg.split('/') ] )
         elif opt in ('--filter'):
             filter_setting = arg.split('/')
+            vol = {'LP':0, 'HP':1, 'BP': 2, 'BR': 3, 'lowpass':0, 'highpass':1, 'bandpass':2}
+            filter_setting[0] = vol[filter_setting[0]]
             filter_setting[1] = float(filter_setting[1] )
             filter_setting[2] = float(filter_setting[2] )
             filter_setting = tuple(filter_setting)
