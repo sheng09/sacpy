@@ -52,7 +52,7 @@ def init_parameter(mode,
     df = 1.0 / (delta*fftsize)
     speedup = init_speedup(fftsize, delta, speedup_fs, speedup_level)
     speedup_fs_valid = [it*df for it in speedup]
-    pre_taper_halfsize = (npts*pre_taper_ratio)
+    pre_taper_halfsize = int(npts*pre_taper_ratio)
 
 
     cc_fftsize = npts*2 # fft by zero zeros of same size for cross-correlation computation
@@ -181,7 +181,7 @@ def mpi_print_log(file, n_pre, flush, *objects, end='\n'):
     print(*objects, file=file, flush=flush, end=end )
 
 
-def rd_wh_sac(fnms, tmark, t1, t2, delta, npts,
+def rd_wh_sac(fnm_wildcard, tmark, t1, t2, delta, npts,
     pre_detrend, pre_taper_halfsize, pre_filter,
     wtlen, wt_f1, wt_f2, wflen, speedup_i1, speedup_i2, whiten_taper_halfsize,
     fftsize, nrfft_valid,
@@ -199,6 +199,7 @@ def rd_wh_sac(fnms, tmark, t1, t2, delta, npts,
     fftsize, nrfft_valid:
         Parameters for optaining spectra.
     """
+    fnms = sorted(glob(fnm_wildcard))
     nsac = len(fnms)
     btype, f1, f2 = pre_filter if pre_filter != None else (None, None, None) # 0 for LP, 1 for HP, 2 for BP, 3 for BR
 
@@ -214,7 +215,7 @@ def rd_wh_sac(fnms, tmark, t1, t2, delta, npts,
     pre_taper_win = ones(npts, dtype=float32)
     taper(pre_taper_win, pre_taper_halfsize)
     time_rd, time_preproc, time_whiten, time_fft = 0.0, 0.0, 0.0, 0.0
-    index = 1
+    index = 0
     for it in fnms:
         ttmp = time()
         st = c_rd_sac(it, tmark, t1, t2, True, False, False) # zeros will be used if gaps exist in sac recordings
@@ -323,15 +324,24 @@ def rd_wh_h5(fnm, tmark, t1, t2, delta, npts,
     raw_az    = fid['hdr/az'][:]
     raw_baz   = fid['hdr/baz'][:]
     raw_gcarc = fid['hdr/gcarc'][:]
+    raw_b     = fid['hdr/b'][:]
+
+    tmp = ('t0', 't1', 't2', 't3', 't4', 't5', 't6', 't7', 't8', 't9', 0, 'b', 0, 'o', 0, 0) # -3 is 'o' and -5 is 'b'
+    tref = fid['hdr'][tmp[tmark]][:]
+    t1 = tref - raw_b + t1
+    t2 = tref - raw_b + t2
+
     pre_taper_win = ones(npts, dtype=float32)
     taper(pre_taper_win, pre_taper_halfsize)
-    index = 1
+    index = 0
     for isac in range(nsac):
         it = fnms[isac]
 
         ttmp = time()
-        xs = raw_mat[isac]
-        if (not xs.dat.any()) or (isnan(xs).any() ): # Check if Nan or all zeros.
+        xs = raw_mat[isac][:]
+        #print(delta, raw_b[isac], t1[isac], t2[isac] )
+        xs, new_b = cut(xs, delta, raw_b[isac], t1[isac], t2[isac])
+        if (not xs.any()) or (isnan(xs).any() ): # Check if Nan or all zeros.
             mpi_print_log(mpi_log_fid, 2, True, '+ Failure Nan:', it)
             continue
         time_rd = time_rd + time()-ttmp
@@ -674,15 +684,14 @@ def main(mode,
     wtlen, wt_f1, wt_f2 = tnorm if tnorm != None else (None, None, None)
     wflen = swht
     for it in local_jobs:
-        fnm = sorted(glob(it) )
-        tmp = func_rd(  fnm, tmark, t1, t2, delta, npts,
+        tmp = func_rd(  it, tmark, t1, t2, delta, npts,
                         pre_detrend, pre_taper_halfsize, pre_filter,
                         wtlen, wt_f1, wt_f2, wflen, speedup[0], speedup[1], pre_taper_halfsize,
                         cc_fftsize, cc_speedup[1],
                         mpi_log_fid)
 
         spec_mat, stlo, stla, evlo, evla, az, baz, gcarc, (time_rd, time_preproc, time_whiten, time_fft) = tmp
-        if stlo == None:
+        if stlo is None:
             continue
         lon, lat, azimuth = (stlo, stla, az) if flag_mode == 0 else (evlo, evla, baz)
         pt_lon, pt_lat = (evlo[0], evla[0])  if flag_mode == 0 else (stlo[0], stla[0])
