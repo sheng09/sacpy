@@ -1,11 +1,6 @@
 #!/usr/bin/env python3
 """
-SAC implementation by python3.x.
-
-SACPY, a memory-resided package, is definitely faster than disk- associated SAC
-in data processing. And, hugely massive methods, functions, packages, etc 
-provided by Python communities make this SACPY much more flexible, extensible,
-and convenient in both data processing, and program development.
+A python3.x module for manipulating SAC format and related data.
 
 
 File IO dependent methods
@@ -13,12 +8,20 @@ File IO dependent methods
 
 >>> # IO, view,  basic processing
 >>> s = c_rd_sac('1.sac')
+>>> s.norm('neg') # norm with respect to max negative amplitude, and update s.hdr.scale.
+>>> s.shift_time(100.0)
 >>> s.truncate(100, 500)
 >>> s.plot()
 >>> s.detrend()
 >>> s.taper(0.02) # ratio can be 0 ~ 0.5
 >>> s.filter('BP', (0.2, 1.0), order=2, npass=2)
 >>> s.write('1_new.sac')
+>>>
+>>> # re-sampling
+>>> s.downsample(3)
+>>> s.upsample(4)
+>>> s.interpolate_npts(334)
+>>> s.interpolate_delta(0.02, force_lanczos=True)
 >>>
 >>> # arbitrary plot
 >>> ts = s.get_time_axis()
@@ -29,18 +32,21 @@ File IO dependent methods
 >>> # -5 here means 'b. The time window is (100+b, 4000+b)
 >>> # -3 means 'o', and 0, 1,...9 for 't0', 't1',...,'t9'.
 >>>
+>>> # obtain index for maximum
+>>> idx, time, amplitude = s.max_amplitude_time('neg', (100.3, 111.5) )
+>>>
 
 Arbitrary data writing, and processing methods
 ----------------------------------------------
 
 >>> import numpy as np
->>> dat = np.random.random(1000)
+>>> dat = np.random.random(1000).astype(np.float32) # we recommend np.float32
 >>> delta, b = 0.05, 50.0
 >>> # writing method 1
 >>> c_wrt_sac2('junk.sac', dat, b, delta)
 >>>
 >>> # writing method 2
->>> s = c_mk_sachdr_time(dat, b, delta)
+>>> s = c_mk_sac(dat, b, delta)
 >>> s.hdr.stnm = 'SYN' # update sachdr...
 >>> s.taper()
 >>> s.bandpass(0.5, 2.0, order= 4, npass= 2)
@@ -48,6 +54,7 @@ Arbitrary data writing, and processing methods
 >>>
 >>> # writing method 3 assuming a hdr object is created somewhere else
 >>> c_wrt_sac('junk3.sac', data, hdr, lcalda=False, verbose=False)
+>>>
 
 Sac header update and revision
 ------------------------------
@@ -61,6 +68,7 @@ Sac header update and revision
 >>> new_hdr.t2 = 4.0
 >>> # make an empty hdr
 >>> empty_hdr = c_mk_empty_sachdr()
+>>>
 
 
 Operate massive sac files
@@ -75,8 +83,19 @@ Operate massive sac files
 >>> # The calling will jump over wrong/broken sac files
 >>> fnms = ('1.sac', '2.sac', '3.sac' )
 >>> hdrs, mat = c_rd_sac_mat(fnms, -3, 1000, 2000, lcalda=True, scale=True, filter=('BP', 0.2, 1.0), verbose=False )
+>>>
 
 
+Whitening
+------------------------------
+
+>>> s = c_rd_sac('1.sac')
+>>> winlen_sec, f1, f2 = 128.0, 0.02, 0.0667
+>>> s.tnorm(winlen_sec, f1, f2, water_level_ratio= 1.0e-5, taper_halfsize=0)
+>>>
+>>> winlen_hz = 0.02
+>>> s.fwhiten(winlen_hz, water_level_ratio= 1.0e-5, taper_halfsize=0)
+>>>
 """
 import matplotlib.pyplot as plt
 from copy import deepcopy
@@ -85,8 +104,11 @@ from struct import unpack, pack
 import sys
 from glob import glob
 import pickle
-from sacpy.geomath import haversine, azimuth, point_distance_to_great_circle_plane
-from sacpy.processing import iirfilter_f32, taper, rmean, detrend, cut, tnorm_f32, fwhiten_f32
+
+from pyfftw.interfaces.numpy_fft import irfft, rfft
+from sacpy.geomath import haversine, azimuth
+from sacpy.processing import iirfilter_f32, taper, detrend, cut, tnorm_f32, fwhiten_f32
+from obspy.signal.interpolation import lanczos_interpolation
 #import sacpy.processing as processing
 from os.path import exists as os_path_exists
 from sacpy.c_src._lib_sac import lib as libsac
@@ -1162,6 +1184,10 @@ def sac2hdf5(fnms, hdf5_fnm, lcalda=False, info='', ignore_data=False, verbose=F
     info:        An information string that output the hdf5.
     ignore_data: Ignore time series, and only save sachdr data in the output.
     verbose:     (default is False).
+
+    Note: this function does not check validity of sac files. If some sac files
+    are invalid (e.g., broken), then the related hdr data in hdf5 file will be
+    meaningless and the related time series will be zeros.
     """
     fnmlst = fnms
     nfile = len(fnmlst)
@@ -1643,16 +1669,8 @@ class c_sactrace:
             2 : chebyshev type i
             3 : chebyshev type ii
         """
-        if btype == 'LP':
-            btype = 0
-        elif btype == 'HP':
-            btype = 1
-        elif btype == 'BP':
-            btype = 2
-        elif btype == 'BR':
-            btype = 3
-
-        iirfilter_f32(self.dat, self.hdr.delta, aproto, btype, fs[0], fs[1], order, npass )
+        vol = {'LP':0, 'HP':1, 'BP': 2, 'BR': 3, 'lowpass':0, 'highpass':1, 'bandpass':2, 0: 0, 1: 1, 2: 2, 3: 3}
+        iirfilter_f32(self.dat, self.hdr.delta, aproto, vol[btype], fs[0], fs[1], order, npass )
         #self.dat = processing_filter(self.dat, 1.0/self.hdr.delta, btype, fs, order, npass)
     def truncate(self, t1, t2):
         """
@@ -1662,16 +1680,100 @@ class c_sactrace:
         hdr.npts = self.dat.size
         hdr.b = nb
         hdr.e = nb + hdr.delta*(hdr.npts-1)
-    def max_amplitude_time(self, amp, t_range):
+    def shift_time(self, tshift_sec):
         """
-        Get the (idx, time, amplitude) for the max amplitude point in the time range `t_range`.
+        Shift the time axis of the whole time-series.
+        This function changes all time related sachdr elements, that includes 'b, e, o, a, f, t0, t1,...,t9'
 
-        amp: 'pos' for max positive amplitude, and 'neg' for max negative amplitude
+        shift_sec: t_shift in seconds.
         """
-        t1, t2 = t_range
-        i1 = libsac.get_valid_time_index(t1, self.hdr.delta, self.hdr.b, self.dat.size)
-        i2 = libsac.get_valid_time_index(t2, self.hdr.delta, self.hdr.b, self.dat.size) + 1
-        x = self.dat[i1:i2]
+        hdr = self.hdr
+        hdr.b += tshift_sec
+        hdr.e += tshift_sec
+        hdr.t0 += tshift_sec if hdr.t0 != -12345.0 else -12345.0
+        hdr.t1 += tshift_sec if hdr.t1 != -12345.0 else -12345.0
+        hdr.t2 += tshift_sec if hdr.t2 != -12345.0 else -12345.0
+        hdr.t3 += tshift_sec if hdr.t3 != -12345.0 else -12345.0
+        hdr.t4 += tshift_sec if hdr.t4 != -12345.0 else -12345.0
+        hdr.t5 += tshift_sec if hdr.t5 != -12345.0 else -12345.0
+        hdr.t6 += tshift_sec if hdr.t6 != -12345.0 else -12345.0
+        hdr.t7 += tshift_sec if hdr.t7 != -12345.0 else -12345.0
+        hdr.t8 += tshift_sec if hdr.t8 != -12345.0 else -12345.0
+        hdr.t9 += tshift_sec if hdr.t9 != -12345.0 else -12345.0
+    def downsample(self, n):
+        """
+        Downsample given a factor `n` (an integer).
+
+        Note: users should lowpass filter the data before downsampling if necessary.
+        """
+        self.dat = self.dat[::n]
+        hdr = self.hdr
+        hdr.delta *= n
+        hdr.npts = self.dat.size
+        hdr.e = hdr.b + hdr.delta*(hdr.npts-1)
+    def upsample(self, n):
+        """
+        Upsample given a factor `n` (an integer) with fft method.
+        """
+        self.interpolate_npts(self.hdr.npts*n)
+    def interpolate_npts(self, new_npts):
+        """
+        Interpolate with a new npts using fft method.
+
+        Note: users should lowpass filter the data before if the interpolation is related to downsampling.
+        """
+        hdr = self.hdr
+        old_npts = hdr.npts
+        old_delta = hdr.delta
+        s = rfft(self.dat)
+        self.dat = irfft(s, new_npts).astype(np.float32) * (new_npts/old_npts)
+        T = old_npts*old_delta
+        new_delta = T/new_npts
+        hdr.delta = new_delta
+        hdr.npts = new_npts
+        hdr.e = hdr.b + new_delta*(new_npts-1)
+    def interpolate_delta(self, new_delta, force_lanczos=False):
+        """
+        Interpolate with a new delta.
+        The calling will automatically determine to use `downsample(...)` or `upsample(...)`
+        if the new delta is proportional to the old delta. If not, lanczos method will be used.
+        Also, if `force_lanczos==True`, then lanczos method will always be used.
+
+        Note: users should lowpass filter the data before if the interpolation is related to downsampling
+        """
+        hdr = self.hdr
+        old_npts = hdr.npts
+        old_delta = hdr.delta
+        T = old_npts*old_delta
+        new_npts = int(T/new_delta)
+
+        downsample_n = old_npts // new_npts
+        upsample_n   = new_npts // old_npts
+        if not force_lanczos and downsample_n*new_npts == old_npts:
+            self.downsample(downsample_n)
+        elif not force_lanczos and upsample_n*old_npts == new_npts:
+            self.upsample(upsample_n)
+        else:
+            xs = lanczos_interpolation(self.dat, hdr.b, old_delta, hdr.b, new_delta, new_npts, 20)
+            self.dat = xs.astype(np.float32)
+        hdr.delta = new_delta
+        hdr.npts = new_npts
+        hdr.e = hdr.b + new_delta*(new_npts-1)
+    def max_amplitude_time(self, amp, t_range=None):
+        """
+        Get the (idx, time, amplitude) for the max amplitude point.
+
+        Set `t_range=(t1, t2)` to search within a time window. In default, `t_range=None`
+        will search for the whole time range.
+        amp: 'pos' for max positive amplitude, and 'neg' for max negative amplitude, and 'abs'
+        for max absolute amplitude.
+        """
+        x, i1 = self.dat, 0
+        if t_range != None:
+            t1, t2 = t_range
+            i1 = libsac.get_valid_time_index(t1, self.hdr.delta, self.hdr.b, self.dat.size)
+            i2 = libsac.get_valid_time_index(t2, self.hdr.delta, self.hdr.b, self.dat.size) + 1
+            x = self.dat[i1:i2]
         ###
         if amp == 'pos':
             imax = np.argmax(x)
@@ -1679,6 +1781,12 @@ class c_sactrace:
         elif amp == 'neg':
             imin = np.argmin(x)
             return imin+i1, (imin+i1)*self.hdr.delta+self.hdr.b, x[imin]
+        else:
+            imax = np.argmax(x)
+            imin = np.argmin(x)
+            iabs = imax if x[imax]>-x[imin] else imin
+            return iabs+i1, (iabs+i1)*self.hdr.delta+self.hdr.b, x[iabs]
+
     def tnorm(self, winlen, f1, f2, water_level_ratio= 1.0e-5, taper_halfsize=0):
         tnorm_f32(self.dat, self.hdr.delta, winlen, f1, f2, water_level_ratio, taper_halfsize)
     def fwhiten(self, winlen, water_level_ratio= 1.0e-5, taper_halfsize=0, speedup_i1= -1, speedup_i2= -1):
@@ -1686,6 +1794,48 @@ class c_sactrace:
 ##################################################################################################################
 
 if __name__ == "__main__":
+    fnm = 'test_tmp/1.sac'
+    if False:
+        hdr = c_rd_sachdr(fnm)
+        print(hdr, hdr.b, hdr.e, hdr.npts, hdr.stlo, hdr.stla, hdr.evlo, hdr.evla, hdr.kstnm)
+    if False:
+        hdrs = c_rd_sachdr_wildcard('test_tmp/[12].sac')
+        print(hdrs)
+    if False:
+        st = c_rd_sac(fnm)
+        plt.plot(st.get_time_axis(), st.dat)
+        st.rmean()
+        st.detrend()
+        st.taper(0.02)
+        plt.plot(st.get_time_axis(), st.dat)
+        plt.show()
+    if False:
+        st = c_rd_sac(fnm)
+        plt.plot(st.get_time_axis(), st.dat)
+        st.filter('BP', (0.1, 1.0), 2, 2)
+        st.write('junk_bp.sac')
+        plt.plot(st.get_time_axis(), st.dat)
+        #plt.show()
+    if False:
+        st = c_rd_sac(fnm)
+        print(st.hdr.b, st.hdr.e, st.hdr.npts, st.hdr.delta)
+        plt.plot(st.get_time_axis(), st.dat, marker='o')
+
+        st.truncate(300, 1000)
+        st.taper(0.01)
+        print(st.hdr.b, st.hdr.e, st.hdr.npts, st.hdr.delta)
+        plt.plot(st.get_time_axis(), st.dat, marker='x')
+
+        st.interpolate_delta(0.05)
+        print(st.hdr.b, st.hdr.e, st.hdr.npts, st.hdr.delta)
+        plt.plot(st.get_time_axis(), st.dat, marker='.')
+
+        idx, time, amplitude = st.max_amplitude_time('pos')
+        print(idx, time, amplitude, st.dat[idx] )
+        plt.plot((time,), (amplitude,), 'r+')
+        plt.show()
+
+
     #sac2hdf5('/home/catfly/00-LARGE-IMPORTANT-PERMANENT-DATA/AU_dowload/01_resampled_bhz_to_h5/01_workspace_bhz_sac/2000_008_16_47_20_+0000/*SAC',
     #            'junk.h5')
     #hdf52sac('junk.h5', 'junk/sac_', True)
