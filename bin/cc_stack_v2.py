@@ -54,7 +54,6 @@ def init_parameter(mode,
     speedup_fs_valid = [it*df for it in speedup]
     pre_taper_halfsize = int(npts*pre_taper_ratio)
 
-
     cc_fftsize = npts*2 # fft by zero zeros of same size for cross-correlation computation
     cc_df = 1.0/(delta*cc_fftsize)
     cc_npts = cc_fftsize-1
@@ -70,7 +69,7 @@ def init_parameter(mode,
     mpi_print_log(mpi_log_fid, 1, False, 'pre_taper_halfratio:', pre_taper_ratio, pre_taper_halfsize)
     mpi_print_log(mpi_log_fid, 1, False, 'pre_filter:     ', pre_filter)
     mpi_print_log(mpi_log_fid, 1, False, 'speedup:        (%f, %f, %f) (%d %d) (%f %f)' % (speedup_fs[0], speedup_fs[1], speedup_level, speedup[0], speedup[1], speedup_fs_valid[0], speedup_fs_valid[1]) )
-    mpi_print_log(mpi_log_fid, 1, False, 'cc_speedup:     (%f, %f, %f) (%d %d)  (%f %f)\n' % (speedup_fs[0], speedup_fs[1], speedup_level, cc_speedup[0], cc_speedup[1], cc_speedup_fs_valid[0], cc_speedup_fs_valid[1]) )
+    mpi_print_log(mpi_log_fid, 1, False, 'cc_speedup:     (%f, %f, %f) (%d %d) (%f %f)\n' % (speedup_fs[0], speedup_fs[1], speedup_level, cc_speedup[0], cc_speedup[1], cc_speedup_fs_valid[0], cc_speedup_fs_valid[1]) )
 
     # dependent parameters
     mpi_print_log(mpi_log_fid, 0, False, 'Dependent parameters:')
@@ -153,22 +152,32 @@ def init_speedup(fftsize, delta, fs, critical_level=0.01):
     """
     if fs == None:
         return 0, fftsize
+
+    df = 1.0/(fftsize*delta)
+    fmin, fmax = df, 0.5/delta-df # safe value
     f1, f2 = fs
+    if f1 >= f2 or (f1<=fmin and f2>=fmax) or f1>=fmax or f2 <=fmin:
+        return 0, fftsize
+
+    i1, i2 = 0, fftsize
     x = zeros(fftsize, dtype=float32)
-    x[fftsize//2] = 1.0
-    iirfilter_f32(x, delta, 0, 2, f1, f2, 2, 2)
-    s = rfft(x, fftsize)
-    amp = abs(s)
-    c = amp.max() * critical_level
-    i1 = argmax(amp>c)
-    if min(amp[i1:]) >= c:
-        i2 = amp.size
+    x[fftsize//2] = 1.0 # Note, cannot use x[0] = 1.0
+    if f1 <=fmin:
+        iirfilter_f32(x, delta, 0, 0, f1, f2, 2, 2)
+        amp = abs( rfft(x, fftsize) )
+        c = amp.max() * critical_level
+        i2 = argmax(amp<c)
+    elif f2 >= fmax:
+        iirfilter_f32(x, delta, 0, 1, f1, f2, 2, 2)
+        amp = abs( rfft(x, fftsize) )
+        c = amp.max() * critical_level
+        i1 = argmax(amp>c)
     else:
-        i2 = argmin(amp[i1:]>c) + i1 + 1
-    if i1 < 0:
-        i1 = 0
-    if i2 >= amp.size:
-        i2 = amp.size
+        iirfilter_f32(x, delta, 0, 2, f1, f2, 2, 2)
+        amp = abs( rfft(x, fftsize) )
+        c = amp.max() * critical_level
+        i1 = argmax(amp>c)
+        i2 = i1 + argmax(amp[i1:]<c)
     return i1, i2
 def mpi_print_log(file, n_pre, flush, *objects, end='\n'):
     """
@@ -675,8 +684,13 @@ def main(mode,
     tc_main = time()
     mpi_comm, mpi_rank, mpi_ncpu, mpi_log_fid = init_mpi(log_prefnm, log_mode) # mpi
 
-
-    speedup_fs = None if post_filter == None else (post_filter[1], post_filter[2])
+    speedup_fs = None
+    if post_filter != None:
+        speedup_f1, speedup_f2 = post_filter[1], post_filter[2]
+        if swht != None:
+            speedup_f1 = speedup_f1 - swht
+            speedup_f2 = speedup_f2 + swht
+            speedup_fs = (speedup_f1, speedup_f2) # dont worry if speedup_fs is invalid as init_speedup(...) process whatever cases
     tmp = init_parameter(mode, tmark, t1, t2, delta, input_format, pre_detrend, pre_taper_halfratio, pre_filter, speedup_fs, spec_acc_threshold, mpi_log_fid)
     flag_mode, (npts, fftsize, df, speedup, pre_taper_halfsize), (cc_npts, cc_fftsize, cc_df, cc_speedup) = tmp
 

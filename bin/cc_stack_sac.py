@@ -426,29 +426,34 @@ def acc_bound(fftsize, sampling_rate, f1, f2, critical_level= 0.001):
     Return the acceleration bound (i1, i2) for spetral computation.
     Data outside the [i1, i2) can be useless given specific frequency band (f1, f2).
     """
-    x = np.zeros(fftsize, dtype=np.float32)
-    x[fftsize//2] = 1.0
-    #x = filter(x, sampling_rate, 'bandpass', (f1, f2), 2, 2)
     delta = 1.0/sampling_rate
-    iirfilter_f32(x, delta, 0, 2, f1, f2, 2, 2)
-    s = pyfftw.interfaces.numpy_fft.rfft(x, fftsize)
-    amp = np.abs(s)
-    c = amp.max() * critical_level
-    i1 = np.argmax(amp>c)
-    if np.min(amp[i1:]) >= c:
-        i2 = amp.size
+
+    df = 1.0/(fftsize*delta)
+    fmin, fmax = df, 0.5/delta-df # safe value
+    if f1 >= f2 or (f1<=fmin and f2>=fmax) or f1>=fmax or f2 <=fmin:
+        return 0, fftsize
+
+    i1, i2 = 0, fftsize
+    x = np.zeros(fftsize, dtype=np.float32)
+    x[fftsize//2] = 1.0 # Note, cannot use x[0] = 1.0
+    if f1 <=fmin:
+        iirfilter_f32(x, delta, 0, 0, f1, f2, 2, 2)
+        amp = abs( pyfftw.interfaces.numpy_fft.rfft(x, fftsize) )
+        c = amp.max() * critical_level
+        i2 = np.argmax(amp<c)
+    elif f2 >= fmax:
+        iirfilter_f32(x, delta, 0, 1, f1, f2, 2, 2)
+        amp = abs( pyfftw.interfaces.numpy_fft.rfft(x, fftsize) )
+        c = amp.max() * critical_level
+        i1 = np.argmax(amp>c)
     else:
-        i2 = np.argmin(amp[i1:]>c) + i1 + 1
-    if i1 < 0:
-        i1 = 0
-    if i2 >= amp.size:
-        i2 = amp.size
-    #print(fftsize, sampling_rate, f1, f2, critical_level, i1, i2, amp[104000]/amp.max() )
-    #import matplotlib.pyplot as plt
-    #plt.plot(amp)
-    #plt.show()
-    #sys.exit(0)
+        iirfilter_f32(x, delta, 0, 2, f1, f2, 2, 2)
+        amp = abs( pyfftw.interfaces.numpy_fft.rfft(x, fftsize) )
+        c = amp.max() * critical_level
+        i1 = np.argmax(amp>c)
+        i2 = i1 + np.argmax(amp[i1:]<c)
     return i1, i2
+
 @jit(nopython=True, nogil=True)
 def spec_ccstack(spec_mat, lon, lat, gcarc, epdd, stack_mat, stack_count, 
                     dist_min, dist_max, dist_step, acc_idx_min, acc_idx_max, random_sample):
