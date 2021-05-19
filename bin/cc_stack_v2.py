@@ -29,7 +29,7 @@ def init_mpi(log_prefnm, log_mode):
     if log_mode == None or mpi_rank in log_mode:
         mpi_log_fid = open('%s_%03d.txt' % (log_prefnm, mpi_rank), 'w' )
         mpi_print_log(mpi_log_fid, 0, True, 'Start! rank(%d) nproc(%d)' % (mpi_rank, mpi_ncpu) )
-    return mpi_rank, mpi_ncpu, mpi_log_fid
+    return mpi_comm, mpi_rank, mpi_ncpu, mpi_log_fid
 def init_parameter(mode,
     tmark, t1, t2, delta, input_format='sac',                   # input param
     pre_detrend=True, pre_taper_ratio= 0.005, pre_filter= None, # pre-proc param)
@@ -67,9 +67,9 @@ def init_parameter(mode,
     mpi_print_log(mpi_log_fid, 1, False, 'delta:          ', delta)
     mpi_print_log(mpi_log_fid, 1, False, 'input format:   ', input_format)
     mpi_print_log(mpi_log_fid, 1, False, 'pre_detrend:    ', pre_detrend)
-    mpi_print_log(mpi_log_fid, 1, False, 'pre_taper_ratio:', pre_taper_ratio)
+    mpi_print_log(mpi_log_fid, 1, False, 'pre_taper_halfratio:', pre_taper_ratio, pre_taper_halfsize)
     mpi_print_log(mpi_log_fid, 1, False, 'pre_filter:     ', pre_filter)
-    mpi_print_log(mpi_log_fid, 1, False, 'speedup:        (%f, %f, %f) (%d %d) (%f %f)\n' % (speedup_fs[0], speedup_fs[1], speedup_level, speedup[0], speedup[1], speedup_fs_valid[0], speedup_fs_valid[1]) )
+    mpi_print_log(mpi_log_fid, 1, False, 'speedup:        (%f, %f, %f) (%d %d) (%f %f)' % (speedup_fs[0], speedup_fs[1], speedup_level, speedup[0], speedup[1], speedup_fs_valid[0], speedup_fs_valid[1]) )
     mpi_print_log(mpi_log_fid, 1, False, 'cc_speedup:     (%f, %f, %f) (%d %d)  (%f %f)\n' % (speedup_fs[0], speedup_fs[1], speedup_level, cc_speedup[0], cc_speedup[1], cc_speedup_fs_valid[0], cc_speedup_fs_valid[1]) )
 
     # dependent parameters
@@ -98,7 +98,7 @@ def init_ccstack_spec_buf(dist_min, dist_max, dist_step, nrfft_valid, mpi_log_fi
                             ', '.join(['%.1f' % it for it in dist[-1:] ]), )
 
     return dist, spec_stack_mat, stack_count
-def update_selection(daz_range, gcd_range, gc_center_rect, gc_center_circle, mpi_log_fid):
+def update_selection(daz_range, gcd_range, gc_center_rect, gc_center_circle, min_recordings, mpi_log_fid):
     flag_selection = False
     if daz_range != None or gcd_range != None or gc_center_rect != None or gc_center_circle != None:
         daz_range      = (-0.1, 90.1) if daz_range == None else daz_range
@@ -155,7 +155,7 @@ def init_speedup(fftsize, delta, fs, critical_level=0.01):
         return 0, fftsize
     f1, f2 = fs
     x = zeros(fftsize, dtype=float32)
-    x[0] = 1.0
+    x[fftsize//2] = 1.0
     iirfilter_f32(x, delta, 0, 2, f1, f2, 2, 2)
     s = rfft(x, fftsize)
     amp = abs(s)
@@ -185,6 +185,7 @@ def rd_wh_sac(fnm_wildcard, tmark, t1, t2, delta, npts,
     pre_detrend, pre_taper_halfsize, pre_filter,
     wtlen, wt_f1, wt_f2, wflen, speedup_i1, speedup_i2, whiten_taper_halfsize,
     fftsize, nrfft_valid,
+    min_recordings,
     mpi_log_fid):
     """
     Read, whiten, and compute the spectra given sac filenames.
@@ -201,6 +202,9 @@ def rd_wh_sac(fnm_wildcard, tmark, t1, t2, delta, npts,
     """
     fnms = sorted(glob(fnm_wildcard))
     nsac = len(fnms)
+    if nsac < min_recordings:
+        mpi_print_log(mpi_log_fid, 2, False, '(n:%d) insufficent number of recordings' % (nsac) )
+        return None, None, None, None, None, None, None, None, (0.0, 0.0, 0.0, 0.0)
     btype, f1, f2 = pre_filter if pre_filter != None else (None, None, None) # 0 for LP, 1 for HP, 2 for BP, 3 for BR
 
     spectra = zeros((nsac, nrfft_valid), dtype=complex64) #buffer to return
@@ -276,7 +280,7 @@ def rd_wh_sac(fnm_wildcard, tmark, t1, t2, delta, npts,
         baz  = baz[:index]
         gcarc= gcarc[:index]
 
-    mpi_print_log(mpi_log_fid, 2, False, 'rd(%.1fs) preproc(%.1fs) whiten(%.1fs) fft(%.1fs)' % (time_rd, time_preproc, time_whiten, time_fft) )
+    mpi_print_log(mpi_log_fid, 2, False, '(n:%d) rd(%.1fs) preproc(%.1fs) whiten(%.1fs) fft(%.1fs)' % (index, time_rd, time_preproc, time_whiten, time_fft), end='; ' )
 
     if index > 0: # return
         return spectra, stlo, stla, evlo, evla, az, baz, gcarc, (time_rd, time_preproc, time_whiten, time_fft)
@@ -286,6 +290,7 @@ def rd_wh_h5(fnm, tmark, t1, t2, delta, npts,
     pre_detrend, pre_taper_halfsize, pre_filter,
     wtlen, wt_f1, wt_f2, wflen, speedup_i1, speedup_i2, whiten_taper_halfsize,
     fftsize, nrfft_valid,
+    min_recordings,
     mpi_log_fid):
     """
     Read, whiten, and compute the spectra given a hdf5 file.
@@ -299,10 +304,14 @@ def rd_wh_h5(fnm, tmark, t1, t2, delta, npts,
     fftsize, nrfft_valid:
         Parameters for optaining spectra.
     """
-    btype, f1, f2 = pre_filter if pre_filter != None else (None, None, None)
 
     fid = h5_File(fnm, 'r')
     nsac = fid.attrs['nfile']
+    if nsac < min_recordings:
+        mpi_print_log(mpi_log_fid, 2, False, '(n:%d) insufficent number of recordings' % (nsac) )
+        return None, None, None, None, None, None, None, None, (0.0, 0.0, 0.0, 0.0)
+
+    btype, f1, f2 = pre_filter if pre_filter != None else (None, None, None)
     fnms = fid['filename'][:]
 
     spectra = zeros((nsac, nrfft_valid), dtype=complex64) #buffer to return
@@ -397,6 +406,8 @@ def rd_wh_h5(fnm, tmark, t1, t2, delta, npts,
         az   = az[:index]
         baz  = baz[:index]
         gcarc= gcarc[:index]
+
+    mpi_print_log(mpi_log_fid, 2, False, '(n:%d) rd(%.1fs) preproc(%.1fs) whiten(%.1fs) fft(%.1fs)' % (index, time_rd, time_preproc, time_whiten, time_fft), end='; ' )
 
     if index > 0: # return
         return spectra, stlo, stla, evlo, evla, az, baz, gcarc, (time_rd, time_preproc, time_whiten, time_fft)
@@ -662,7 +673,7 @@ def main(mode,
     """
     """
     tc_main = time()
-    mpi_rank, mpi_ncpu, mpi_log_fid = init_mpi(log_prefnm, log_mode) # mpi
+    mpi_comm, mpi_rank, mpi_ncpu, mpi_log_fid = init_mpi(log_prefnm, log_mode) # mpi
 
 
     speedup_fs = None if post_filter == None else (post_filter[1], post_filter[2])
@@ -673,25 +684,35 @@ def main(mode,
     dist, spec_stack_mat, stack_count = init_ccstack_spec_buf(stack_dist_range[0], stack_dist_range[1], stack_dist_step, cc_speedup[1], mpi_log_fid ) # init buf
     global_dist, global_spec_stack_mat, global_stack_count = dist, spec_stack_mat, stack_count
     if mpi_rank == 0 and mpi_ncpu > 1:
-        global_dist, global_spec_stack_mat, global_stack_count = init_ccstack_spec_buf(stack_dist_range[0], stack_dist_range[1], stack_dist_step, cc_speedup[1] )
+        global_dist, global_spec_stack_mat, global_stack_count = init_ccstack_spec_buf(stack_dist_range[0], stack_dist_range[1], stack_dist_step, cc_speedup[1], mpi_log_fid )
 
 
-    tmp = update_selection(daz_range, gcd_range, gc_center_rect, gc_center_circle, mpi_log_fid)
+    tmp = update_selection(daz_range, gcd_range, gc_center_rect, gc_center_circle, min_recordings, mpi_log_fid)
     (daz_range, gcd_range, gc_center_rect, gc_center_circle), (rect_clo1, rect_clo2, rect_cla1, rect_cla2), (circle_center_clo, circle_center_cla, circle_center_radius), flag_selection  = tmp
 
     local_jobs = distribute_jobs(mpi_rank, mpi_ncpu, fnm_wildcard, input_format, mpi_log_fid)
     func_rd = rd_wh_sac if input_format in ('sac', 'SAC') else rd_wh_h5
     wtlen, wt_f1, wt_f2 = tnorm if tnorm != None else (None, None, None)
     wflen = swht
-    for it in local_jobs:
+    mpi_print_log(mpi_log_fid, 0, True, 'Start running...' )
+    time_rd_sum, time_preproc_sum, time_whiten_sum, time_fft_sum, time_cc_sum, time_sum = 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
+    for idx, it in enumerate(local_jobs):
+        mpi_print_log(mpi_log_fid, 1, True, '- %d %s' % (idx+1, it) )
         tmp = func_rd(  it, tmark, t1, t2, delta, npts,
                         pre_detrend, pre_taper_halfsize, pre_filter,
-                        wtlen, wt_f1, wt_f2, wflen, speedup[0], speedup[1], pre_taper_halfsize,
+                        wtlen, wt_f1, wt_f2, wflen, 0, speedup[1], pre_taper_halfsize,
                         cc_fftsize, cc_speedup[1],
+                        min_recordings,
                         mpi_log_fid)
 
         spec_mat, stlo, stla, evlo, evla, az, baz, gcarc, (time_rd, time_preproc, time_whiten, time_fft) = tmp
+        time_rd_sum      = time_rd_sum       + time_rd
+        time_preproc_sum = time_preproc_sum  + time_preproc
+        time_whiten_sum  = time_whiten_sum   + time_whiten
+        time_fft_sum     = time_fft_sum      + time_fft
         if stlo is None:
+            continue
+        if stlo.size < min_recordings:
             continue
         lon, lat, azimuth = (stlo, stla, az) if flag_mode == 0 else (evlo, evla, baz)
         pt_lon, pt_lat = (evlo[0], evla[0])  if flag_mode == 0 else (stlo[0], stla[0])
@@ -710,7 +731,19 @@ def main(mode,
             ncc = spec_ccstack(   spec_mat, lon, lat, gcarc, epdd,
                                   spec_stack_mat, stack_count,
                                   stack_dist_range[0], stack_dist_range[1], stack_dist_step, cc_speedup[0], cc_speedup[1], random_sample)
-        mpi_print_log(mpi_log_fid, 2, True, 'ccstack(%.1fs)(%d)' % (time()-ttmp, ncc) )
+        tmp = time()-ttmp
+        time_cc_sum = time_cc_sum + tmp
+        mpi_print_log(mpi_log_fid, 2, True, '(ncc: %d) ccstack(%.1fs)' % (ncc, tmp) )
+
+    time_sum = time_rd_sum + time_preproc_sum + time_whiten_sum + time_fft_sum + time_cc_sum + 0.001
+    mpi_print_log(mpi_log_fid, 1, True, 'Time consumption summary: rd: %.1fs(%d%%), preproc: %.1fs(%d%%)), whiten: %.1fs(%d%%)), fft: %.1fs(%d%%)), cc: %.1fs(%d%%)) ' % (
+                time_rd_sum,      time_rd_sum/time_sum*100,
+                time_preproc_sum, time_preproc_sum/time_sum*100,
+                time_whiten_sum,  time_whiten_sum/time_sum*100,
+                time_fft_sum,     time_fft_sum/time_sum*100,
+                time_cc_sum,      time_cc_sum/time_sum*100,
+            )
+    )
 
 
     if mpi_ncpu > 1:
@@ -730,7 +763,8 @@ def main(mode,
                 mpi_log_fid)
 
     mpi_print_log(mpi_log_fid, 0, True,  'Done (%.1f sec)' % (time()-tc_main) )
-    mpi_log_fid.close()
+    if mpi_log_fid != None:
+        mpi_log_fid.close()
 
 
 

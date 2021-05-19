@@ -2,7 +2,7 @@
 """
 Executable files for cross-correlation and stacking operations
 """
-from sacpy.processing import filter, taper, tukey_jit, temporal_normalize, frequency_whiten
+from sacpy.processing import iirfilter_f32, taper, tnorm_f32, fwhiten_f32
 from sacpy.sac import c_rd_sac, c_wrt_sac, c_mk_sachdr_time
 import time
 import sacpy.geomath as geomath
@@ -125,9 +125,11 @@ def main(mode,
     wt_size, wt_f1, wt_f2, wf_size = None, None, None, None
     if tnorm != None:
         junk, wt_f1, wt_f2 = tnorm
+        wtlen_sec = junk
         wt_size = (int(np.round(junk / delta) ) //2 ) * 2 + 1
     if swht != None:
         junk = swht  # Hz
+        wflen_hz = junk
         wf_size = (int(np.round(junk / df) ) //2 ) * 2 + 1
     # logging
     if True: # user-defined parameters
@@ -229,7 +231,7 @@ def main(mode,
         if flag_input_format == 0: # input sac
             tmp = rd_wh_sac(it, delta, tmark, t1, t2, npts,
                             pre_detrend, pre_taper_ratio, pre_filter,
-                            wt_size, wt_f1, wt_f2, wf_size, acc_range_raw[0], acc_range_raw[1], pre_taper_ratio,
+                            wtlen_sec, wt_f1, wt_f2, wflen_hz, 0, acc_range_raw[1], pre_taper_ratio,
                             fftsize, nrfft_valid, mpi_log_fid)
             whitened_spectra_mat, stlo, stla, evlo, evla, az, baz, gcarc = tmp
         ### (2) check if the obtained whitened_spectra_mat is valid
@@ -323,7 +325,7 @@ def mpi_print_log(file, n_pre, flush, *objects, end='\n'):
         print(*objects, file=file, flush=flush, end=end )
 def rd_wh_sac(fnm_wildcard, delta, tmark, t1, t2, npts,
               pre_detrend, pre_taper_ratio , pre_filter, # preproc args
-              wnd_size_t, w_f1, w_f2, wnd_size_freq, speedup_i1, speedup_i2, whiten_taper_ratio, # whitening args
+              wtlen_sec, w_f1, w_f2, wflen_hz, speedup_i1, speedup_i2, whiten_taper_ratio, # whitening args
               fftsize, nrfft_valid, mpi_log_fid):
     """
     Read, preproc, and whiten many sacfiles given a filename template `sacfnm_template`.
@@ -373,16 +375,19 @@ def rd_wh_sac(fnm_wildcard, delta, tmark, t1, t2, npts,
             if pre_taper_ratio > 1.0e-5:
                 st.taper(pre_taper_ratio)
             if pre_filter != None:
-                st.dat = filter(st.dat, sampling_rate, btype, (f1, f2), 2, 2)
+                #st.dat = filter(st.dat, sampling_rate, btype, (f1, f2), 2, 2)
+                iirfilter2_f32(st.dat, delta, 0, btype, f1, f2, 2, 2)
         except:
             mpi_print_log(mpi_log_fid, 2, True, '+ Failure preproc:', it)
             continue
         ## whiten
         try:
-            if wnd_size_t != None:
-                st.dat = temporal_normalize(st.dat, sampling_rate, wnd_size_t, w_f1, w_f2, 1.0e-5, whiten_taper_length)
-            if wnd_size_freq != None:
-                st.dat = frequency_whiten(st.dat, wnd_size_freq, 1.0e-5, speedup_i1, speedup_i2, whiten_taper_length)
+            if wtlen_sec != None:
+                #st.dat = temporal_normalize(st.dat, sampling_rate, wnd_size_t, w_f1, w_f2, 1.0e-5, whiten_taper_length)
+                tnorm_f32(st.dat, delta, wtlen_sec, w_f1, w_f2, 1.0e-5, whiten_taper_length)
+            if wflen_hz != None:
+                #st.dat = frequency_whiten(st.dat, wnd_size_freq, 1.0e-5, speedup_i1, speedup_i2, whiten_taper_length)
+                fwhiten_f32(st.dat, delta, wflen_hz, 1.0e-5, whiten_taper_length, speedup_i1, speedup_i2)
         except:
             mpi_print_log(mpi_log_fid, 2, True, '+ Failure whitening:', it)
             continue
@@ -421,9 +426,11 @@ def acc_bound(fftsize, sampling_rate, f1, f2, critical_level= 0.001):
     Return the acceleration bound (i1, i2) for spetral computation.
     Data outside the [i1, i2) can be useless given specific frequency band (f1, f2).
     """
-    x = np.zeros(fftsize)
-    x[0] = 1.0
-    x = filter(x, sampling_rate, 'bandpass', (f1, f2), 2, 2)
+    x = np.zeros(fftsize, dtype=np.float32)
+    x[fftsize//2] = 1.0
+    #x = filter(x, sampling_rate, 'bandpass', (f1, f2), 2, 2)
+    delta = 1.0/sampling_rate
+    iirfilter_f32(x, delta, 0, 2, f1, f2, 2, 2)
     s = pyfftw.interfaces.numpy_fft.rfft(x, fftsize)
     amp = np.abs(s)
     c = amp.max() * critical_level
@@ -436,6 +443,11 @@ def acc_bound(fftsize, sampling_rate, f1, f2, critical_level= 0.001):
         i1 = 0
     if i2 >= amp.size:
         i2 = amp.size
+    #print(fftsize, sampling_rate, f1, f2, critical_level, i1, i2, amp[104000]/amp.max() )
+    #import matplotlib.pyplot as plt
+    #plt.plot(amp)
+    #plt.show()
+    #sys.exit(0)
     return i1, i2
 @jit(nopython=True, nogil=True)
 def spec_ccstack(spec_mat, lon, lat, gcarc, epdd, stack_mat, stack_count, 
@@ -613,7 +625,8 @@ def post_proc(spec_stack_mat, absolute_amp, fftsize, npts, delta,
         mpi_print_log(mpi_log_fid, 1, True,  'Tapering ... ', post_taper_ratio, 'size:', junk )
         btype, f1, f2 = post_filter
         for irow in range(nbin):
-            time_mat[irow] = filter(time_mat[irow], sampling_rate, btype, (f1, f2), 2, 2 )
+            #time_mat[irow] = filter(time_mat[irow], sampling_rate, btype, (f1, f2), 2, 2 )
+            iirfilter_f32(time_mat[irow], delta, 0, btype, f1, f2, 2, 2)
             taper(time_mat[irow], junk)
     # 4.3 post norm
     if post_norm:
@@ -804,8 +817,9 @@ if __name__ == "__main__":
         elif opt in ('--pre_taper'):
             pre_taper_ratio = float(arg)
         elif opt in ('--pre_filter'):
-            junk1, junk2, junk3 = arg.split('/')
-            pre_filter = (junk1, float(junk2), float(junk3) )
+            vol = {'LP':0, 'HP':1, 'BP': 2, 'BR': 3, 'lowpass':0, 'highpass':1, 'bandpass':2}
+            btype, f1, f2 = arg.split('/')
+            pre_filter = (vol[btype], float(f1), float(f2) )
         elif opt in ('--in_format'):
             input_format = arg # need dev
         elif opt in ('-O'):
@@ -845,8 +859,9 @@ if __name__ == "__main__":
         elif opt in ('--post_taper'):
             post_taper_ratio = float(arg)
         elif opt in ('--post_filter'):
-            junk1, junk2, junk3 = arg.split('/')
-            post_filter = (junk1, float(junk2), float(junk3) )
+            vol = {'LP':0, 'HP':1, 'BP': 2, 'BR': 3, 'lowpass':0, 'highpass':1, 'bandpass':2}
+            btype, f1, f2 = arg.split('/')
+            post_filter = (vol[btype], float(f1), float(f2) )
         elif opt in ('--post_norm'):
             post_norm = True
         elif opt in ('--post_cut'):
