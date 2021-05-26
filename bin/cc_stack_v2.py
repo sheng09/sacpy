@@ -3,7 +3,7 @@
 Executable files for cross-correlation and stacking operations
 """
 from glob import glob
-from sacpy.sac import c_rd_sac, c_mk_sachdr_time, c_wrt_sac
+from sacpy.sac import c_rd_sac, c_mk_sachdr_time, c_rd_sachdr, c_wrt_sac
 from sacpy.geomath import haversine, azimuth, point_distance_to_great_circle_plane, great_circle_plane_center_triple
 from sacpy.processing import iirfilter_f32, taper, rmean, detrend, cut, tnorm_f32, fwhiten_f32
 
@@ -190,7 +190,7 @@ def mpi_print_log(file, n_pre, flush, *objects, end='\n'):
     print(*objects, file=file, flush=flush, end=end )
 
 
-def rd_wh_sac(fnm_wildcard, tmark, t1, t2, delta, npts,
+def rd_wh_sac(fnm_wildcard, tmark, t1, t2, force_time_window, delta, npts,
     pre_detrend, pre_taper_halfsize, pre_filter,
     wtlen, wt_f1, wt_f2, wflen, speedup_i1, speedup_i2, whiten_taper_halfsize,
     fftsize, nrfft_valid,
@@ -225,12 +225,23 @@ def rd_wh_sac(fnm_wildcard, tmark, t1, t2, delta, npts,
     baz  = zeros(nsac, dtype=float32 )
     gcarc= zeros(nsac, dtype=float32 )
 
+    ftw_tmark, ftw_t1, ftw_t2= force_time_window
     pre_taper_win = ones(npts, dtype=float32)
     taper(pre_taper_win, pre_taper_halfsize)
     time_rd, time_preproc, time_whiten, time_fft = 0.0, 0.0, 0.0, 0.0
     index = 0
     for it in fnms:
         ttmp = time()
+
+        hdr = c_rd_sachdr(it)
+        b, e = hdr.b, hdr.e
+        tmp = (hdr.t0, hdr.t1, hdr.t2, hdr.t3, hdr.t4, hdr.t5, hdr.t6, hdr.t7, hdr.t8, hdr.t9, 0.0, 0.0, hdr.b, hdr.e, hdr.o, hdr.a, 0.0)
+        ftw_t1 = tmp[ftw_tmark] + ftw_t1
+        ftw_t2 = tmp[ftw_tmark] + ftw_t2
+        if ftw_t1 < b or ftw_t2 > e:
+            mpi_print_log(mpi_log_fid, 2, True, '+ Insufficient data within the forced time window:', it)
+            continue
+
         st = c_rd_sac(it, tmark, t1, t2, True, False, False) # zeros will be used if gaps exist in sac recordings
         if (st is None) or (not st.dat.any()): # Check if Nan or all zeros.
             mpi_print_log(mpi_log_fid, 2, True, '+ Failure opening:', it)
@@ -295,7 +306,7 @@ def rd_wh_sac(fnm_wildcard, tmark, t1, t2, delta, npts,
         return spectra, stlo, stla, evlo, evla, az, baz, gcarc, (time_rd, time_preproc, time_whiten, time_fft)
     else:
         return None, None, None, None, None, None, None, None, (time_rd, time_preproc, time_whiten, time_fft)
-def rd_wh_h5(fnm, tmark, t1, t2, delta, npts,
+def rd_wh_h5(fnm, tmark, t1, t2, force_time_window, delta, npts,
     pre_detrend, pre_taper_halfsize, pre_filter,
     wtlen, wt_f1, wt_f2, wflen, speedup_i1, speedup_i2, whiten_taper_halfsize,
     fftsize, nrfft_valid,
@@ -344,7 +355,13 @@ def rd_wh_h5(fnm, tmark, t1, t2, delta, npts,
     raw_gcarc = fid['hdr/gcarc'][:]
     raw_b     = fid['hdr/b'][:]
 
-    tmp = ('t0', 't1', 't2', 't3', 't4', 't5', 't6', 't7', 't8', 't9', 0, 'b', 0, 'o', 0, 0) # -3 is 'o' and -5 is 'b'
+    ftw_tmark, ftw_t1, ftw_t2= force_time_window
+    tmp = ('t0', 't1', 't2', 't3', 't4', 't5', 't6', 't7', 't8', 't9', 0, 'b', 'e', 'o', 'a', 0) # -3 is 'o' and -5 is 'b'
+    ftw_t1 = fid['hdr'][tmp[ftw_tmark]][:] + ftw_t1
+    ftw_t2 = fid['hdr'][tmp[ftw_tmark]][:] + ftw_t2
+    b = fid['hdr/b'][:]
+    e = fid['hdr/e'][:]
+
     tref = fid['hdr'][tmp[tmark]][:]
     t1 = tref - raw_b + t1
     t2 = tref - raw_b + t2
@@ -356,6 +373,11 @@ def rd_wh_h5(fnm, tmark, t1, t2, delta, npts,
         it = fnms[isac]
 
         ttmp = time()
+
+        if ftw_t1[isac] < b[isac] or ftw_t2[isac] > e[isac]:
+            mpi_print_log(mpi_log_fid, 2, True, '+ Insufficient data within the forced time window:', it)
+            continue
+
         xs = raw_mat[isac][:]
         #print(delta, raw_b[isac], t1[isac], t2[isac] )
         xs, new_b = cut(xs, delta, raw_b[isac], t1[isac], t2[isac])
@@ -670,7 +692,7 @@ def output( stack_mat, stack_count, dist, absolute_amp,
 
 
 def main(mode,
-    fnm_wildcard, tmark, t1, t2, delta, input_format='sac',     # input param
+    fnm_wildcard, tmark, t1, t2, delta, input_format='sac', force_time_window= None, # input param
     pre_detrend=True, pre_taper_halfratio= 0.005, pre_filter= None, # pre-proc param
     tnorm = (128.0, 0.02, 0.066666), swht= 0.02,                # whitening param
     stack_dist_range = (0.0, 180.0), stack_dist_step= 1.0,         # stack param
@@ -678,7 +700,7 @@ def main(mode,
     post_fold = False, post_detrend=False, post_taper_halfratio = 0.005, post_filter=None, post_cut= None, post_scale = False,           # post-proc param
     output_fnm_prefix= 'junk', output_format= ['hdf5'],                                                             # output param
     log_prefnm= 'cc_mpi_log', log_mode=None,           # log param
-    spec_acc_threshold = 0.001, random_sample=-1.0 ):  # other param
+    spec_acc_threshold = 0.01, random_sample=-1.0 ):  # other param
     """
     """
     tc_main = time()
@@ -708,7 +730,7 @@ def main(mode,
     time_rd_sum, time_preproc_sum, time_whiten_sum, time_fft_sum, time_cc_sum, time_sum = 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
     for idx, it in enumerate(local_jobs):
         mpi_print_log(mpi_log_fid, 1, True, '- %d %s' % (idx+1, it) )
-        tmp = func_rd(  it, tmark, t1, t2, delta, npts,
+        tmp = func_rd(  it, tmark, t1, t2, force_time_window, delta, npts,
                         pre_detrend, pre_taper_halfsize, pre_filter,
                         wtlen, wt_f1, wt_f2, wflen, speedup[0], speedup[1], pre_taper_halfsize,
                         cc_fftsize, cc_speedup[1],
@@ -745,7 +767,7 @@ def main(mode,
         time_cc_sum = time_cc_sum + tmp
         mpi_print_log(mpi_log_fid, 2, True, '(ncc: %d) ccstack(%.1fs)' % (ncc, tmp) )
 
-    time_sum = time_rd_sum + time_preproc_sum + time_whiten_sum + time_fft_sum + time_cc_sum + 0.001
+    time_sum = time_rd_sum + time_preproc_sum + time_whiten_sum + time_fft_sum + time_cc_sum + 0.01
     mpi_print_log(mpi_log_fid, 1, True, 'Time consumption summary: rd: %.1fs(%d%%), preproc: %.1fs(%d%%)), whiten: %.1fs(%d%%)), fft: %.1fs(%d%%)), cc: %.1fs(%d%%)) ' % (
                 time_rd_sum,      time_rd_sum/time_sum*100,
                 time_preproc_sum, time_preproc_sum/time_sum*100,
@@ -782,14 +804,14 @@ def main(mode,
 
 
 
-HMSG = """%s  -I "in*/*.sac" -T -5/10800/32400 -D 0.1 --input_format sac
-     -O cc_stack --out_format hdf5
+HMSG = """%s --mode r2r -I "in*/*.sac" -T -5/10800/32400 -D 0.1 --input_format sac
+    [--force_time_window -5/10800/32000] -O cc_stack --out_format hdf5
     [--pre_detrend] [--pre_taper 0.005] [--pre_filter bandpass/0.005/0.1]
     --stack_dist 0/180/1 [--daz -0.1/15] [--gcd -0.1/20] [--gc_center_rect 120/180/0/40,180/190/0/10]
     [--gc_center_circle 100/-20/10,90/0/15] [--min_recordings 10] [--epdd]
     [--w_temporal 128.0/0.02/0.06667] [--w_spec 0.02]
     [--post_fold] [--post_taper 0.05] [--post_filter bandpass/0.02/0.0666] [--post_norm] [--post_cut]
-     --log cc_log  [--log_mode 0] [--acc=0.001] [--random_sample 0.6]
+     --log cc_log  [--log_mode 0] [--acc=0.01] [--random_sample 0.6]
 
 Args:
     #0. Mode:
@@ -798,7 +820,11 @@ Args:
     #1. I/O and pre-processing args:
     -I  : filename wildcards.
     -T  : cut time window for reading.
+        For some time series that have gaps in the window, the gaps are filled with zeros.
     -D  : delta.
+    --force_time_window: force a time window to select input time series.
+        Any time serie that has gaps in the window are excluded.
+        This option is off in default.
     --input_format : 'sac' pr 'h5;.
     --pre_detrend: use this to enable detrend.
     --pre_taper 0.005 : set taper ratio (default in 0.005)
@@ -835,17 +861,19 @@ Args:
                 E.g.: `--log_mode=all`, `--log_mode=0`, `--log_mode=0,1,2,3,10`.
 
     #6. Other options:
-    --acc : acceleration threshold. (default is 0.001)
+    --acc : acceleration threshold. (default is 0.01)
     --random_sample : random resample the cross-correlation functions in the stacking.  (a value between 0 and 1)
 
 E.g.,
-    %s --mode r2r -I "in*/*.sac" -T -5/10800/32400 -D 0.1 --input_format sac --pre_detrend --pre_taper 0.005
-        -O cc --out_format hdf5,sac
-        --w_temporal 128.0/0.02/0.06667 --w_spec 0.02
-        --stack_dist 0/180/1
-        --daz -0.1/20 --gcd -0.1/30 --gc_center_rect 120/180/0/40 --gc_center_circle 100/-20/15,90/0/15
-        --post_fold --post_taper 0.005 --post_filter bandpass/0.001/0.06667 --post_norm  --post_cut 0/5000
-        --log cc_log --log_mode=0 --acc 0.01
+    %s --mode r2r -I "in*/*.sac" -T -5/10800/32400 -D 0.1 --input_format sac \
+--force_time_window -5/10800/32000 \
+-O cc --out_format hdf5,sac \
+--pre_detrend --pre_taper 0.005 \
+--w_temporal 128.0/0.02/0.06667 --w_spec 0.02 \
+--stack_dist 0/180/1 \
+--daz -0.1/20 --gcd -0.1/30 --gc_center_rect 120/180/0/40 --gc_center_circle 100/-20/15,90/0/15 \
+--post_fold --post_taper 0.005 --post_filter bandpass/0.01/0.06667 --post_norm  --post_cut 0/5000 \
+--log cc_log --log_mode=0 --acc 0.01 --random_sample 0.6
 
     """
 if __name__ == "__main__":
@@ -854,6 +882,7 @@ if __name__ == "__main__":
     fnm_wildcard = ''
     input_format = 'sac'
     tmark, t1, t2 = -5, 10800, 32400
+    force_time_window = None
     delta = 0.1
     pre_detrend=True
     pre_taper_ratio= 0.005
@@ -884,7 +913,7 @@ if __name__ == "__main__":
     log_prefnm= 'cc_mpi_log'
     log_mode  = None
 
-    spec_acc_threshold = 0.001
+    spec_acc_threshold = 0.01
     random_sample = -1.0
     ######################
     if len(sys.argv) <= 1:
@@ -894,7 +923,8 @@ if __name__ == "__main__":
     ######################
     options, remainder = getopt(sys.argv[1:], 'I:T:D:O:',
                             ['mode=',
-                             'in_format=', 'input_format=', 'pre_detrend', 'pre_taper=', 'pre_filter=',
+                             'in_format=', 'input_format=', 'force_time_window=',
+                             'pre_detrend', 'pre_taper=', 'pre_filter=',
                              'out_format=',
                              'w_temporal=', 'w_spec=',
                              'stack_dist=', 'daz=', 'dbaz=', 'gcd=', 'gcd_ev=', 'gcd_rcv=', 'gc_center_rect=', 'gc_center_circle=', 'min_recordings=', 'min_ev_per_rcv=', 'min_rcv_per_ev=', 'epdd=',
@@ -912,6 +942,9 @@ if __name__ == "__main__":
             tmark = int(tmark)
             t1 = float(t1)
             t2 = float(t2)
+        elif opt in ('--force_time_window'):
+            v1, v2, v3 = arg.split('/')
+            force_time_window = (int(v1), float(v2), float(v3) )
         elif opt in ('-D'):
             delta = float(arg)
         elif opt in ('--pre_detrend'):
@@ -983,7 +1016,7 @@ if __name__ == "__main__":
             random_sample = float(arg)
     #######
     main(mode,
-        fnm_wildcard, tmark, t1, t2, delta, input_format,
+        fnm_wildcard, tmark, t1, t2, delta, input_format, force_time_window,
         pre_detrend, pre_taper_ratio, pre_filter,
         tnorm, swht,
         dist_range, dist_step,
