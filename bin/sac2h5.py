@@ -8,7 +8,7 @@ import os, os.path
 #sac2hdf5(fnm_wildcard, hdf5_fnm, lcalda=False, verbose=False, info='', ignore_data=False):
 
 
-def run(filename_wildcard, output_prefix, pos, verbose, hdr_only):
+def run(filename_wildcard, output_prefix, pos, hdr_only, info, verbose):
     """
     """
     mpi_comm = MPI.COMM_WORLD.Dup()
@@ -32,7 +32,7 @@ def run(filename_wildcard, output_prefix, pos, verbose, hdr_only):
         hdf5_fnm = '%s%s.h5' % (output_prefix, k)
         if verbose and mpi_rank == 0:
             print('[iproc:%02d] %s ==> %s' % (mpi_rank, it, hdf5_fnm) )
-        sac2hdf5(sorted(glob(it)), hdf5_fnm, lcalda=True, verbose=verbose, info='', ignore_data=hdr_only)
+        sac2hdf5(sorted(glob(it)), hdf5_fnm, lcalda=True, verbose=verbose, info=info, ignore_data=hdr_only)
 
 HMSG = """Transform many sac files downloaded with obspyDMT into hdf5 files.
 
@@ -50,14 +50,15 @@ HMSG = """Transform many sac files downloaded with obspyDMT into hdf5 files.
 if __name__ == "__main__":
     filename_wildcard = None
     output_prefix = 'junk'
-    verbose= False
     pos = -2
     hdr_only = False
+    info = ''
+    verbose= False
 
     if len(sys.argv) <=1 :
         print(HMSG % (sys.argv[0]) )
         sys.exit(0)
-    options, remainder = getopt(sys.argv[1:], 'I:O:HV', ['pos=', 'hdr_only'] )
+    options, remainder = getopt(sys.argv[1:], 'I:O:HV', ['pos=', 'hdr_only', 'info='] )
     for opt, arg in options:
         if opt in ('-H'):
             print(HMSG % (sys.argv[0]) )
@@ -72,5 +73,7 @@ if __name__ == "__main__":
             pos = int(arg)
         elif opt in ('--hdr_only'):
             hdr_only = True
-    run(filename_wildcard, output_prefix, pos, verbose, hdr_only)
+        elif opt in ('--info'):
+            info = arg
+    run(filename_wildcard, output_prefix, pos, hdr_only, info, verbose)
 
