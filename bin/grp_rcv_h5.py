@@ -25,6 +25,8 @@ def get_ev_tree(fnms, networks=None, stations= None, merge_loc=False, verbose=Fa
     """
     Get the event-receiver trees for the selected networks.
     """
+    if verbose:
+        print('Forming event-receiver trees...', flush=True)
     ev_tree = dict()
     for it in fnms:
         fid = h5_File(it, 'r')
@@ -72,6 +74,8 @@ def get_ev_tree(fnms, networks=None, stations= None, merge_loc=False, verbose=Fa
 def evtree_to_rcvtree(ev_tree):
     """
     """
+    if verbose:
+        print('Converting to receiver-event trees...', flush=True)
     rcv_tree = dict()
     for evfnm, vol in ev_tree.items():
         for rcvnm, (idx, stlo, stla) in vol.items():
@@ -88,7 +92,7 @@ def run_single_rcv(rcvnm, vol, out_prefix, info, verbose=False):
 
     if verbose:
         print(rcvnm, ofnm)
-        print('\n'.join(['    %s %d' % (i1, i2) for i1, (i2, i3, i4) in vol.items()]) )
+        #print('\n'.join(['    %s %d' % (i1, i2) for i1, (i2, i3, i4) in vol.items()]) )
 
     ohdr_vol = dict() # the buf to store the selected data hdrs
     LL_vol  = list()
@@ -109,6 +113,9 @@ def run_single_rcv(rcvnm, vol, out_prefix, info, verbose=False):
         LL_vol.append(fid['LL'][idx] )
         fnm_vol.append(fid['filename'][idx])
         mat_buf.append(fid['dat'][idx][:])
+        if verbose:
+            print('    %s %d' % (fnm, idx) )
+        fid.close()
 
     ofid = h5_File(ofnm, 'w')
 
