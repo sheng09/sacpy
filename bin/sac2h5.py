@@ -17,7 +17,7 @@ def run(filename_wildcard, output_prefix, pos, verbose, hdr_only):
     ####
     tmp = '/'.join(output_prefix.split('/')[:-1] )
     if len(tmp) > 1 and mpi_rank == 0:
-        if not os.path.exist(tmp):
+        if not os.path.exists(tmp):
             os.makedirs(tmp)
     ####
     tmp = '/'.join(filename_wildcard.split('/')[:pos+1] )
