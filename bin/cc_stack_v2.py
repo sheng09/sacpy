@@ -787,7 +787,7 @@ def main(mode,
     global_spec_stack_mat, global_stack_count = spec_stack_mat, stack_count
     if mpi_ncpu > 1:
         mpi_print_log(mpi_log_fid, 0, True, 'MPI collecting(reducing) to RANK0...')
-        if mpi_ncpu > 1:
+        if mpi_ncpu > 1 and mpi_rank == 0:
             junk, global_spec_stack_mat, global_stack_count = init_ccstack_spec_buf(stack_dist_range[0], stack_dist_range[1], stack_dist_step, cc_speedup[1], mpi_log_fid )
         mpi_comm.Reduce([spec_stack_mat, MPI.C_FLOAT_COMPLEX], [global_spec_stack_mat, MPI.C_FLOAT_COMPLEX], MPI.SUM, root= 0)
         mpi_comm.Reduce([stack_count, MPI.INT32_T], [global_stack_count, MPI.INT32_T], MPI.SUM, root= 0 )
