@@ -20,9 +20,10 @@ def run(h5_filename, figname, dist_range=None, cc_time_range=None, lines= None,
     adjust_time_axis: a tupel of (sc, xc). This will change {t-x} domain into {t-sc(x-xc),x} domain. 
                       This option help flat a steep phase.
     """
-    fig_outdir = '/'.join( figname.split('/')[:-1] )
-    if not os.path.exists(fig_outdir):
-        os.makedirs(fig_outdir)
+    if '/' in figname:
+        fig_outdir = '/'.join( figname.split('/')[:-1] )
+        if not os.path.exists(fig_outdir):
+            os.makedirs(fig_outdir)
     ###
     fid = h5_File(h5_filename, 'r')
     cc_t0, cc_t1, delta = fid['ccstack'].attrs['cc_t0'], fid['ccstack'].attrs['cc_t1'], fid['ccstack'].attrs['delta']
