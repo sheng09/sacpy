@@ -190,7 +190,7 @@ def mpi_print_log(file, n_pre, flush, *objects, end='\n'):
     print(*objects, file=file, flush=flush, end=end )
 
 
-def rd_wh_sac(fnm_wildcard, tmark, t1, t2, force_time_window, delta, npts,
+def rd_wh_sac(fnm_wildcard, tmark, t1, t2, year_range, force_time_window, delta, npts,
     pre_detrend, pre_taper_halfsize, pre_filter,
     wtlen, wt_f1, wt_f2, wflen, speedup_i1, speedup_i2, whiten_taper_halfsize,
     fftsize, nrfft_valid,
@@ -306,7 +306,7 @@ def rd_wh_sac(fnm_wildcard, tmark, t1, t2, force_time_window, delta, npts,
         return spectra, stlo, stla, evlo, evla, az, baz, gcarc, (time_rd, time_preproc, time_whiten, time_fft)
     else:
         return None, None, None, None, None, None, None, None, (time_rd, time_preproc, time_whiten, time_fft)
-def rd_wh_h5(fnm, tmark, t1, t2, force_time_window, delta, npts,
+def rd_wh_h5(fnm, tmark, t1, t2, year_range, force_time_window, delta, npts,
     pre_detrend, pre_taper_halfsize, pre_filter,
     wtlen, wt_f1, wt_f2, wflen, speedup_i1, speedup_i2, whiten_taper_halfsize,
     fftsize, nrfft_valid,
@@ -354,6 +354,7 @@ def rd_wh_h5(fnm, tmark, t1, t2, force_time_window, delta, npts,
     raw_baz   = fid['hdr/baz'][:]
     raw_gcarc = fid['hdr/gcarc'][:]
     raw_b     = fid['hdr/b'][:]
+    raw_year  = fid['hdr/nzyear'][:]
 
     ftw_tmark, ftw_t1, ftw_t2= force_time_window
     tmp = ('t0', 't1', 't2', 't3', 't4', 't5', 't6', 't7', 't8', 't9', 0, 'b', 'e', 'o', 'a', 0) # -3 is 'o' and -5 is 'b'
@@ -366,6 +367,8 @@ def rd_wh_h5(fnm, tmark, t1, t2, force_time_window, delta, npts,
     t1 = tref - raw_b + t1
     t2 = tref - raw_b + t2
 
+    min_year, max_year = year_range
+
     pre_taper_win = ones(npts, dtype=float32)
     taper(pre_taper_win, pre_taper_halfsize)
     index = 0
@@ -373,6 +376,9 @@ def rd_wh_h5(fnm, tmark, t1, t2, force_time_window, delta, npts,
         it = fnms[isac]
 
         ttmp = time()
+
+        if raw_year[isac] < min_year or raw_year[isac] > max_year:
+            continue
 
         if ftw_t1[isac] < b[isac] or ftw_t2[isac] > e[isac]:
             mpi_print_log(mpi_log_fid, 2, True, '+ Insufficient data within the forced time window:', it)
@@ -692,7 +698,7 @@ def output( stack_mat, stack_count, dist, absolute_amp,
 
 
 def main(mode,
-    fnm_wildcard, tmark, t1, t2, delta, input_format='sac', force_time_window= None, # input param
+    fnm_wildcard, tmark, t1, t2, delta, input_format='sac', year_range=(1000, 9999), force_time_window= None, # input param
     pre_detrend=True, pre_taper_halfratio= 0.005, pre_filter= None, # pre-proc param
     tnorm = (128.0, 0.02, 0.066666), swht= 0.02,                # whitening param
     stack_dist_range = (0.0, 180.0), stack_dist_step= 1.0,         # stack param
@@ -734,7 +740,7 @@ def main(mode,
     time_rd_sum, time_preproc_sum, time_whiten_sum, time_fft_sum, time_cc_sum, time_sum = 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
     for idx, it in enumerate(local_jobs):
         mpi_print_log(mpi_log_fid, 1, True, '- %d %s' % (idx+1, it) )
-        tmp = func_rd(  it, tmark, t1, t2, force_time_window, delta, npts,
+        tmp = func_rd(  it, tmark, t1, t2, year_range, force_time_window, delta, npts,
                         pre_detrend, pre_taper_halfsize, pre_filter,
                         wtlen, wt_f1, wt_f2, wflen, 0, speedup[1], pre_taper_halfsize,
                         cc_fftsize, cc_speedup[1],
@@ -806,6 +812,7 @@ def main(mode,
 
 
 HMSG = """%s --mode r2r -I "in*/*.sac" -T -5/10800/32400 -D 0.1 --input_format sac
+    [--year_range 2010/2020]
     [--force_time_window -5/10800/32000] -O cc_stack --out_format hdf5
     [--pre_detrend] [--pre_taper 0.005] [--pre_filter bandpass/0.005/0.1]
     --stack_dist 0/180/1 [--daz -0.1/15] [--gcd -0.1/20] [--gc_center_rect 120/180/0/40,180/190/0/10]
@@ -823,6 +830,8 @@ Args:
     -T  : cut time window for reading.
         For some time series that have gaps in the window, the gaps are filled with zeros.
     -D  : delta.
+    --year_range : A year range to select input data.
+                   (Only effective when  using `--input_format h5`).
     --force_time_window: force a time window to select input time series.
         Any time serie that has gaps in the window are excluded.
         This option is off in default.
@@ -867,6 +876,7 @@ Args:
 
 E.g.,
     %s --mode r2r -I "in*/*.sac" -T -5/10800/32400 -D 0.1 --input_format sac \
+--year_range 2010/2020 \
 --force_time_window -5/10800/32000 \
 -O cc --out_format hdf5,sac \
 --pre_detrend --pre_taper 0.005 \
@@ -883,6 +893,7 @@ if __name__ == "__main__":
     fnm_wildcard = ''
     input_format = 'sac'
     tmark, t1, t2 = -5, 10800, 32400
+    year_range = (1000, 9999)
     force_time_window = None
     delta = 0.1
     pre_detrend=True
@@ -924,7 +935,8 @@ if __name__ == "__main__":
     ######################
     options, remainder = getopt(sys.argv[1:], 'I:T:D:O:',
                             ['mode=',
-                             'in_format=', 'input_format=', 'force_time_window=',
+                             'in_format=', 'input_format=', 'year_range=',
+                             'force_time_window=',
                              'pre_detrend', 'pre_taper=', 'pre_filter=',
                              'out_format=',
                              'w_temporal=', 'w_spec=',
@@ -943,6 +955,8 @@ if __name__ == "__main__":
             tmark = int(tmark)
             t1 = float(t1)
             t2 = float(t2)
+        elif opt in ('--year_range'):
+            year_range = [int(it) for it in arg.split('/')]
         elif opt in ('--force_time_window'):
             v1, v2, v3 = arg.split('/')
             force_time_window = (int(v1), float(v2), float(v3) )
@@ -1017,7 +1031,8 @@ if __name__ == "__main__":
             random_sample = float(arg)
     #######
     main(mode,
-        fnm_wildcard, tmark, t1, t2, delta, input_format, force_time_window,
+        fnm_wildcard, tmark, t1, t2, delta, input_format, year_range,
+        force_time_window,
         pre_detrend, pre_taper_ratio, pre_filter,
         tnorm, swht,
         dist_range, dist_step,
