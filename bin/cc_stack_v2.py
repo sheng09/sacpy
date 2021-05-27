@@ -724,10 +724,6 @@ def main(mode,
 
 
     dist, spec_stack_mat, stack_count = init_ccstack_spec_buf(stack_dist_range[0], stack_dist_range[1], stack_dist_step, cc_speedup[1], mpi_log_fid ) # init buf
-    global_dist, global_spec_stack_mat, global_stack_count = dist, spec_stack_mat, stack_count
-    if mpi_rank == 0 and mpi_ncpu > 1:
-        global_dist, global_spec_stack_mat, global_stack_count = init_ccstack_spec_buf(stack_dist_range[0], stack_dist_range[1], stack_dist_step, cc_speedup[1], mpi_log_fid )
-
 
     tmp = update_selection(daz_range, gcd_range, gc_center_rect, gc_center_circle, min_recordings, mpi_log_fid)
     (daz_range, gcd_range, gc_center_rect, gc_center_circle), (rect_clo1, rect_clo2, rect_cla1, rect_cla2), (circle_center_clo, circle_center_cla, circle_center_radius), flag_selection  = tmp
@@ -742,7 +738,7 @@ def main(mode,
         mpi_print_log(mpi_log_fid, 1, True, '- %d %s' % (idx+1, it) )
         tmp = func_rd(  it, tmark, t1, t2, year_range, force_time_window, delta, npts,
                         pre_detrend, pre_taper_halfsize, pre_filter,
-                        wtlen, wt_f1, wt_f2, wflen, 0, speedup[1], pre_taper_halfsize,
+                        wtlen, wt_f1, wt_f2, wflen, speedup[0], speedup[1], pre_taper_halfsize,
                         cc_fftsize, cc_speedup[1],
                         min_recordings,
                         mpi_log_fid)
@@ -788,8 +784,11 @@ def main(mode,
     )
 
 
+    global_spec_stack_mat, global_stack_count = spec_stack_mat, stack_count
     if mpi_ncpu > 1:
         mpi_print_log(mpi_log_fid, 0, True, 'MPI collecting(reducing) to RANK0...')
+        if mpi_ncpu > 1:
+            junk, global_spec_stack_mat, global_stack_count = init_ccstack_spec_buf(stack_dist_range[0], stack_dist_range[1], stack_dist_step, cc_speedup[1], mpi_log_fid )
         mpi_comm.Reduce([spec_stack_mat, MPI.C_FLOAT_COMPLEX], [global_spec_stack_mat, MPI.C_FLOAT_COMPLEX], MPI.SUM, root= 0)
         mpi_comm.Reduce([stack_count, MPI.INT32_T], [global_stack_count, MPI.INT32_T], MPI.SUM, root= 0 )
         mpi_comm.Barrier()
