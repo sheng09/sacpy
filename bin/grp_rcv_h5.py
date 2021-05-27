@@ -108,6 +108,7 @@ def run_single_rcv(rcvnm, vol, out_prefix, info, verbose=False):
             ohdr_vol[key][0].append(hdr[key][idx] )
         LL_vol.append(fid['LL'][idx] )
         fnm_vol.append(fid['filename'][idx])
+        npts = hdr['npts'][idx]
         mat_buf.append(fid['dat'][idx][:])
 
     ofid = h5_File(ofnm, 'w')
@@ -122,8 +123,8 @@ def run_single_rcv(rcvnm, vol, out_prefix, info, verbose=False):
     npts = np.max([it.size for it in mat_buf] )
     ofid.create_dataset('dat', (nfile, npts), dtype=np.float32)
     mat = ofid['dat'] # the place to store time series
-    for idx, v in enumerate(mat_buf):
-        mat[idx, :v.size] = v
+    for idx, (v, npts) in enumerate(zip(mat_buf, ohdr_vol['npts'])):
+        mat[idx, :npts] = v[:npts]
 
     ofid.attrs['nfile'] = nfile
     ofid.attrs['info'] = info

@@ -92,5 +92,6 @@
         "set": "cpp",
         "string": "cpp",
         "unordered_set": "cpp"
-    }
+    },
+    "git.ignoreLimitWarning": true
 }
