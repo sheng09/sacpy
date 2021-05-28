@@ -12,9 +12,10 @@ from sacpy.processing import iirfilter_f32, taper
 import os, os.path
 import matplotlib.ticker as mtick
 
-def run(h5_filename, figname, dist_range=None, cc_time_range=None, lines= None, 
-        filter_setting =(None, 0.02, 0.0666), adjust_time_axis = None,
-        taper_sec =0., search_amp= None, norm_settings = (None, 'pos', (-10, 10) ),
+def run(h5_filename, figname, dist_range=None, cc_time_range=None,
+        filter_setting =(None, 0.02, 0.0666), taper_sec =0.,
+        norm_settings = (None, 'pos', (-10, 10) ), adjust_time_axis = None,
+        lines= None, search_amp= None,
         figsize= (6, 15), interpolation= None, title='', vmax= 1.0, axhist=True, yticks='all', ylabel='all', grid=False, dpi=150):
     """
     adjust_time_axis: a tupel of (sc, xc). This will change {t-x} domain into {t-sc(x-xc),x} domain. 
@@ -30,56 +31,53 @@ def run(h5_filename, figname, dist_range=None, cc_time_range=None, lines= None,
     mat = fid['ccstack'][:]
     dist = fid['dist'][:]
     stack_count = fid['stack_count'][:]
-    abs_amp = fid['absolute_amp']
-    for irow, (v1, v2) in enumerate(zip(abs_amp, stack_count)):
-        if v2 > 0:
-            mat[irow,:] *= (v1/v2)
-    ### filter
-    btype, f1, f2 = filter_setting
-    if not (btype is None):
-        for irow in range(dist.size):
-            iirfilter_f32(mat[irow], delta, 0, 2, f1, f2, 2, 2)
-            #mat[irow] = filter(mat[irow], 1.0/delta, btype, (f1, f2), 2, 2 )
-    ### adjust time axis
-    if adjust_time_axis != None:
-        npts = mat.shape[1]
-        sc, xc = adjust_time_axis
-        for irow, x in enumerate(dist):
-            dt = sc*(x-xc)
-            ndt = int(np.round(dt/delta) )
-            if 0 < ndt < npts:
-                mat[irow, :-ndt] = mat[irow, ndt:]
-                mat[irow, -ndt:] = 0
-            elif -npts < ndt < 0:
-                mat[irow, -ndt:] = mat[irow, :ndt]
-                mat[irow, :-ndt] = 0
-    ###
-    junk_t = 50 if cc_time_range == None else cc_time_range[0]
-    mat[:, :int(junk_t/delta)] = 0.0
-    ###
+    abs_amp = fid['absolute_amp'][:]
+
+    ### cut given distance and time range
     if cc_time_range != None:
         i1 = int( np.round((cc_time_range[0]-cc_t0)/delta) )
         i2 = int( np.round((cc_time_range[1]-cc_t0)/delta) )
         mat = mat[:, i1:i2]
         cc_t0, cc_t1 = cc_time_range
+        print(i1, i2)
     if dist_range != None:
         d1, d2 = dist_range
         i1 = np.argmin(abs(dist-d1))
         i2 = np.argmin(abs(dist-d2)) + 1
-        mat = mat[1:i2, :]
-    mat *= (1.0/np.max(mat) )
+        mat = mat[i1:i2, :]
+        stack_count = stack_count[i1:i2]
+        abs_amp = abs_amp[i1:i2]
+
+    ### filter
+    btype, f1, f2 = filter_setting
+    if not (btype is None):
+        for irow in range(dist.size):
+            iirfilter_f32(mat[irow], delta, 0, 2, f1, f2, 2, 2)
+
     ### taper
     if taper_sec > delta:
         taper_sz = int(taper_sec / delta)
         for irow in range(mat.shape[0]):
-            taper(mat[irow], taper_sz)
-    #### norm
-    #for irow in range(mat.shape[0]):
-    #    v = mat[irow].max()
-    #    if v > 0.0:
-    #        mat[irow] *= (1.0/v)
-    ### normalize the waveform if necessary
-    if not (norm_settings[0] is None):
+            taper(mat[irow], taper_sz, 1)
+            #mat[irow,:taper_sz] = 0.0
+
+    ### adjust amplitude
+    nrow = abs_amp.size
+    if norm_settings == 'raw':
+        for irow in range(nrow):
+            mat[irow,:] *= abs_amp[irow]
+    elif norm_settings == 'stack_average':
+        for irow in range(nrow):
+            v1, v2 = abs_amp[irow], stack_count[irow]
+            if v2 > 0:
+                mat[irow,:] *= (v1/v2)
+    elif norm_settings == 'unit':
+        for irow in range(nrow):
+            print( np.argmax(mat[irow,:]) )
+            v = np.max( mat[irow,:] )
+            if v > 0.0:
+                mat[irow,:] *= (1.0/v)
+    elif type(norm_settings) == tuple: # norm for each traces
         (xs, ts), method, search_window, outfnm = norm_settings
         tpos, tneg = np.zeros(dist.size), np.zeros(dist.size)
         if method in ('pos'):
@@ -99,9 +97,25 @@ def run(h5_filename, figname, dist_range=None, cc_time_range=None, lines= None,
         with open(outfnm, 'w') as fid:
             for(d, tp, tn) in zip(dist, tpos, tneg):
                 print('%.1f %.3f %.3f' % (d, tp, tn), file=fid)
-    ###
+
+    ### adjust time axis
+    if adjust_time_axis != None:
+        npts = mat.shape[1]
+        sc, xc = adjust_time_axis
+        for irow, x in enumerate(dist):
+            dt = sc*(x-xc)
+            ndt = int(np.round(dt/delta) )
+            if 0 < ndt < npts:
+                mat[irow, :-ndt] = mat[irow, ndt:]
+                mat[irow, -ndt:] = 0
+            elif -npts < ndt < 0:
+                mat[irow, -ndt:] = mat[irow, :ndt]
+                mat[irow, :-ndt] = 0
+
+    ### for imshow(...)
     mat = mat.transpose()
-    ###
+    mat *= (1.0/np.max(mat) )
+    
     ax1, ax2 = None, None
     if axhist:
         fig, (ax1, ax2) = plt.subplots(2, 1, figsize= figsize, gridspec_kw={'height_ratios': [4.6, 1], 'hspace': 0.02 } )
@@ -155,7 +169,7 @@ def run(h5_filename, figname, dist_range=None, cc_time_range=None, lines= None,
         tmp = stack_count[stack_count>0]
         ax2.bar(dist, stack_count, align='center', color='gray', width= dist[1]-dist[0] )
         ax2.set_xlim(dist_range)
-        ax2.set_ylim(bottom=0 )
+        ax2.set_ylim(bottom=0, top=np.max(stack_count[1:])+30 )
         ax2.set_xlabel('Inter-receiver distance ($\degree$)')
 
         #fmt = '{x:,.0f}'
@@ -303,8 +317,9 @@ if __name__ == "__main__":
     ylabel = 'all'
     grid = False
     dpi = 100
+    #### adjust amplitude to plot
     #### line along which to normalize
-    norm_settings = (None, 'pos', (-10, 10) )
+    norm_settings = 'raw'
     #### lines to plot
     lines = None
     filter_setting = (None, 0.02, 0.0666)
@@ -315,16 +330,31 @@ if __name__ == "__main__":
     ####
     HMSG = """
 Plot cc wavefield in hdf5 file generated by cc_stack_sac.py.
-    %s -I in.h5 -P img.png [-D 0/50] [-T 0/3000] [--filter bandpass/0.02/0.0666] [--adjust_time_axis 5/0]
-    [--taper_sec 100 ]  [--search_amp p,10,None]
-    [--norm fnm=in.txt,method=pos,outfnm=o.txt] [--lines fnm1,fnm2,fnm3]
+
+    %s -I in.h5 -P img.png [-D 0/50] [-T 0/3000]
+    [--filter bandpass/0.02/0.0666] [--taper_sec 100 ]
+    [--norm fnm=in.txt,method=pos,outfnm=o.txt] [--adjust_time_axis 5/0]
+    [--search_amp p,10,None] [--lines fnm1,fnm2,fnm3]
     [--plt figsize=6/12,interpolation=gaussian,title=all,vmax=1.0,axhist=False,yticks=all,ylabel=True,grid=False,dpi=150] [-H]
 
 Args:
+    -I:
+    -P:
+    -D: distance range for plotting.
+    -T: time range for plotting.
+
+    --filter: apply a filter.
+    --taper_sec : taper at both ends.
+
+    --norm: 'raw', 'unit', 'stack_average'.
+            or: something like `--norm fnm=test.txt,method=pos,window=-10/10,outfnm=o.txt`.
+    --adjust_time_axis: adjust time axis via T' = T-k(x-x0)
+
     --search_amp type,half_window_length,fnm :
             the type can be 'p', 'n', 'pn',
             the half_window_length is in seconds,
             the fnm can be a string of filename or None.
+    --line: a list of filenames for plotting lines.
 
     --plt: plot options.
             figsize: width/height
@@ -341,7 +371,7 @@ Args:
         print(HMSG)
         exit(0)
     ####
-    options, remainder = getopt(argv[1:], 'I:P:D:T:VHh?', ['filter=', 'adjust_time_axis=', 'taper_sec=', 'search_amp=', 'norm=', 'search=', 'lines=', 'plt='] )
+    options, remainder = getopt(argv[1:], 'I:P:D:T:VHh?', ['filter=', 'adjust_time_axis=', 'taper_sec=', 'amp_adjust=', 'search_amp=', 'norm=', 'search=', 'lines=', 'plt='] )
     for opt, arg in options:
         if opt in ('-I'):
             h5_fnm = arg
@@ -362,11 +392,16 @@ Args:
             adjust_time_axis = [float(it) for it in arg.split('/')]
         elif opt in ('--taper_sec'):
             taper_sec = float(arg)
+        elif opt in ('--amp_adjust'):
+            amp_adjust = arg
         elif opt in ('--search_amp'):
             search_amp = arg.split(',')
             search_amp[1] = float(search_amp[1] )
         elif opt in ('--norm'):
-            norm_settings = get_norm_methods(arg)
+            if type(arg) == tuple:
+                norm_settings = get_norm_methods(arg)
+            else:
+                norm_settings = arg
         elif opt in ('--lines'):
             lines = get_lines(arg)
         elif opt in ('--plt'):
@@ -375,8 +410,9 @@ Args:
             print(HMSG)
             exit(0)
     ####
-    run(h5_fnm, figname, dist_range, cc_time_range, lines, 
-            filter_setting, adjust_time_axis,
-            taper_sec, search_amp, norm_settings,
-            figsize, interpolation, title, vmax, axhist, yticks, ylabel, grid, dpi)
+    run(h5_fnm, figname, dist_range, cc_time_range,
+        filter_setting, taper_sec,
+        norm_settings, adjust_time_axis,
+        lines, search_amp,
+        figsize, interpolation, title, vmax, axhist, yticks, ylabel, grid, dpi)
 
