@@ -36,8 +36,27 @@ Inplace detrend
 >>> detrend(xs)
 >>>
 
+Searching given time series
+--------------------------
+
+>>> import numpy as np
+>>> t0, delta = 0.0, 0.1
+>>> xs = np.random.rand(3000) - 0.5
+>>> # manual cutting
+>>> i1 = ceil_index(10.0, t0, delta)
+>>> i2 = floor_index(300.0, t0, delta) + 1
+>>> new_xs = xs[i1:i2]
+>>> # obtain max amplitude point
+>>> tref, wnd = 50.0, -5.02, 300.0
+>>> idx, t, amp = max_amp_index(xs, t0, delta, tref, wnd[0], wnd[1], polarity=1) # positive max
+>>> idx, t, amp = max_amp_index(xs, t0, delta, tref, wnd[0], wnd[1], polarity=-1) # negative max
+>>> idx, t, amp = max_amp_index(xs, t0, delta, tref, wnd[0], wnd[1], polarity=0) # absolute max
+>>>
+
+
 Not-Inplace cut
 -------------------------
+
 >>> t0 = 0.0
 >>> w1, w2 = 99.5, 300
 >>> new_xs, new_t0 = cut(xs, delta, t0, w1, w2)
@@ -45,6 +64,7 @@ Not-Inplace cut
 
 Inplace whitening
 -------------------------
+
 >>> wtlen = 128.0 # sec
 >>> f1, f2 = 0.02, 0.0667
 >>> water_level_ratio, taper_halfsize = 1.0e-5, 30
@@ -56,6 +76,7 @@ Inplace whitening
 
 
 
+from matplotlib.pyplot import polar
 import numpy as np
 #from pyfftw.interfaces.cache import enable as pyfftw_cache_enable
 from pyfftw.interfaces.numpy_fft import rfft, irfft
@@ -190,6 +211,58 @@ def detrend(xs):
     xs -= tmp
 
 #############################################################################################################################
+#  search sth from time series
+#############################################################################################################################
+@jit(nopython=True, nogil=True)
+def floor_index(t, t0, delta):
+    """
+    Return the floor index for time `t` given
+    the start time `t0` and sampling time
+    interval `delta`.
+    """
+    return int( np.floor((t-t0)/delta) )
+@jit(nopython=True, nogil=True)
+def ceil_index(t, t0, delta):
+    """
+    Return the ceil index for time `t` given
+    the start time `t0` and sampling time
+    interval `delta`.
+    """
+    return int( np.ceil((t-t0)/delta) )
+@jit(nopython=True, nogil=True)
+def max_amp_index(xs, t0, delta, tref, tmin, tmax, polarity=1):
+    """
+    Search for max amplitude, positive or negtive or absolute, for a time series.
+
+    xs: the 1D time series. Should be an object of numpy.ndarray.
+    t0: start time of the time series in second.
+    delta: sampling time interval in second.
+    tref, tmin, tmax: reference time and search time window (tmin, tmax).
+    polarity: -1, 0, or 1 for negative, absolute, or positive amplitude maximum.
+
+    Return: index, time, amplitude
+    """
+    i1 = ceil_index(tref+tmin, t0, delta)
+    i2 = floor_index(tref+tmax, t0, delta)+1
+
+    i1 = i1 if i1>=0 else 0
+    i2 = i2 if i2<=xs.size else xs.size
+
+    idx = i1
+    if polarity > 0: #positive
+        idx += np.argmax(xs[i1:i2] )
+    elif polarity < 0: # negative
+        idx += np.argmin(xs[i1:i2] )
+    else:
+        idx1 = np.argmax(xs[i1:i2] )
+        idx2 = np.argmin(xs[i1:i2] )
+        v1, v2 = xs[i1+idx1], -xs[i1+idx2]
+        idx += (idx1 if v1>=v2 else idx2)
+
+    v = xs[idx]
+    return idx, t0+idx*delta, v
+
+#############################################################################################################################
 # JIT cut
 #############################################################################################################################
 #@jit(nopython=True, nogil=True)
@@ -200,8 +273,8 @@ def cut(xs, delta, t0, new_t0, new_t1):
     Cut a time series `xs` with the time window `new_t0`, `new_t1`.
     `delta` and `t0` are for the input `xs`.
     """
-    i0 = int(np.ceil((new_t0-t0)/delta))
-    i1 = int(np.floor((new_t1-t0)/delta))+1
+    i0 = ceil_index(new_t0, t0, delta)
+    i1 = floor_index(new_t1, t0, delta) + 1
     new_size = i1-i0
     new_xs = np.zeros(new_size, dtype=xs.dtype)
     new_t0 = i0*delta + t0
@@ -295,6 +368,7 @@ def fwhiten_f32(xs, delta, winlen, water_level_ratio= 1.0e-5, taper_halfsize=0, 
 
     if taper_halfsize > 0:
         taper(xs, taper_halfsize)
+
 
 if __name__ == "__main__":
     import matplotlib.pyplot as plt

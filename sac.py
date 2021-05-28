@@ -989,7 +989,7 @@ class sactrace:
 ###
 #  dependend methods based on C libraries
 ###
-def c_rd_sachdr(filename=None, lcalda=False, verbose=False):
+def c_rd_sachdr(filename, lcalda=False, verbose=False):
     """
     Read and return a sac header struct given the filename.
 

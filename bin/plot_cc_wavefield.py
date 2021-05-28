@@ -8,7 +8,7 @@ import matplotlib.pyplot as plt
 from getopt import getopt
 from sys import exit, argv
 import numpy as np
-from sacpy.processing import iirfilter_f32, taper
+from sacpy.processing import iirfilter_f32, taper, max_amp_index
 import os, os.path
 import matplotlib.ticker as mtick
 
@@ -83,14 +83,14 @@ def run(h5_filename, figname, dist_range=None, cc_time_range=None,
         if method in ('pos'):
             for irow in range(dist.size):
                 tref = ts[irow]
-                idx, t_phase, amp_phase= max_amplitude_timeseries(mat[irow], cc_t0, delta, tref, search_window, 1)
+                idx, t_phase, amp_phase= max_amp_index(mat[irow], cc_t0, delta, tref, search_window[0], search_window[1], 1)
                 mat[irow] *= (1.0/(amp_phase) )
                 #ax1.plot(vmax*amp_phase+dist[irow], t_phase, '.', color='C1')
                 #tpos[irow] = t_phase
         elif method in ('neg'):
             for irow in range(dist.size):
                 tref = ts[irow]
-                idx, t_phase, amp_phase= max_amplitude_timeseries(mat[irow], cc_t0, delta, tref, search_window, -1)
+                idx, t_phase, amp_phase= max_amp_index(mat[irow], cc_t0, delta, tref, search_window[0], search_window[1], -1)
                 mat[irow] *= (1.0/(amp_phase) )
                 #ax1.plot(vmax*amp_phase+dist[irow], t_phase, '.', color='C2')
                 #tneg[irow] = t_phase
