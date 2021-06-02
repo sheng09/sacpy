@@ -97,9 +97,9 @@ def init_ccstack_spec_buf(dist_min, dist_max, dist_step, nrfft_valid, mpi_log_fi
                             ', '.join(['%.1f' % it for it in dist[-1:] ]), )
 
     return dist, spec_stack_mat, stack_count
-def update_selection(daz_range, gcd_range, gc_center_rect, gc_center_circle, min_recordings, mpi_log_fid):
+def update_selection(daz_range, gcd_range, gc_center_rect, gc_center_circle, gc_area, min_recordings, mpi_log_fid):
     flag_selection = False
-    if daz_range != None or gcd_range != None or gc_center_rect != None or gc_center_circle != None:
+    if daz_range != None or gcd_range != None or gc_center_rect != None or gc_center_circle != None or gc_area[0]:
         daz_range      = (-0.1, 90.1) if daz_range == None else daz_range
         gcd_range      = (-0.1, 90.1) if gcd_range == None else gcd_range
         gc_center_rect = [(-9999, 9999, -9999, 9999)] if gc_center_rect == None else gc_center_rect
@@ -107,26 +107,33 @@ def update_selection(daz_range, gcd_range, gc_center_rect, gc_center_circle, min
         flag_selection = True
 
 
-    center_clo1 = array( [rect[0] for rect in gc_center_rect] ) if gc_center_rect != None else None
-    center_clo2 = array( [rect[1] for rect in gc_center_rect] ) if gc_center_rect != None else None
-    center_cla1 = array( [rect[2] for rect in gc_center_rect] ) if gc_center_rect != None else None
-    center_cla2 = array( [rect[3] for rect in gc_center_rect] ) if gc_center_rect != None else None
+    center_clo1 = array( [rect[0] for rect in gc_center_rect] )
+    center_clo2 = array( [rect[1] for rect in gc_center_rect] )
+    center_cla1 = array( [rect[2] for rect in gc_center_rect] )
+    center_cla2 = array( [rect[3] for rect in gc_center_rect] )
 
-    circle_center_clo = array( [it[0] for it in gc_center_circle] )    if gc_center_circle != None else None
-    circle_center_cla = array( [it[1] for it in gc_center_circle] )    if gc_center_circle != None else None
-    circle_center_radius = array( [it[2] for it in gc_center_circle] ) if gc_center_circle != None else None
+    circle_center_clo = array( [it[0] for it in gc_center_circle] )
+    circle_center_cla = array( [it[1] for it in gc_center_circle] )
+    circle_center_radius = array( [it[2] for it in gc_center_circle] )
 
+    gc_area_switch    = gc_area[0] # gc_area: # (switch, flag, (areas) )
+    gc_area_selection = gc_area[1]
+    gc_area_lo = array([it[0] for it in gc_area[2] ])     if gc_area_switch else array( () )
+    gc_area_la = array([it[1] for it in gc_area[2] ])     if gc_area_switch else array( () )
+    gc_area_radius = array([it[2] for it in gc_area[2] ]) if gc_area_switch else array( () )
 
     mpi_print_log(mpi_log_fid, 0, False, 'Set selection criteria')
     mpi_print_log(mpi_log_fid, 1, False, 'daz: ', daz_range )
     mpi_print_log(mpi_log_fid, 1, False, 'gcd: ', gcd_range )
     mpi_print_log(mpi_log_fid, 1, False, 'selection of gc-center rect:   ', gc_center_rect )
     mpi_print_log(mpi_log_fid, 1, False, 'selection of gc-center circle: ', gc_center_circle )
+    mpi_print_log(mpi_log_fid, 1, False, 'selection of gc-area:          ', gc_area)
     mpi_print_log(mpi_log_fid, 1, False, 'minmal number of recordings:   ', min_recordings )
 
     return ( (daz_range, gcd_range, gc_center_rect, gc_center_circle),
              (center_clo1, center_clo2, center_cla1, center_cla2),
              (circle_center_clo, circle_center_cla, circle_center_radius),
+             (gc_area_switch, gc_area_selection, gc_area_lo, gc_area_la, gc_area_radius),
              flag_selection )
 def distribute_jobs(mpi_rank, mpi_ncpu, fnm_wildcard, input_format, mpi_log_fid):
     """
@@ -519,7 +526,8 @@ def spec_ccstack2(spec_mat, lon, lat, gcarc, epdd,
     azimuth, daz_min, daz_max,
     pt_lon, pt_lat, gcd_min, gcd_max,
     rect_clo1, rect_clo2, rect_cla1, rect_cla2,
-    circle_center_clo, circle_center_cla, circle_center_radius):
+    circle_center_clo, circle_center_cla, circle_center_radius,
+    gc_area_switch, gc_area_selection, gc_area_lo, gc_area_la, gc_area_radius ):
     """
     spec_mat: Input spectra that is a 2D matrix. Each row is for a single time series.
     lon, lat: A list of longitude/latitude. Can be stlo/stla for rcv-to-rcv correlations, 
@@ -535,6 +543,7 @@ def spec_ccstack2(spec_mat, lon, lat, gcarc, epdd,
     gcd_min, gcd_max: Great-circle distance range for selecting correlation pairs.
     rect_clo1, rect_clo2, rect_cla1, rect_cla2: Rectangels/boxes area that contain the spherical center of correlation pairs for selecting correlation pairs.
     circle_center_clo, circle_center_cla, circle_center_radius: Circle area that contain the spherical center of correlation pairs for selecting correlation pairs.
+    gc_area_switch, gc_area_selection, gc_area_lo, gc_area_la, gc_area_radius : areas to select of exclude great-circles.
     Return:
         count: The number of correlation functions that are stacked.
     """
@@ -574,6 +583,21 @@ def spec_ccstack2(spec_mat, lon, lat, gcarc, epdd,
                     break
             if flag == 1:
                 continue
+
+            # gc_area_switch, gc_area_selection, gc_area_lo, gc_area_la, gc_area_radius
+            if gc_area_switch:
+                outside = True # True means the great-circle is outside the areas
+                for area_lo, area_la, area_radius in zip(gc_area_lo, gc_area_la, gc_area_radius):
+                    d = 9999999.0
+                    if abs(lo1-lo2)<0.01 and abs(la1-la2)<0.01: # in case of autocorrelation
+                        d = abs( point_distance_to_great_circle_plane(area_lo, area_la, lo1, la1, pt_lon, pt_lat) )
+                    else:
+                        d = abs( point_distance_to_great_circle_plane(area_lo, area_la, lo1, la1, lo2, la2) )
+                    if d <= area_radius:
+                        outside = False # the great-circle intersect a circle area
+                        break
+                if gc_area_selection == outside:
+                    continue
 
             daz = round_daz(az1-az2)
             if daz < daz_min or daz > daz_max: # daz selection
@@ -702,7 +726,7 @@ def main(mode,
     pre_detrend=True, pre_taper_halfratio= 0.005, pre_filter= None, # pre-proc param
     tnorm = (128.0, 0.02, 0.066666), swht= 0.02,                # whitening param
     stack_dist_range = (0.0, 180.0), stack_dist_step= 1.0,         # stack param
-    daz_range= None, gcd_range= None, gc_center_rect= None, gc_center_circle=None, min_recordings=0, epdd=False, # selection param
+    daz_range= None, gcd_range= None, gc_center_rect= None, gc_center_circle=None, gc_area=(False, False, () ), min_recordings=0, epdd=False, # selection param
     post_fold = False, post_detrend=False, post_taper_halfratio = 0.005, post_filter=None, post_cut= None, post_scale = False,           # post-proc param
     output_fnm_prefix= 'junk', output_format= ['hdf5'],                                                             # output param
     log_prefnm= 'cc_mpi_log', log_mode=None,           # log param
@@ -725,8 +749,13 @@ def main(mode,
 
     dist, spec_stack_mat, stack_count = init_ccstack_spec_buf(stack_dist_range[0], stack_dist_range[1], stack_dist_step, cc_speedup[1], mpi_log_fid ) # init buf
 
-    tmp = update_selection(daz_range, gcd_range, gc_center_rect, gc_center_circle, min_recordings, mpi_log_fid)
-    (daz_range, gcd_range, gc_center_rect, gc_center_circle), (rect_clo1, rect_clo2, rect_cla1, rect_cla2), (circle_center_clo, circle_center_cla, circle_center_radius), flag_selection  = tmp
+    tmp = update_selection(daz_range, gcd_range, gc_center_rect, gc_center_circle, gc_area, min_recordings, mpi_log_fid)
+
+    daz_range, gcd_range, gc_center_rect, gc_center_circle                      = tmp[0]
+    rect_clo1, rect_clo2, rect_cla1, rect_cla2                                  = tmp[1]
+    circle_center_clo, circle_center_cla, circle_center_radius                  = tmp[2]
+    gc_area_switch, gc_area_selection, gc_area_lo, gc_area_la, gc_area_radius   = tmp[3]
+    flag_selection                                                              = tmp[4]
 
     local_jobs = distribute_jobs(mpi_rank, mpi_ncpu, fnm_wildcard, input_format, mpi_log_fid)
     func_rd = rd_wh_sac if input_format in ('sac', 'SAC') else rd_wh_h5
@@ -764,7 +793,8 @@ def main(mode,
                                   azimuth, daz_range[0], daz_range[1],
                                   pt_lon, pt_lat, gcd_range[0], gcd_range[1],
                                   rect_clo1, rect_clo2, rect_cla1, rect_cla2,
-                                  circle_center_clo, circle_center_cla, circle_center_radius)
+                                  circle_center_clo, circle_center_cla, circle_center_radius,
+                                  gc_area_switch, gc_area_selection, gc_area_lo, gc_area_la, gc_area_radius )
         else:
             ncc = spec_ccstack(   spec_mat, lon, lat, gcarc, epdd,
                                   spec_stack_mat, stack_count,
@@ -815,7 +845,8 @@ HMSG = """%s --mode r2r -I "in*/*.sac" -T -5/10800/32400 -D 0.1 --input_format s
     [--force_time_window -5/10800/32000] -O cc_stack --out_format hdf5
     [--pre_detrend] [--pre_taper 0.005] [--pre_filter bandpass/0.005/0.1]
     --stack_dist 0/180/1 [--daz -0.1/15] [--gcd -0.1/20] [--gc_center_rect 120/180/0/40,180/190/0/10]
-    [--gc_center_circle 100/-20/10,90/0/15] [--min_recordings 10] [--epdd]
+    [--gc_center_circle 100/-20/10,90/0/15] [--gc_area Y,30/40/5,170/-10/5.5]
+    [--min_recordings 10] [--epdd]
     [--w_temporal 128.0/0.02/0.06667] [--w_spec 0.02]
     [--post_fold] [--post_taper 0.05] [--post_filter bandpass/0.02/0.0666] [--post_norm] [--post_cut]
      --log cc_log  [--log_mode 0] [--acc=0.01] [--random_sample 0.6]
@@ -854,6 +885,9 @@ Args:
                          The receiver pairs with great-circle center outside those area are excluded.
     [--gc_center_circle]:a list of (clo, cla, radius) to excluse some receiver pairs.
                          The receiver pairs with great-circle center outside those area are excluded.
+    [--gc_area]:         select or exclude great-circles passing through some areas.
+                         The areas are a list of (lo, la, radius) separated by comma.
+                         Leading 'Y' means to select, and 'N' means to exclude.
     [--min_recordings]/[--min_ev_per_rcv]/[--min_rcv_per_ev] : minmal number of recordings for a single event or for a single receiver.
     [--epdd] : Use epi-distance difference instead of inter-receiver or inter-source distance.
 
@@ -882,6 +916,7 @@ E.g.,
 --w_temporal 128.0/0.02/0.06667 --w_spec 0.02 \
 --stack_dist 0/180/1 \
 --daz -0.1/20 --gcd -0.1/30 --gc_center_rect 120/180/0/40 --gc_center_circle 100/-20/15,90/0/15 \
+--gc_area N,300/30/10,330/-10/50.0 --min_recordings 100 \
 --post_fold --post_taper 0.005 --post_filter bandpass/0.01/0.06667 --post_norm  --post_cut 0/5000 \
 --log cc_log --log_mode=0 --acc 0.01 --random_sample 0.6
 
@@ -911,6 +946,7 @@ if __name__ == "__main__":
     gcd_range = None
     gc_center_rect = None
     gc_center_circle = None
+    gc_area = [False, False, list() ] # [switch, flag, a list of areas]
     min_recordings = 0
     epdd = False
 
@@ -939,7 +975,10 @@ if __name__ == "__main__":
                              'pre_detrend', 'pre_taper=', 'pre_filter=',
                              'out_format=',
                              'w_temporal=', 'w_spec=',
-                             'stack_dist=', 'daz=', 'dbaz=', 'gcd=', 'gcd_ev=', 'gcd_rcv=', 'gc_center_rect=', 'gc_center_circle=', 'min_recordings=', 'min_ev_per_rcv=', 'min_rcv_per_ev=', 'epdd=',
+                             'stack_dist=', 'daz=', 'dbaz=',
+                             'gcd=', 'gcd_ev=', 'gcd_rcv=',
+                             'gc_center_rect=', 'gc_center_circle=', 'gc_area=',
+                             'min_recordings=', 'min_ev_per_rcv=', 'min_rcv_per_ev=', 'epdd',
                              'post_fold', 'post_taper=', 'post_filter=', 'post_norm', 'post_cut=',
                              'log=', 'log_mode=', 'acc=', 'random_sample='] )
     for opt, arg in options:
@@ -999,6 +1038,15 @@ if __name__ == "__main__":
                 tmp = [float(it) for it in rect.split('/') ]
                 tmp[0] = tmp[0] % 360.0
                 gc_center_circle.append( tmp )
+        elif opt in ('--gc_area'):
+            gc_area[0] = True # gc_area = [switch, flag, a list of areas]
+            tmp = arg.split(',')
+            gc_area[1] = True if tmp[0] == 'Y' else False
+            for it in tmp[1:]:
+                gc_area[2].append( [float(v) for v in it.split('/')] )
+
+            gc_area[2] = tuple(gc_area[2])
+            gc_area = tuple(gc_area)
         elif opt in ('--min_recordings', '--min_ev_per_rcv', '--min_rcv_per_ev'):
             min_recordings = int(arg)
         elif opt in ('--epdd'):
@@ -1035,7 +1083,7 @@ if __name__ == "__main__":
         pre_detrend, pre_taper_ratio, pre_filter,
         tnorm, swht,
         dist_range, dist_step,
-        daz_range, gcd_range, gc_center_rect, gc_center_circle, min_recordings, epdd,
+        daz_range, gcd_range, gc_center_rect, gc_center_circle, gc_area, min_recordings, epdd,
         post_fold, post_detrend, post_taper_ratio, post_filter, post_cut, post_norm,
         output_pre_fnm, output_format,
         log_prefnm, log_mode,
