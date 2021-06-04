@@ -19,6 +19,7 @@ def get_meta_data(info_fnm):
         evlo = float(tmp[58] )
         stdp = float(tmp[79] )
         tmp2 = [line.strip().split() for line in tmp[86:] ]
+        tmp2 = [it for it in tmp2 if len(it) == 2]
         stla = [float(it[0]) for it in tmp2]
         stlo = [float(it[1]) for it in tmp2]
         return delta, evlo, evla, evdp, stdp, stlo, stla

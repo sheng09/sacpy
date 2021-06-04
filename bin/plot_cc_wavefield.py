@@ -39,7 +39,7 @@ def run(h5_filename, figname, dist_range=None, cc_time_range=None,
         i2 = int( np.round((cc_time_range[1]-cc_t0)/delta) )
         mat = mat[:, i1:i2]
         cc_t0, cc_t1 = cc_time_range
-        print(i1, i2)
+        #print(i1, i2)
     if dist_range != None:
         d1, d2 = dist_range
         i1 = np.argmin(abs(dist-d1))
@@ -73,7 +73,7 @@ def run(h5_filename, figname, dist_range=None, cc_time_range=None,
                 mat[irow,:] *= (v1/v2)
     elif norm_settings == 'unit':
         for irow in range(nrow):
-            print( np.argmax(mat[irow,:]) )
+            #print( np.argmax(mat[irow,:]) )
             v = np.max( mat[irow,:] )
             if v > 0.0:
                 mat[irow,:] *= (1.0/v)

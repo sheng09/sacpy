@@ -107,14 +107,14 @@ def update_selection(daz_range, gcd_range, gc_center_rect, gc_center_circle, gc_
         flag_selection = True
 
 
-    center_clo1 = array( [rect[0] for rect in gc_center_rect] )
-    center_clo2 = array( [rect[1] for rect in gc_center_rect] )
-    center_cla1 = array( [rect[2] for rect in gc_center_rect] )
-    center_cla2 = array( [rect[3] for rect in gc_center_rect] )
+    center_clo1 = array( [rect[0] for rect in gc_center_rect] ) if rect != None else array( () )
+    center_clo2 = array( [rect[1] for rect in gc_center_rect] ) if rect != None else array( () )
+    center_cla1 = array( [rect[2] for rect in gc_center_rect] ) if rect != None else array( () )
+    center_cla2 = array( [rect[3] for rect in gc_center_rect] ) if rect != None else array( () )
 
-    circle_center_clo = array( [it[0] for it in gc_center_circle] )
-    circle_center_cla = array( [it[1] for it in gc_center_circle] )
-    circle_center_radius = array( [it[2] for it in gc_center_circle] )
+    circle_center_clo    = array( [it[0] for it in gc_center_circle] ) if gc_center_circle!= None else array( () )
+    circle_center_cla    = array( [it[1] for it in gc_center_circle] ) if gc_center_circle!= None else array( () )
+    circle_center_radius = array( [it[2] for it in gc_center_circle] ) if gc_center_circle!= None else array( () )
 
     gc_area_switch    = gc_area[0] # gc_area: # (switch, flag, (areas) )
     gc_area_selection = gc_area[1]
