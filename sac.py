@@ -111,6 +111,7 @@ from sacpy.processing import iirfilter_f32, taper, detrend, cut, tnorm_f32, fwhi
 from obspy.signal.interpolation import lanczos_interpolation
 #import sacpy.processing as processing
 from os.path import exists as os_path_exists
+from os.path import abspath as os_path_abspath
 from sacpy.c_src._lib_sac import lib as libsac
 from sacpy.c_src._lib_sac import ffi as ffi
 from h5py import File as h5_File
@@ -1794,6 +1795,75 @@ class c_sactrace:
         fwhiten_f32(self.dat, self.hdr.delta, winlen, water_level_ratio, taper_halfsize, speedup_i1, speedup_i2)
 ##################################################################################################################
 
+class scardec_stf:
+    """
+    Search for Source Time Function from SCARDEC Database.
+
+    Please goto http://scardec.projects.sismo.ipgp.fr/ for reference and citations.
+
+    >>> import matplotlib.pyplot as plt
+    >>> from sacpy.sac import scardec_stf
+    >>> app = scardec_stf()
+    >>> as, stf, metadat = app.search_stf('1992-07-13-15-34-04.000', (158.63, 51.17), True)
+    >>> print(metadat)
+    >>> plt.plot(ts, stf)
+    >>> plt.show()
+    >>>
+    """
+    def __init__(self):
+        sacpy_dir = '/'.join(os_path_abspath(__file__).split('/')[:-1] )
+        stfs_fnm = '%s/bin/dataset/STFs_SCARDEC/stfs_scardec.h5' % sacpy_dir
+        self.fid = h5_File(stfs_fnm, 'r')
+
+        otime_str = list(self.fid.keys() ) # 1992-02-13-01-29-13.000
+        otime_int = list()
+        for it in otime_str:
+            year, month, day, hour, minute, sec = [int(v) for v in it.split('.')[0].split('-')]
+            time_stamp = sec + minute*100+ hour*10000+day*1000000 + month*100000000 + year*10000000000
+            otime_int.append(time_stamp)
+
+        self.otime_str = otime_str
+        self.otime_int = np.array(otime_int, dtype=np.int64)
+    def __del__(self):
+        #self.fid.close()
+        pass
+    def search_stf(self, datetime_str, lonlat=None, verbose=True):
+        """
+        Search for STF from SCARDEC Source Time Functions Database
+
+        datetime_str: the string for origin time. the format should be 'YYYY-MM-DD-HH-mm-SS.SSS'.
+        lonlat: optional epicenter coordinate, that is a tuple (longitude, latitude).
+
+        Return (ts, stf, metadata), in which `metadata` is a Python Dictionary object.
+        """
+        idx, flag_exact_time, flag_lonlat = 0, True, True
+        try:
+            idx = self.otime_str.index(datetime_str)
+        except:
+            flag_exact_time = False
+            year, month, day, hour, minute, sec =  [int(v) for v in datetime_str.split('.')[0].split('-')]
+            time_stamp = sec + minute*100+ hour*10000+day*1000000 + month*100000000 + year*10000000000 # int64 suits here for year 2XXX.
+            idx = np.argmin( abs(self.otime_int-time_stamp) )
+
+        key = self.otime_str[idx]
+        grp = self.fid[key]
+        evlo, evla = grp.attrs['lon'], grp.attrs['lat']
+        if lonlat != None:
+            if abs(evlo-lonlat[0]) > 1.0e-2 or abs(evla-lonlat[1]) > 1.0e-2:
+                flag_lonlat = False
+        stf, ts = grp['stf'][:], grp['ts'][:]
+
+        str1 = '==' if flag_exact_time else '!='
+        str2 = '==' if flag_lonlat     else '!='
+        if lonlat:
+            if verbose or (not flag_exact_time) or (not flag_lonlat):
+                print('Find STF for %s%s%s at (%.2f, %.2f)%s(%.2f, %.2f)' % (key, str1, datetime_str, evlo, evla, str2, lonlat[0], lonlat[1]) )
+        else:
+            if verbose or (not flag_exact_time) or (not flag_lonlat):
+                print('Find STF for %s%s%s at (%.2f, %.2f)None' % (key, str1, datetime_str, evlo, evla) )
+
+        return ts, stf, dict(grp.attrs)
+
 if __name__ == "__main__":
     fnm = 'test_tmp/1.sac'
     if False:
@@ -1840,4 +1910,8 @@ if __name__ == "__main__":
     #sac2hdf5('/home/catfly/00-LARGE-IMPORTANT-PERMANENT-DATA/AU_dowload/01_resampled_bhz_to_h5/01_workspace_bhz_sac/2000_008_16_47_20_+0000/*SAC',
     #            'junk.h5')
     #hdf52sac('junk.h5', 'junk/sac_', True)
-    pass
+    app = scardec_stf()
+    ts, stf, metadat = app.search_stf('1992-07-13-15-34-04.000', (158.63, 51.17), False)
+    print(metadat)
+    plt.plot(ts, stf)
+    plt.show()
