@@ -1599,6 +1599,7 @@ class c_sactrace:
         """
         Write to a file in sac formate.
         """
+        hdr = self.hdr
         hdr.npts = self.dat.size
         hdr = self.hdr
         hdr.e = hdr.b + hdr.delta * (hdr.npts - 1)
