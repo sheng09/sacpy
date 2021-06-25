@@ -1133,6 +1133,8 @@ def c_mk_sac(xs, b, delta):
     st.dat = np.array(xs, dtype=np.float32)
     st.hdr.b = b
     st.hdr.delta = delta
+    st.hdr.e = b+delta*(xs.size-1)
+    st.hdr.npts = xs.size
     return st
 def c_truncate_sac(c_sactr, t1, t2):
     """
