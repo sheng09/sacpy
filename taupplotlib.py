@@ -55,13 +55,6 @@ def plotPrettyEarth(ax, model, distlabel=False, mode=None):
     mode: can be: None, 'core', 'vp', 'vs', 'density'.
     """
     ax.set_theta_zero_location('E')
-    ax.set_xticks([])
-    ax.set_yticks([])
-    ax.set_rmax(model.model.radius_of_planet)
-    ax.set_rmin(0.0)
-    if distlabel:
-        ax.set_xticks( np.deg2rad(list( range(0, 360, 30) ) ) )
-    ax.xaxis.grid(False)
     #ax.grid(False)
     radius = model.model.radius_of_planet
     if mode == None:
@@ -81,8 +74,8 @@ def plotPrettyEarth(ax, model, distlabel=False, mode=None):
         ax.add_artist(circle)
     elif mode in ('vp', 'vs', 'density', 'qp', 'qs'):
         layers = model.model.s_mod.v_mod.layers
-        rs = model.model.radius_of_planet - layers['top_depth']
-        tmp = {'vp':'top_p_velocity', 'vs':'top_s_velocity', 'density':'top_density', 'qp':'top_qp', 'qs':'top_qs'}
+        rs = model.model.radius_of_planet - layers['bot_depth']
+        tmp = {'vp':'bot_p_velocity', 'vs':'bot_s_velocity', 'density':'bot_density', 'qp':'bot_qp', 'qs':'bot_qs'}
         vel = layers[tmp[mode]]
         thetas =  np.radians(np.linspace(0, 360,1440) )
 
@@ -97,6 +90,14 @@ def plotPrettyEarth(ax, model, distlabel=False, mode=None):
         clev = np.arange(vmin, vmax, dv)
 
         ax.contourf(xs, ys, values, clev, cmap='gray', zorder=0)
+
+    ax.set_xticks([])
+    ax.set_yticks([])
+    ax.set_rmax(radius)
+    ax.set_rmin(0.0)
+    if distlabel:
+        ax.set_xticks( np.deg2rad(list( range(0, 360, 30) ) ) )
+    ax.xaxis.grid(False)
 def plotStation(ax, model, stdp_list, stlo_list, color = '#E5E5E5', markersize=12, alpha= 0.8, zorder=200):
     """
     Plot stations.
