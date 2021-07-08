@@ -70,6 +70,21 @@ Sac header update and revision
 >>> empty_hdr = c_mk_empty_sachdr()
 >>>
 
+Access and update time information
+------------------------------
+>>> s = c_rd_sac('1.sac')
+>>> # Access reference time, start time, and end time. The return an object of `datetime`.
+>>> tref = s.reference_time()
+>>> tref = s.start_time()
+>>> tref = s.end_time()
+>>>
+>>> # Update sac header by changing reference time and set it to the origin time.
+>>> s.set_reference_time((2010, 01, 03, 14, 59, 30, 300), is_origin=True)
+>>>
+>>> # Shift the time by change 'b, e, o, a, f, t0, t1,...,t9' in the sac header.
+>>> # This won't change reference time.
+>>> s.shift_time(10.32) # delay time series for 10.32 sec
+>>>
 
 Operate massive sac files
 ------------------------------
@@ -116,6 +131,7 @@ from sacpy.c_src._lib_sac import lib as libsac
 from sacpy.c_src._lib_sac import ffi as ffi
 from h5py import File as h5_File
 import ctypes
+from datetime import datetime, timedelta
 ###
 #  dependend methods
 ###
@@ -1690,11 +1706,13 @@ class c_sactrace:
         Shift the time axis of the whole time-series.
         This function changes all time related sachdr elements, that includes 'b, e, o, a, f, t0, t1,...,t9'
 
-        shift_sec: t_shift in seconds.
+        shift_sec: t_shift in seconds. Positive value to delay the time series.
         """
         hdr = self.hdr
         hdr.b += tshift_sec
         hdr.e += tshift_sec
+        hdr.o += tshift_sec
+        hdr.a += tshift_sec
         hdr.t0 += tshift_sec if hdr.t0 != -12345.0 else -12345.0
         hdr.t1 += tshift_sec if hdr.t1 != -12345.0 else -12345.0
         hdr.t2 += tshift_sec if hdr.t2 != -12345.0 else -12345.0
@@ -1705,6 +1723,58 @@ class c_sactrace:
         hdr.t7 += tshift_sec if hdr.t7 != -12345.0 else -12345.0
         hdr.t8 += tshift_sec if hdr.t8 != -12345.0 else -12345.0
         hdr.t9 += tshift_sec if hdr.t9 != -12345.0 else -12345.0
+    def set_reference_time(self, reference_time, is_origin=False):
+        """
+        Change the reference time by providing a `reference_time`.
+        This will change the values of `b`, `e`, `a`, `o`, `t?`
+        and the absolute time in fact won't change.
+
+        The `reference_time` can be 1) a tuple of int (year, month, day, hour, minute, second, millisec),
+        2) a tuple of int (year, jday, hour, minute, second, millisec), or 3) an object of datetime.
+
+        is_origin: True if the `reference_time` is the origin time. Default is False.
+        """
+        new_ref = None
+        if type(reference_time) == tuple:
+            if len(reference_time) == 7:
+                yyyy, mon, dd, hh, mm, ss, msec = reference_time
+                new_ref = datetime(yyyy, mon, dd, hh, mm, ss, msec*1000)
+            elif len(reference_time) == 6:
+                yyyy, jjj, hh, mm, ss, msec = reference_time
+                new_ref = datetime(yyyy, 1, 1, hh, mm, ss, msec*1000) + timedelta(days=jjj-1)
+            else:
+                print('Err: wrong reference time arg', reference_time)
+                sys.exit(0)
+        else:
+            new_ref = reference_time
+        old_ref = self.reference_time()
+        self.shift_time((old_ref - new_ref).total_seconds() )
+
+        hdr = self.hdr
+        hdr.nzjday = new_ref.year
+        hdr.nzjday = new_ref.timetuple().tm_yday
+        hdr.nzhour = new_ref.hour
+        hdr.nzmin  = new_ref.minute
+        hdr.nzsec  = new_ref.second
+        hdr.nzmsec = new_ref.microsecond//1000
+        if is_origin:
+            hdr.o = 0.0
+    def reference_time(self):
+        """
+        Return the an object of `datetime` for the reference time.
+        """
+        hdr = self.hdr
+        return datetime(hdr.nzyear, 1, 1, hdr.nzhour, hdr.nzmin, hdr.nzsec, hdr.nzmsec*1000) + timedelta(days=hdr.nzjday-1)
+    def start_time(self):
+        """
+        Return the an object of `datetime` for the start time, that correspond to the B in the sac header.
+        """
+        return self.reference_time() + timedelta(seconds=self.hdr.b)
+    def end_time(self):
+        """
+        Return the an object of `datetime` for the end time, that correspond to the E in the sac header.
+        """
+        return self.reference_time() + timedelta(seconds=self.hdr.e)
     def downsample(self, n):
         """
         Downsample given a factor `n` (an integer).
@@ -1909,7 +1979,22 @@ if __name__ == "__main__":
         plt.plot((time,), (amplitude,), 'r+')
         plt.show()
 
+    if True:
+        st = c_rd_sac('test_tmp/1.sac')
+        st.set_reference_time((1999, 11, 16, 1, 23, 20, 200))
+        st.write('junk1.sac')
+        print(st.start_time())
 
+        st = c_rd_sac('test_tmp/1.sac')
+        st.set_reference_time((1999, 320, 1, 23, 20, 200))
+        st.write('junk2.sac')
+        print(st.start_time())
+
+        st = c_rd_sac('test_tmp/1.sac')
+        st.set_reference_time(datetime(1999, 11, 16, 1, 23, 20, 200000) )
+        st.write('junk3.sac')
+        print(st.start_time())
+        sys.exit(0)
     #sac2hdf5('/home/catfly/00-LARGE-IMPORTANT-PERMANENT-DATA/AU_dowload/01_resampled_bhz_to_h5/01_workspace_bhz_sac/2000_008_16_47_20_+0000/*SAC',
     #            'junk.h5')
     #hdf52sac('junk.h5', 'junk/sac_', True)
