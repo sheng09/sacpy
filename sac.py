@@ -1067,7 +1067,7 @@ def c_mk_sachdr_time(b, delta, npts):
     hdr.npts = npts
     ###
     hdr.e = b+(npts-1)*hdr.delta
-    hdr.iztype = libsac.IO
+    hdr.iztype = libsac.IUNKN
     hdr.iftype = libsac.ITIME
     hdr.leven  = 1
     return hdr
@@ -1147,10 +1147,15 @@ def c_mk_sac(xs, b, delta):
     """
     st = c_sactrace()
     st.dat = np.array(xs, dtype=np.float32)
-    st.hdr.b = b
-    st.hdr.delta = delta
-    st.hdr.e = b+delta*(xs.size-1)
-    st.hdr.npts = xs.size
+
+    hdr = st.hdr
+    hdr.b = b
+    hdr.delta = delta
+    hdr.npts = st.dat.size
+    hdr.e = b+delta*(hdr.npts-1)
+    hdr.iztype = libsac.IUNKN
+    hdr.iftype = libsac.ITIME
+    hdr.leven  = 1
     return st
 def c_truncate_sac(c_sactr, t1, t2):
     """
