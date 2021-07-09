@@ -43,8 +43,8 @@ Searching given time series
 >>> t0, delta = 0.0, 0.1
 >>> xs = np.random.rand(3000) - 0.5
 >>> # manual cutting
->>> i1 = ceil_index(10.0, t0, delta)
->>> i2 = floor_index(300.0, t0, delta) + 1
+>>> i1 = round_index(10.0, t0, delta)
+>>> i2 = round_index(300.0, t0, delta) + 1
 >>> new_xs = xs[i1:i2]
 >>> # obtain max amplitude point
 >>> tref, wnd = 50.0, -5.02, 300.0
@@ -230,6 +230,15 @@ def ceil_index(t, t0, delta):
     """
     return int( np.ceil((t-t0)/delta) )
 @jit(nopython=True, nogil=True)
+def round_index(t, t0, delta):
+    """
+    Return the round index for time `t` given
+    the start time `t0` and sampling time
+    interval `delta`.
+    """
+    return int( round((t-t0)/delta) )
+
+@jit(nopython=True, nogil=True)
 def max_amp_index(xs, t0, delta, tref, tmin, tmax, polarity=1):
     """
     Search for max amplitude, positive or negtive or absolute, for a time series.
@@ -242,8 +251,8 @@ def max_amp_index(xs, t0, delta, tref, tmin, tmax, polarity=1):
 
     Return: index, time, amplitude
     """
-    i1 = ceil_index(tref+tmin, t0, delta)
-    i2 = floor_index(tref+tmax, t0, delta)+1
+    i1 = round_index(tref+tmin, t0, delta)
+    i2 = round_index(tref+tmax, t0, delta)+1
 
     i1 = i1 if i1>=0 else 0
     i2 = i2 if i2<=xs.size else xs.size
@@ -273,8 +282,8 @@ def cut(xs, delta, t0, new_t0, new_t1):
     Cut a time series `xs` with the time window `new_t0`, `new_t1`.
     `delta` and `t0` are for the input `xs`.
     """
-    i0 = ceil_index(new_t0, t0, delta)
-    i1 = floor_index(new_t1, t0, delta) + 1
+    i0 = round_index(new_t0, t0, delta)
+    i1 = round_index(new_t1, t0, delta) + 1
     new_size = i1-i0
     new_xs = np.zeros(new_size, dtype=xs.dtype)
     new_t0 = i0*delta + t0
@@ -320,7 +329,7 @@ def tnorm_f32(xs, delta, winlen, f1, f2, water_level_ratio= 1.0e-5, taper_halfsi
     water_level_ratio: default is 1.0e-5.
     taper length:      taper size (an int) in each end after the division.
     """
-    wndsize = int(np.ceil(winlen/delta) )
+    wndsize = int(round(winlen/delta) )
     wndsize = (wndsize // 2)*2 +1
 
     weight = np.copy(xs) # obvious it is deep copy here as xs is a 1D array. weight will have same dtype as xs.

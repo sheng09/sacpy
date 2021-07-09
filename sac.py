@@ -1151,8 +1151,7 @@ def c_mk_sac(xs, b, delta):
     hdr = st.hdr
     hdr.b = b
     hdr.delta = delta
-    hdr.npts = st.dat.size
-    hdr.e = b+delta*(hdr.npts-1)
+    st.update_npts_e()
     hdr.iztype = libsac.IUNKN
     hdr.iftype = libsac.ITIME
     hdr.leven  = 1
@@ -1623,9 +1622,7 @@ class c_sactrace:
         Write to a file in sac formate.
         """
         hdr = self.hdr
-        hdr.npts = self.dat.size
-        hdr = self.hdr
-        hdr.e = hdr.b + hdr.delta * (hdr.npts - 1)
+        self.update_npts_e()
         xs = self.dat
         if xs.dtype != np.float32:
             xs = xs.astype(np.float32)
@@ -1703,9 +1700,8 @@ class c_sactrace:
         """
         self.dat, nb = cut(self.dat, self.hdr.delta, self.hdr.b, t1, t2)
         hdr = self.hdr
-        hdr.npts = self.dat.size
         hdr.b = nb
-        hdr.e = nb + hdr.delta*(hdr.npts-1)
+        self.update_npts_e()
     def shift_time(self, tshift_sec):
         """
         Shift the time axis of the whole time-series.
@@ -1789,8 +1785,7 @@ class c_sactrace:
         self.dat = self.dat[::n]
         hdr = self.hdr
         hdr.delta *= n
-        hdr.npts = self.dat.size
-        hdr.e = hdr.b + hdr.delta*(hdr.npts-1)
+        self.update_npts_e()
     def upsample(self, n):
         """
         Upsample given a factor `n` (an integer) with fft method.
@@ -1810,8 +1805,7 @@ class c_sactrace:
         T = old_npts*old_delta
         new_delta = T/new_npts
         hdr.delta = new_delta
-        hdr.npts = new_npts
-        hdr.e = hdr.b + new_delta*(new_npts-1)
+        self.update_npts_e()
     def interpolate_delta(self, new_delta, force_lanczos=False):
         """
         Interpolate with a new delta.
@@ -1837,8 +1831,7 @@ class c_sactrace:
             xs = lanczos_interpolation(self.dat, hdr.b, old_delta, hdr.b, new_delta, new_npts, 20)
             self.dat = xs.astype(np.float32)
         hdr.delta = new_delta
-        hdr.npts = new_npts
-        hdr.e = hdr.b + new_delta*(new_npts-1)
+        self.update_npts_e()
     def max_amplitude_time(self, amp, t_range=None):
         """
         Get the (idx, time, amplitude) for the max amplitude point.
@@ -1866,6 +1859,13 @@ class c_sactrace:
             imin = np.argmin(x)
             iabs = imax if x[imax]>-x[imin] else imin
             return iabs+i1, (iabs+i1)*self.hdr.delta+self.hdr.b, x[iabs]
+    def update_npts_e(self):
+        """
+        Update independent parameters hdr.npts and hdr.e
+        """
+        hdr = self.hdr
+        hdr.npts = self.dat.size
+        hdr.e = hdr.delta*(hdr.npts-1) + hdr.b
 
     def tnorm(self, winlen, f1, f2, water_level_ratio= 1.0e-5, taper_halfsize=0):
         tnorm_f32(self.dat, self.hdr.delta, winlen, f1, f2, water_level_ratio, taper_halfsize)
