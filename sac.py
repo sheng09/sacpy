@@ -1164,6 +1164,53 @@ def c_truncate_sac(c_sactr, t1, t2):
     obj = c_sactr.duplicate()
     obj.truncate(t1, t2)
     return obj
+
+def c_synchronize_reference_time(tr_lst, reference_time=None):
+    """
+    Synchronize the reference time for a list of `c_sactrace` objects.
+    After calling this function, all the `c_sactrace` objects have the same reference time
+
+    tr_lst: a list of `c_sactrace` objects.
+    reference_time: `None` to use the reference time of the first `c_sactrace` object.
+                    Or it can be 1) a tuple of int (year, month, day, hour, minute, second, millisec),
+                    2) a tuple of int (year, jday, hour, minute, second, millisec), or 3) an object of `datetime`.
+    """
+    if reference_time == None:
+        reference_time = tr_lst[0].reference_time()
+    for it in tr_lst:
+        it.set_reference_time(reference_time)
+def c_stack_sac(tr_lst, mode='valid'):
+    """
+    Stack the time series for a list of `c_sactrace` objects. Return a new `c_sactrace` object.
+    The stacking will not take any averaging operations.
+    Calling this function would change anything of the input `tr_lst`.
+
+    tr_lst: a list of `c_sactrace` objects.
+    mode: The time series may have different time ranges. For that, there are two stacking modes.
+            'full':  When stacking, pad zeros for each time series to make them have same length.
+            'valid' (default): When stacking, cut each time series to make them have same length.
+    """
+    st = deepcopy(tr_lst) # as this function need to revise each `c_sactrace` object.
+    c_synchronize_reference_time(st)
+
+    bs = [it.hdr.b for it in st]
+    es = [it.hdr.e for it in st]
+    b = np.min(bs) if mode == 'full' else np.max(b)
+    e = np.max(bs) if mode == 'full' else np.min(e)
+
+    for it in st:
+        st.truncate(b, e)
+    npts = np.min([it.dat.size for it in st])
+
+    stack = deepcopy(st[0])
+    stack.dat = stack.dat[:npts]
+    stack.update_npts_e()
+
+    xs = stack.dat
+    for it in st[1:]:
+        xs += it[:npts]
+    del st
+    return stack
 ###
 #  functions to convert many sacs into a single hdf5 file
 ###
