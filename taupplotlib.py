@@ -146,8 +146,13 @@ def plotEq(ax, model, eqdp_list, eqlo_list, marker='*', color ='#FEF200', marker
             clip_on=False)
 def add_arrow(ax, xs, ys, loc_xs=None, loc_ys=None, loc_ratio=None,
                 color='C0', headlength=5, headwidth=4, alpha=1.0,
-                reverse_arrow=False, zorder=10):
+                reverse_arrow=False, zorder=None):
     """
+    Add arrows to a line indicated by `xs` and `ys` given the arrow locations
+    indicated by either `loc_xs`, or `loc_ys`, or `loc_ratio`.
+
+    The arrows can be adjusted by setting values for `color`, `headlength`,
+    `headwidth`, `alpha`, `reverse_arrow`, `zorder`.
     """
     if loc_xs==None and loc_ys==None and loc_ratio==None:
         return
@@ -269,6 +274,8 @@ class geo_arrival:
         return lons, rs
     def get_split_raypath(self):
         """
+        Return a list of (ray_leg_name, lons, rs) from earthquake to station for the seismic wave.
+        `lons` is in rad, and `rs` in km.
         """
         lons, rs = self.get_raypath()
         radius = self.model.model.radius_of_planet
