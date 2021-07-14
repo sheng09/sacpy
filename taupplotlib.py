@@ -7,12 +7,12 @@ This provides several auxiliary functions/classed for obspy.taup plot
 Plot seismic arrivals for arbitrary geometry
 
 --------------------------------
->>> #obtain arrivals with obspy.taup
+# obtain arrivals with obspy.taup
 >>> import obspy.taup as taup
 >>> mod = taup.TauPyModel('ak135')
 >>> evlo, evdp = 100.0, 50.0
 >>> stlo, stdp = 160.0, 0.0
->>> arr, arr_PcP, arr_ScP = mod.get_ray_paths(evdp, stlo-evlo, ['P', 'PcP', 'ScSSKiKP'] )
+>>> arr, arr_PcP, arr_ScP = mod.get_ray_paths(evdp, stlo-evlo, ['P', 'PcP', 'ScP'] )
 >>> #
 >>> # form `geo_arrival` object, and access information
 >>> import sacpy.taupplotlib as taupplotlib
@@ -38,7 +38,7 @@ Plot seismic arrivals for arbitrary geometry
 >>> #
 >>> # plot raypath segments for ScP
 >>> geo_arr_ScP = geo_arrival(evdp, evlo, stdp, stlo, arr_ScP, mod)
->>> for (leg, lons, rs) in geo_arr_ScP.get_split_raypath():
+>>> for leg, (lons, rs) in geo_arr_ScP.get_split_raypath():
 >>>     print(leg)
 >>>     ax.plot(lons, rs, label=leg)
 >>> #
@@ -180,7 +180,39 @@ def add_arrow(ax, xs, ys, loc_xs=None, loc_ys=None, loc_ratio=None,
         ax.annotate('', xy=(xs[idx+incre1], ys[idx+incre1]), xytext=(xs[idx+incre2], ys[idx+incre2]),
                         arrowprops=dict( headlength=headlength, headwidth=headwidth, color = color, alpha=alpha),
                         zorder=zorder )
+def split_raypath(model, phase_name, depths, path):
+    """
+    Split `path` into segments, each of which correspond to 'P', 'S', 'K', 'I', 'J'.
+    =======
+    model:      The `TauPyModel` object for getting the raypath.
+    phase_name: phase name.
+    depths:     An array for depths of the ray path points.
+    path:       The path. Can be a tuple of arrays.
 
+    Return:     a list [(legname1, path1), (legname2, path2), ... ]
+                Each `pathi` have the same form of the input `path`.
+    Example:
+        split_raypath(mod, 'PKIKP', deps, (time, distance, p, depth) )
+        or,
+        split_raypath(mod, 'PKIKP', deps, (lons, lats, deps) )
+    """
+    depth_cmb = model.model.cmb_depth
+    depth_icb = model.model.iocb_depth
+
+    deps = np.array(depths)
+    idxs = [0, deps.size]
+    idxs.extend(np.where(deps==depth_cmb)[0])
+    idxs.extend(np.where(deps==depth_icb)[0])
+    idxs.extend(np.where(deps==0.0      )[0])
+    idxs = set(idxs)
+    idxs = sorted(idxs)
+
+    tmp = phase_name.replace('c', '').replace('i', '')
+    segs = list()
+    for i1, i2, ray_leg in zip(idxs[:-1], idxs[1:], tmp):
+        segment = ray_leg, [dimen[i1:i2+1] for dimen in path]
+        segs.append( segment )
+    return segs
 class geo_arrival:
     """
     geo_arrival
@@ -189,47 +221,6 @@ class geo_arrival:
     This is for processing `taup.tau.Arrival` for specific geometry and specific phase.
 
     Event-station geometry (via longitude) is considered, while just in 2D.
-
-    Example:
-
-
-    >>> # obtain arrivals with obspy.taup
-    >>> import obspy.taup as taup
-    >>> mod = taup.TauPyModel('ak135')
-    >>> evlo, evdp = 100.0, 50.0
-    >>> stlo, stdp = 160.0, 0.0
-    >>> arr, arr_PcP = mod.get_ray_paths(evdp, stlo-evlo, ['P', 'PcP'] )[:2]
-    >>> #
-    >>> # form `geo_arrival` object, and access information
-    >>> import sacpy.taupplotlib as taupplotlib
-    >>> geo_arr = taupplotlib.geo_arrival(evdp, evlo, stdp, stlo, arr, mod)
-    >>> print( geo_arr.ray_param_sec_km )
-    >>> print( geo_arr.ray_param_sec_degree )
-    >>> print(arr.ray_param)
-    >>> print(arr.ray_param_sec_degree)
-    >>> #
-    >>> # plot raypaths for P
-    >>> fig, ax = plt.subplots(subplot_kw=dict(projection='polar'), figsize=(10, 10) )
-    >>> lons, rs = geo_arr.get_raypath()
-    >>> ax.plot(lons, rs, 'k-', alpha=0.8, label='P')
-    >>> #
-    >>> # add arrows to P path
-    >>> taupplotlib.add_arrow(ax, lons, rs, loc_ys=[5500], color='C0' ) # for radius=5500km
-    >>> #
-    >>> # plot raypaths for PcP
-    >>> geo_arr_PcP = geo_arrival(evdp, evlo, stdp, stlo, arr_PcP, mod)
-    >>> lons, rs = geo_arr_PcP.get_raypath()
-    >>> ax.plot(lons, rs, 'r--', label='PcP')
-    >>> #
-    >>> # add arrows to PcP path
-    >>> taupplotlib.add_arrow(ax, lons, rs, loc_ratio=(0.3, 0.7), color='r' )
-    >>> #
-    >>> # plot events, receivers and pretty earth
-    >>> plotEq(ax, mod, [evdp], [evlo], marker='*', markersize=30)
-    >>> plotStation(ax, mod, [stdp], [stlo], color='C4', markersize=30)
-    >>> plotPrettyEarth(ax, mod, distlabel=False, mode='vp') # can try 'vp', 'vs', 'density', 'qp', 'qs' 'core'
-    >>> plt.show()
-    >>> #
     """
     def __init__(self, eqdp, eqlo, stdp, stlo, arrival, model):
         """
@@ -279,18 +270,8 @@ class geo_arrival:
         """
         lons, rs = self.get_raypath()
         radius = self.model.model.radius_of_planet
-        r_cmb = radius - self.model.model.cmb_depth
-        r_icb = radius - self.model.model.iocb_depth
-
-        idxs = [0, len(rs)]
-        idxs.extend(np.where(rs==r_cmb)[0])
-        idxs.extend(np.where(rs==r_icb)[0])
-        idxs.extend(np.where(rs==radius)[0])
-        idxs = set(idxs)
-        idxs = sorted(idxs)
-
-        tmp = self.name.replace('c', '').replace('i', '')
-        return [(ray_leg, lons[i1:i2+1], rs[i1:i2+1]) for i1, i2, ray_leg in zip(idxs[:-1], idxs[1:], tmp) ]
+        depths = radius-rs
+        return split_raypath(self.model, self.name, depths, (lons, rs) )
     def __get_rayp(self, sec_km=False):
         """
         Return ray parameter/slowness, in Sec/Deg.
@@ -374,7 +355,7 @@ if __name__ == '__main__':
     #
     # plot raypath segments for ScP
     geo_arr_ScP = geo_arrival(evdp, evlo, stdp, stlo, arr_ScP, mod)
-    for (leg, lons, rs) in geo_arr_ScP.get_split_raypath():
+    for leg, (lons, rs) in geo_arr_ScP.get_split_raypath():
         print(leg)
         ax.plot(lons, rs, label=leg)
     #
