@@ -35,6 +35,9 @@ File IO dependent methods
 >>> # obtain index for maximum
 >>> idx, time, amplitude = s.max_amplitude_time('neg', (100.3, 111.5) )
 >>>
+>>> # duplicate/deepcopy an `c_sactrace` object.
+>>> # copy.deepcopy(...) does not work here.
+>>> s2 = s.duplicate()
 
 Arbitrary data writing, and processing methods
 ----------------------------------------------
@@ -122,7 +125,7 @@ import pickle
 
 from pyfftw.interfaces.numpy_fft import irfft, rfft
 from sacpy.geomath import haversine, azimuth
-from sacpy.processing import iirfilter_f32, taper, detrend, cut, tnorm_f32, fwhiten_f32
+from sacpy.processing import iirfilter_f32, taper, detrend, cut, tnorm_f32, fwhiten_f32, cc_delay
 from obspy.signal.interpolation import lanczos_interpolation
 #import sacpy.processing as processing
 from os.path import exists as os_path_exists
@@ -1010,8 +1013,8 @@ def c_rd_sachdr(filename, lcalda=False, verbose=False):
     """
     Read and return a sac header struct given the filename.
 
-    The returned object is stored as a C Struct in the memory, and hence it doesn't support `deepcopy(...)`.
-    You can use the methods `new_hdr = c_dup_sachdr(old_hdr)` to copy/duplicate and generate a new object.
+    The returned object is stored as a C Struct in the memory, and hence it doesn't support `copy.deepcopy(...)`.
+    You can use the methods `new_hdr = c_dup_sachdr(old_hdr)` to deepcopy/duplicate and generate a new object.
     """
     hdr = ffi.new('SACHDR *')
     libsac.read_sachead(filename.encode('utf8'), hdr, verbose)
@@ -1084,6 +1087,8 @@ def c_dup_sachdr(hdr):
 def c_rd_sac(filename, tmark=None, t1=None, t2=None, lcalda=False, scale=False, verbose=False):
     """
     Read sac given `filename`, and return an object ot sactrace.
+    The returned object is stored as a C Struct in the memory, and hence it doesn't support `copy.deepcopy(...)`.
+    Please use the method `duplicate(...)` of `c_sactrace` to deepcopy.
     """
     tmp = c_sactrace(filename, tmark, t1, t2, lcalda, scale, verbose)
     if tmp.dat is None:
@@ -1165,52 +1170,96 @@ def c_truncate_sac(c_sactr, t1, t2):
     obj.truncate(t1, t2)
     return obj
 
-def c_synchronize_reference_time(tr_lst, reference_time=None):
+def c_synchronize_sac_reference_time(tr_lst, reference_time=None):
     """
     Synchronize the reference time for a list of `c_sactrace` objects.
     After calling this function, all the `c_sactrace` objects have the same reference time
 
     tr_lst: a list of `c_sactrace` objects.
-    reference_time: `None` to use the reference time of the first `c_sactrace` object.
-                    Or it can be 1) a tuple of int (year, month, day, hour, minute, second, millisec),
-                    2) a tuple of int (year, jday, hour, minute, second, millisec), or 3) an object of `datetime`.
+    reference_time: `None` to use the reference time of the first `c_sactrace` object in `tr_lst`.
+                    Or it can be
+                        1) a tuple of int (year, month, day, hour, minute, second, millisec), or
+                        2) a tuple of int (year, jday, hour, minute, second, millisec), or
+                        3) an object of `datetime`.
     """
     if reference_time == None:
         reference_time = tr_lst[0].reference_time()
     for it in tr_lst:
         it.set_reference_time(reference_time)
-def c_stack_sac(tr_lst, mode='valid'):
+def c_stack_sac(tr_lst, mode='full', is_same_reference_time=False):
     """
     Stack the time series for a list of `c_sactrace` objects. Return a new `c_sactrace` object.
     The stacking will not take any averaging operations.
     Calling this function would change anything of the input `tr_lst`.
 
     tr_lst: a list of `c_sactrace` objects.
-    mode: The time series may have different time ranges. For that, there are two stacking modes.
-            'full':  When stacking, pad zeros for each time series to make them have same length.
-            'valid' (default): When stacking, cut each time series to make them have same length.
+    mode:   The time series may have different time ranges. For that, there are two stacking modes:
+            'full' (default):  When stacking, pad zeros for each time series to make them have same length.
+            'valid': When stacking, cut each time series to make them have same length.
+    is_same_reference_time: True or False(Default) to tell the function if the `c_sactrace`
+                            objects in `tr_lst` have same or difference reference time.
     """
-    st = deepcopy(tr_lst) # as this function need to revise each `c_sactrace` object.
-    c_synchronize_reference_time(st)
+    st = [it.duplicate() for it in tr_lst] # as this function need to revise each `c_sactrace` object.
+    if not is_same_reference_time:
+        c_synchronize_sac_reference_time(st)
 
     bs = [it.hdr.b for it in st]
     es = [it.hdr.e for it in st]
-    b = np.min(bs) if mode == 'full' else np.max(b)
-    e = np.max(bs) if mode == 'full' else np.min(e)
+    b = np.min(bs) if mode == 'full' else np.max(bs)
+    e = np.max(es) if mode == 'full' else np.min(es)
 
     for it in st:
-        st.truncate(b, e)
-    npts = np.min([it.dat.size for it in st])
+        if it.hdr.b!= b or it.hdr.e!=e:
+            it.truncate(b, e)
+    npts = np.min([it.dat.size for it in st]) # well, sometimes there is one sample mismatch.
 
-    stack = deepcopy(st[0])
+    stack = st[0].duplicate()
     stack.dat = stack.dat[:npts]
     stack.update_npts_e()
 
     xs = stack.dat
     for it in st[1:]:
-        xs += it[:npts]
+        xs += it.dat[:npts]
     del st
     return stack
+def c_align_cc_sac(tr_lst, iteration=1, reference_sactrace=None, is_same_reference_time=False, __is_first_time=True):
+    """
+    Align time series for a list of `c_sactrace` objects based on their waveforms.
+    Cross-correlation method is used to get the delay time between any two trace.
+
+    tr_lst:                 A list of `c_sactrace` objects.
+    iteration:              Number of iterations. Default is for `1`.
+    reference_sactrace:     A `c_sactrace` object for reference. Default is `None`, then the
+                            first of `tr_lst` will be used as the reference.
+                            The provided reference will only be used in the first iteration.
+                            In next iterations, the reference will be the stack all of all
+                            previously aligned trace.
+    is_same_reference_time: True or False(Default) to tell the function if the `c_sactrace`
+                            objects in `tr_lst` have same or difference reference time.
+    __is_first_time:        A parameter for recurse. Don't touch it.
+
+    Return: A list of aligned `c_sactrace` objects. We pad zeros for shifting time series.
+    """
+    if iteration == 0:
+        return tr_lst
+
+    if __is_first_time: # as this function need to revise each `c_sactrace` object.
+        st = [it.duplicate() for it in tr_lst]
+    if not is_same_reference_time:
+        c_synchronize_sac_reference_time(st)
+
+    if reference_sactrace == None:
+        reference_sactrace = st[0]
+    ref_b = reference_sactrace.hdr.b
+
+    for it in st:
+        b = it.hdr.b
+        dt = (ref_b-b) + cc_delay(it.dat, reference_sactrace.dat)*reference_sactrace.hdr.delta
+        it.shift_time(dt)
+
+    reference_sactrace = c_stack_sac(st, 'full')
+    return c_align_cc_sac(st, iteration-1, reference_sactrace, True, False)
+
 ###
 #  functions to convert many sacs into a single hdf5 file
 ###
@@ -1621,11 +1670,11 @@ class c_sactrace:
                 self.__read2(fnm, tmark, t1, t2, lcalda, scale, verbose)
     def duplicate(self):
         """
-        Return a new object that is the duplication of this object.
+        Return a new object that is the duplication/deepcopy of this object.
         """
         obj = c_sactrace()
         obj.hdr = c_dup_sachdr(self.hdr)
-        obj.dat = deepcopy(self.dat)
+        obj.dat = np.copy(self.dat)
         return obj
     def __read(self, fnm, lcalda=False, scale=False, verbose=False ):
         """
@@ -1799,7 +1848,7 @@ class c_sactrace:
         self.shift_time((old_ref - new_ref).total_seconds() )
 
         hdr = self.hdr
-        hdr.nzjday = new_ref.year
+        hdr.nzyear = new_ref.year
         hdr.nzjday = new_ref.timetuple().tm_yday
         hdr.nzhour = new_ref.hour
         hdr.nzmin  = new_ref.minute
@@ -2031,7 +2080,7 @@ if __name__ == "__main__":
         plt.plot((time,), (amplitude,), 'r+')
         plt.show()
 
-    if True:
+    if False:
         st = c_rd_sac('test_tmp/1.sac')
         st.set_reference_time((1999, 11, 16, 1, 23, 20, 200))
         st.write('junk1.sac')
@@ -2046,6 +2095,22 @@ if __name__ == "__main__":
         st.set_reference_time(datetime(1999, 11, 16, 1, 23, 20, 200000) )
         st.write('junk3.sac')
         print(st.start_time())
+        sys.exit(0)
+    if True:
+        st1 = c_rd_sac('test_tmp/1.sac')
+        st2 = c_rd_sac('test_tmp/3.sac')
+        a1, a2 = c_align_cc_sac((st2, st1), 2, None, False)
+        #c_synchronize_sac_reference_time((st2, st1))
+        #for it in (st1, st2):
+        #    print(it.reference_time(), it.hdr.b, it.hdr.e )
+        a1.write('junk1.sac')
+        a2.write('junk3.sac')
+        #
+        #stack = c_stack_sac((st2, st1), 'full' )
+        #stack.write('junk.sac')
+        #for it in (st1, st2):
+        #    print(it.reference_time(), it.hdr.b, it.hdr.e )
+
         sys.exit(0)
     #sac2hdf5('/home/catfly/00-LARGE-IMPORTANT-PERMANENT-DATA/AU_dowload/01_resampled_bhz_to_h5/01_workspace_bhz_sac/2000_008_16_47_20_+0000/*SAC',
     #            'junk.h5')
