@@ -83,6 +83,8 @@ from pyfftw.interfaces.numpy_fft import rfft, irfft
 from numba import jit
 from numba.core.typing import cffi_utils as cffi_support
 
+from scipy.signal import correlate as scipy_correlate
+
 import sacpy.c_src._lib_sac as module_lib_sac
 cffi_support.register_module(module_lib_sac)
 libsac_xapiir   = module_lib_sac.lib.xapiir
@@ -274,7 +276,7 @@ def max_amp_index(xs, t0, delta, tref, tmin, tmax, polarity=1):
 #############################################################################################################################
 # JIT cut
 #############################################################################################################################
-#@jit(nopython=True, nogil=True)
+@jit(nopython=True, nogil=True)
 def cut(xs, delta, t0, new_t0, new_t1):
     """
     Return cutted time series.
@@ -296,6 +298,25 @@ def cut(xs, delta, t0, new_t0, new_t1):
     else:
         new_xs[0:i1-i0] = xs[i0:i1]
     return new_xs, new_t0
+
+#############################################################################################################################
+#
+#############################################################################################################################
+def cc_delay(x1, x2, sign='pos'):
+    """
+    Use cross-correlation method to find the waveform delay between two arrays.
+
+    Return an int `n`. That means the `x1` and `x2` will have the maximum
+    cross-correlation coefficient by shift the `x2` leftwards for `n` counts.
+
+    For positive `n` that is `x1` and `x2[n:]`, or `np.concatenate((np.zeros(n), x1))`
+    and `x2`. For negative `n` that is `x1` and `np.concatenate((np.zeros(-n), x2))`
+    or `x1[-n:]` and `x2`.
+    """
+    cc = scipy_correlate(x2, x1, 'full')
+    idx = np.argmax(cc) if sign =='pos' else np.argmin(cc)
+    n = idx+(1-len(x1))
+    return n
 
 #############################################################################################################################
 #  whitening related
@@ -380,6 +401,11 @@ def fwhiten_f32(xs, delta, winlen, water_level_ratio= 1.0e-5, taper_halfsize=0, 
 
 
 if __name__ == "__main__":
+    import sys
+    x1 = [0, 1, 2, 1]
+    x2 = [0, 0, 0, 0, 0, 0, 0, 1, 2, 2, 0, 0, 0]
+    n = cc_delay(x1, x2, 'pos')
+    sys.exit(0)
     import matplotlib.pyplot as plt
     from copy import deepcopy
     from sacpy.sac import c_rd_sac
