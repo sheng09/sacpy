@@ -7,34 +7,47 @@ This provides several auxiliary functions/classed for obspy.taup plot
 Plot seismic arrivals for arbitrary geometry
 
 --------------------------------
-
->>> # obtain arrivals with obspy.taup
+>>> #obtain arrivals with obspy.taup
 >>> import obspy.taup as taup
 >>> mod = taup.TauPyModel('ak135')
 >>> evlo, evdp = 100.0, 50.0
 >>> stlo, stdp = 160.0, 0.0
->>> arr, arr_PcP = mod.get_ray_paths(evdp, stlo-evlo, ['P', 'PcP'] )[:2]
+>>> arr, arr_PcP, arr_ScP = mod.get_ray_paths(evdp, stlo-evlo, ['P', 'PcP', 'ScSSKiKP'] )
+>>> #
 >>> # form `geo_arrival` object, and access information
->>> geo_arr = geo_arrival(evdp, evlo, stdp, stlo, arr, mod)
+>>> import sacpy.taupplotlib as taupplotlib
+>>> geo_arr = taupplotlib.geo_arrival(evdp, evlo, stdp, stlo, arr, mod)
 >>> print( geo_arr.ray_param_sec_km )
 >>> print( geo_arr.ray_param_sec_degree )
 >>> print(arr.ray_param)
 >>> print(arr.ray_param_sec_degree)
+>>> #
 >>> # plot raypaths for P
 >>> fig, ax = plt.subplots(subplot_kw=dict(projection='polar'), figsize=(10, 10) )
 >>> lons, rs = geo_arr.get_raypath()
 >>> ax.plot(lons, rs, 'k-', alpha=0.8, label='P')
+>>> # add arrows to P path
+>>> taupplotlib.add_arrow(ax, lons, rs, loc_ys=[5500], color='k' ) # for radius=5500
+>>> #
 >>> # plot raypaths for PcP
 >>> geo_arr_PcP = geo_arrival(evdp, evlo, stdp, stlo, arr_PcP, mod)
 >>> lons, rs = geo_arr_PcP.get_raypath()
 >>> ax.plot(lons, rs, 'r--', label='PcP')
->>> ax.legend(loc='upper right', fontsize=20)
+>>> # add arrows to PcP path
+>>> taupplotlib.add_arrow(ax, lons, rs, loc_ratio=(0.3, 0.7), color='r' )
+>>> #
+>>> # plot raypath segments for ScP
+>>> geo_arr_ScP = geo_arrival(evdp, evlo, stdp, stlo, arr_ScP, mod)
+>>> for (leg, lons, rs) in geo_arr_ScP.get_split_raypath():
+>>>     print(leg)
+>>>     ax.plot(lons, rs, label=leg)
+>>> #
+>>> ax.legend(loc='lower left')
 >>> # plot events, receivers and pretty earth
 >>> plotEq(ax, mod, [evdp], [evlo], marker='*', markersize=30)
 >>> plotStation(ax, mod, [stdp], [stlo], color='C4', markersize=30)
 >>> plotPrettyEarth(ax, mod, distlabel=False, mode='vp')
 >>> plt.show()
->>>
 
 """
 
@@ -85,7 +98,6 @@ def plotPrettyEarth(ax, model, distlabel=False, mode=None):
             values[:,idx] = v
         vmin, vmax = vel.min(), vel.max()
         dv = (vmax-vmin)*0.01
-        print(vmin, vmax)
         vmin = vmin-(vmax-vmin)*0.6
         clev = np.arange(vmin, vmax, dv)
 
@@ -132,6 +144,42 @@ def plotEq(ax, model, eqdp_list, eqlo_list, marker='*', color ='#FEF200', marker
             marker=marker, color=color, markersize=markersize, zorder=zorder, linestyle='None',
             markeredgewidth=0.5, markeredgecolor='0.3', alpha= alpha,
             clip_on=False)
+def add_arrow(ax, xs, ys, loc_xs=None, loc_ys=None, loc_ratio=None,
+                color='C0', headlength=5, headwidth=4, alpha=1.0,
+                reverse_arrow=False, zorder=None):
+    """
+    Add arrows to a line indicated by `xs` and `ys` given the arrow locations
+    indicated by either `loc_xs`, or `loc_ys`, or `loc_ratio`.
+
+    The arrows can be adjusted by setting values for `color`, `headlength`,
+    `headwidth`, `alpha`, `reverse_arrow`, `zorder`.
+    """
+    if loc_xs==None and loc_ys==None and loc_ratio==None:
+        return
+    idxs = list()
+    if loc_ratio!=None:
+        n = len(xs)
+        idxs = [int(it*n) for it in loc_ratio]
+    elif loc_xs!=None:
+        tmp1 = xs[:-1]
+        tmp2 = xs[1:]
+        for it_idx, (it_start, it_end) in enumerate(zip(tmp1, tmp2)):
+            for it_x in loc_xs:
+                if (it_start-it_x)*(it_end-it_x)<=0:
+                    idxs.append(it_idx)
+    elif loc_ys!=None:
+        tmp1 = ys[:-1]
+        tmp2 = ys[1:]
+        for it_idx, (it_start, it_end) in enumerate(zip(tmp1, tmp2)):
+            for it_y in loc_ys:
+                if (it_start-it_y)*(it_end-it_y)<=0:
+                    idxs.append(it_idx)
+
+    incre1, incre2 = (0, 1) if reverse_arrow else (1, 0)
+    for idx in idxs:
+        ax.annotate('', xy=(xs[idx+incre1], ys[idx+incre1]), xytext=(xs[idx+incre2], ys[idx+incre2]),
+                        arrowprops=dict( headlength=headlength, headwidth=headwidth, color = color, alpha=alpha),
+                        zorder=zorder )
 
 class geo_arrival:
     """
@@ -144,34 +192,44 @@ class geo_arrival:
 
     Example:
 
+
     >>> # obtain arrivals with obspy.taup
     >>> import obspy.taup as taup
     >>> mod = taup.TauPyModel('ak135')
     >>> evlo, evdp = 100.0, 50.0
     >>> stlo, stdp = 160.0, 0.0
     >>> arr, arr_PcP = mod.get_ray_paths(evdp, stlo-evlo, ['P', 'PcP'] )[:2]
+    >>> #
     >>> # form `geo_arrival` object, and access information
-    >>> geo_arr = geo_arrival(evdp, evlo, stdp, stlo, arr, mod)
+    >>> import sacpy.taupplotlib as taupplotlib
+    >>> geo_arr = taupplotlib.geo_arrival(evdp, evlo, stdp, stlo, arr, mod)
     >>> print( geo_arr.ray_param_sec_km )
     >>> print( geo_arr.ray_param_sec_degree )
     >>> print(arr.ray_param)
     >>> print(arr.ray_param_sec_degree)
+    >>> #
     >>> # plot raypaths for P
-    >>> fig, ax = plt.subplots(subplot_kw=dict(projection='polar'))
+    >>> fig, ax = plt.subplots(subplot_kw=dict(projection='polar'), figsize=(10, 10) )
     >>> lons, rs = geo_arr.get_raypath()
     >>> ax.plot(lons, rs, 'k-', alpha=0.8, label='P')
+    >>> #
+    >>> # add arrows to P path
+    >>> taupplotlib.add_arrow(ax, lons, rs, loc_ys=[5500], color='C0' ) # for radius=5500km
+    >>> #
     >>> # plot raypaths for PcP
     >>> geo_arr_PcP = geo_arrival(evdp, evlo, stdp, stlo, arr_PcP, mod)
     >>> lons, rs = geo_arr_PcP.get_raypath()
     >>> ax.plot(lons, rs, 'r--', label='PcP')
-    >>> ax.legend(loc='upper right', fontsize=20)
+    >>> #
+    >>> # add arrows to PcP path
+    >>> taupplotlib.add_arrow(ax, lons, rs, loc_ratio=(0.3, 0.7), color='r' )
+    >>> #
     >>> # plot events, receivers and pretty earth
-    >>> plotEq(ax, mod, [evdp], [evlo], marker='*', markersize=20)
-    >>> plotStation(ax, mod, [stdp], [stlo], color='C4', markersize=20)
-    >>> plotPrettyEarth(ax, mod, distlabel=False, mode='vp')
+    >>> plotEq(ax, mod, [evdp], [evlo], marker='*', markersize=30)
+    >>> plotStation(ax, mod, [stdp], [stlo], color='C4', markersize=30)
+    >>> plotPrettyEarth(ax, mod, distlabel=False, mode='vp') # can try 'vp', 'vs', 'density', 'qp', 'qs' 'core'
     >>> plt.show()
-    >>>
-
+    >>> #
     """
     def __init__(self, eqdp, eqlo, stdp, stlo, arrival, model):
         """
@@ -214,6 +272,25 @@ class geo_arrival:
             lons *= -1.0
         lons += self.eqlo_rad
         return lons, rs
+    def get_split_raypath(self):
+        """
+        Return a list of (ray_leg_name, lons, rs) from earthquake to station for the seismic wave.
+        `lons` is in rad, and `rs` in km.
+        """
+        lons, rs = self.get_raypath()
+        radius = self.model.model.radius_of_planet
+        r_cmb = radius - self.model.model.cmb_depth
+        r_icb = radius - self.model.model.iocb_depth
+
+        idxs = [0, len(rs)]
+        idxs.extend(np.where(rs==r_cmb)[0])
+        idxs.extend(np.where(rs==r_icb)[0])
+        idxs.extend(np.where(rs==radius)[0])
+        idxs = set(idxs)
+        idxs = sorted(idxs)
+
+        tmp = self.name.replace('c', '').replace('i', '')
+        return [(ray_leg, lons[i1:i2+1], rs[i1:i2+1]) for i1, i2, ray_leg in zip(idxs[:-1], idxs[1:], tmp) ]
     def __get_rayp(self, sec_km=False):
         """
         Return ray parameter/slowness, in Sec/Deg.
@@ -271,24 +348,40 @@ if __name__ == '__main__':
     mod = taup.TauPyModel('ak135')
     evlo, evdp = 100.0, 50.0
     stlo, stdp = 160.0, 0.0
-    arr, arr_PcP = mod.get_ray_paths(evdp, stlo-evlo, ['P', 'PcP'] )[:2]
+    arr, arr_PcP, arr_ScP = mod.get_ray_paths(evdp, stlo-evlo, ['P', 'PcP', 'ScSSKiKP'] )
+    #
     # form `geo_arrival` object, and access information
-    geo_arr = geo_arrival(evdp, evlo, stdp, stlo, arr, mod)
+    import sacpy.taupplotlib as taupplotlib
+    geo_arr = taupplotlib.geo_arrival(evdp, evlo, stdp, stlo, arr, mod)
     print( geo_arr.ray_param_sec_km )
     print( geo_arr.ray_param_sec_degree )
     print(arr.ray_param)
     print(arr.ray_param_sec_degree)
+    #
     # plot raypaths for P
     fig, ax = plt.subplots(subplot_kw=dict(projection='polar'), figsize=(10, 10) )
     lons, rs = geo_arr.get_raypath()
     ax.plot(lons, rs, 'k-', alpha=0.8, label='P')
+    # add arrows to P path
+    taupplotlib.add_arrow(ax, lons, rs, loc_ys=[5500], color='k' ) # for radius=5500
+    #
     # plot raypaths for PcP
     geo_arr_PcP = geo_arrival(evdp, evlo, stdp, stlo, arr_PcP, mod)
     lons, rs = geo_arr_PcP.get_raypath()
     ax.plot(lons, rs, 'r--', label='PcP')
-    ax.legend(loc='upper right', fontsize=20)
+    # add arrows to PcP path
+    taupplotlib.add_arrow(ax, lons, rs, loc_ratio=(0.3, 0.7), color='r' )
+    #
+    # plot raypath segments for ScP
+    geo_arr_ScP = geo_arrival(evdp, evlo, stdp, stlo, arr_ScP, mod)
+    for (leg, lons, rs) in geo_arr_ScP.get_split_raypath():
+        print(leg)
+        ax.plot(lons, rs, label=leg)
+    #
+    ax.legend(loc='lower left')
     # plot events, receivers and pretty earth
-    plotEq(ax, mod, [evdp], [evlo], marker='*', color='#FF3322', markersize=30)
-    plotStation(ax, mod, [stdp], [stlo], color='#0088FF', markersize=30)
+    plotEq(ax, mod, [evdp], [evlo], marker='*', markersize=30)
+    plotStation(ax, mod, [stdp], [stlo], color='C4', markersize=30)
     plotPrettyEarth(ax, mod, distlabel=False, mode='vp')
     plt.show()
+    #
