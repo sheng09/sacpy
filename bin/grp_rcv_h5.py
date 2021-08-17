@@ -130,7 +130,7 @@ def run_single_rcv(rcvnm, vol, out_prefix, info, verbose=False):
     npts = np.max([it.size for it in mat_buf] )
     ofid.create_dataset('dat', (nfile, npts), dtype=np.float32)
     mat = ofid['dat'] # the place to store time series
-    for idx, (v, npts) in enumerate(zip(mat_buf, ohdr_vol['npts'])):
+    for idx, (v, npts) in enumerate(zip(mat_buf, ohdr_vol['npts'][0])):
         mat[idx, :npts] = v[:npts]
 
     ofid.attrs['nfile'] = nfile
