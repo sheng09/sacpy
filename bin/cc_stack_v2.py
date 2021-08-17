@@ -339,7 +339,7 @@ def rd_wh_h5(fnm, tmark, t1, t2, year_range, force_time_window, delta, npts,
         return None, None, None, None, None, None, None, None, (0.0, 0.0, 0.0, 0.0)
 
     btype, f1, f2 = pre_filter if pre_filter != None else (None, None, None)
-    fnms = np.arange(nsac)
+    fnms = arange(nsac)
     if 'filename' in fid:
         fnms = fid['filename'][:]
 
