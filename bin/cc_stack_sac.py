@@ -2,7 +2,7 @@
 """
 Executable files for cross-correlation and stacking operations
 """
-from sacpy.processing import iirfilter_f32, taper, tnorm_f32, fwhiten_f32
+from sacpy.processing import iirfilter_f32, iirfilter2_f32, taper, tnorm_f32, fwhiten_f32
 from sacpy.sac import c_rd_sac, c_wrt_sac, c_mk_sachdr_time
 import time
 import sacpy.geomath as geomath
@@ -122,6 +122,7 @@ def main(mode,
     ############################################################################################################################################
     ### 2. Init parameters for optional whitening
     ############################################################################################################################################
+    wtlen_sec, wflen_hz = None, None
     wt_size, wt_f1, wt_f2, wf_size = None, None, None, None
     if tnorm != None:
         junk, wt_f1, wt_f2 = tnorm
@@ -626,13 +627,13 @@ def post_proc(spec_stack_mat, absolute_amp, fftsize, npts, delta,
     if post_filter:
         sampling_rate = 1.0/delta
         junk = int(post_taper_ratio * time_mat.shape[1])
-        mpi_print_log(mpi_log_fid, 1, False, 'Filtering... ', post_filter )
         mpi_print_log(mpi_log_fid, 1, True,  'Tapering ... ', post_taper_ratio, 'size:', junk )
+        mpi_print_log(mpi_log_fid, 1, False, 'Filtering... ', post_filter )
         btype, f1, f2 = post_filter
         for irow in range(nbin):
             #time_mat[irow] = filter(time_mat[irow], sampling_rate, btype, (f1, f2), 2, 2 )
-            iirfilter_f32(time_mat[irow], delta, 0, btype, f1, f2, 2, 2)
             taper(time_mat[irow], junk)
+            iirfilter_f32(time_mat[irow], delta, 0, btype, f1, f2, 2, 2)
     # 4.3 post norm
     if post_norm:
         mpi_print_log(mpi_log_fid, 1, True, 'Post normalizing... ' )
@@ -789,7 +790,7 @@ if __name__ == "__main__":
     log_prefnm= 'cc_mpi_log'
     log_mode  = None
 
-    spec_acc_threshold = 0.001
+    spec_acc_threshold = 0.01
     random_sample = -1.0
     ######################
     if len(sys.argv) <= 1:
