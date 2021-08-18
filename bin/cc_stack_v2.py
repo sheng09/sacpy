@@ -232,7 +232,9 @@ def rd_wh_sac(fnm_wildcard, tmark, t1, t2, year_range, force_time_window, delta,
     baz  = zeros(nsac, dtype=float32 )
     gcarc= zeros(nsac, dtype=float32 )
 
-    ftw_tmark, ftw_t1, ftw_t2= force_time_window
+    min_year, max_year = year_range
+
+    ftw_tmark, ftw_t1, ftw_t2= force_time_window if force_time_window != None else (None, None, None)
     pre_taper_win = ones(npts, dtype=float32)
     taper(pre_taper_win, pre_taper_halfsize)
     time_rd, time_preproc, time_whiten, time_fft = 0.0, 0.0, 0.0, 0.0
@@ -241,13 +243,18 @@ def rd_wh_sac(fnm_wildcard, tmark, t1, t2, year_range, force_time_window, delta,
         ttmp = time()
 
         hdr = c_rd_sachdr(it)
+
+        if hdr.nzyear < min_year or hdr.nzyear > max_year:
+            continue
+
         b, e = hdr.b, hdr.e
         tmp = (hdr.t0, hdr.t1, hdr.t2, hdr.t3, hdr.t4, hdr.t5, hdr.t6, hdr.t7, hdr.t8, hdr.t9, 0.0, 0.0, hdr.b, hdr.e, hdr.o, hdr.a, 0.0)
-        ftw_t1 = tmp[ftw_tmark] + ftw_t1
-        ftw_t2 = tmp[ftw_tmark] + ftw_t2
-        if ftw_t1 < b or ftw_t2 > e:
-            mpi_print_log(mpi_log_fid, 2, True, '+ Insufficient data within the forced time window:', it)
-            continue
+        if force_time_window != None:
+            ftw_t1 = tmp[ftw_tmark] + ftw_t1
+            ftw_t2 = tmp[ftw_tmark] + ftw_t2
+            if ftw_t1 < b or ftw_t2 > e:
+                mpi_print_log(mpi_log_fid, 2, True, '+ Insufficient data within the forced time window:', it)
+                continue
 
         st = c_rd_sac(it, tmark, t1, t2, True, False, False) # zeros will be used if gaps exist in sac recordings
         if (st is None) or (not st.dat.any()): # Check if Nan or all zeros.
@@ -365,10 +372,11 @@ def rd_wh_h5(fnm, tmark, t1, t2, year_range, force_time_window, delta, npts,
     raw_b     = fid['hdr/b'][:]
     raw_year  = fid['hdr/nzyear'][:]
 
-    ftw_tmark, ftw_t1, ftw_t2= force_time_window
     tmp = ('t0', 't1', 't2', 't3', 't4', 't5', 't6', 't7', 't8', 't9', 0, 'b', 'e', 'o', 'a', 0) # -3 is 'o' and -5 is 'b'
-    ftw_t1 = fid['hdr'][tmp[ftw_tmark]][:] + ftw_t1
-    ftw_t2 = fid['hdr'][tmp[ftw_tmark]][:] + ftw_t2
+    if force_time_window != None:
+        ftw_tmark, ftw_t1, ftw_t2= force_time_window
+        ftw_t1 = fid['hdr'][tmp[ftw_tmark]][:] + ftw_t1
+        ftw_t2 = fid['hdr'][tmp[ftw_tmark]][:] + ftw_t2
     b = fid['hdr/b'][:]
     e = fid['hdr/e'][:]
 
@@ -388,16 +396,16 @@ def rd_wh_h5(fnm, tmark, t1, t2, year_range, force_time_window, delta, npts,
 
         if raw_year[isac] < min_year or raw_year[isac] > max_year:
             continue
-
-        if ftw_t1[isac] < b[isac] or ftw_t2[isac] > e[isac]:
-            mpi_print_log(mpi_log_fid, 2, True, '+ Insufficient data within the forced time window:', it)
-            continue
+        if force_time_window != None:
+            if ftw_t1[isac] < b[isac] or ftw_t2[isac] > e[isac]:
+                mpi_print_log(mpi_log_fid, 2, True, '+ Insufficient data within the forced time window:', it)
+                continue
 
         xs = raw_mat[isac][:]
         #print(delta, raw_b[isac], t1[isac], t2[isac] )
         xs, new_b = cut(xs, delta, raw_b[isac], t1[isac], t2[isac])
         if (not xs.any()) or (isnan(xs).any() ): # Check if Nan or all zeros.
-            mpi_print_log(mpi_log_fid, 2, True, '+ Failure Nan:', it)
+            mpi_print_log(mpi_log_fid, 2, True, '+ Failure Nan:', it, isac)
             continue
         time_rd = time_rd + time()-ttmp
 
@@ -496,6 +504,7 @@ def spec_ccstack(spec_mat, lon, lat, gcarc, epdd,
     nstacks = stack_count.size
     nsac = spec_mat.shape[0]
 
+    d1, d2 = dist_min-dist_step*0.5, dist_max+dist_step*0.5
     for isac1 in range(nsac):
         lo1, la1, gcarc1 = lon[isac1], lat[isac1], gcarc[isac1]
         spec1 = spec_mat[isac1]
@@ -505,7 +514,7 @@ def spec_ccstack(spec_mat, lon, lat, gcarc, epdd,
             dist = abs(gcarc1-gcarc2)
             if not epdd:
                 dist = haversine(lo1, la1, lo2, la2)
-            if dist > dist_max or dist < dist_min:
+            if dist > d2 or dist < d1:
                 continue
             idx = stack_bin_index(dist, dist_min, dist_step)
             if idx < 0 or idx >= nstacks:
@@ -742,9 +751,11 @@ def main(mode,
     if post_filter != None:
         speedup_f1, speedup_f2 = post_filter[1], post_filter[2]
         if swht != None:
-            speedup_f1 = speedup_f1 - swht
+            speedup_f1 = speedup_f1 # - swht
             speedup_f2 = speedup_f2 + swht
-            speedup_fs = (speedup_f1, speedup_f2) # dont worry if speedup_fs is invalid as init_speedup(...) process whatever cases
+            if speedup_f1 <= 0.0:
+                speedup_f1 = 0.0001
+        speedup_fs = (speedup_f1, speedup_f2) # dont worry if speedup_fs is invalid as init_speedup(...) process whatever cases
     tmp = init_parameter(mode, tmark, t1, t2, delta, input_format, pre_detrend, pre_taper_halfratio, pre_filter, speedup_fs, spec_acc_threshold, mpi_log_fid)
     flag_mode, (npts, fftsize, df, speedup, pre_taper_halfsize), (cc_npts, cc_fftsize, cc_df, cc_speedup) = tmp
 
