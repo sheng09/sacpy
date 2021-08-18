@@ -839,7 +839,7 @@ if __name__ == "__main__":
         elif opt in ('--stack_dist'):
             x, y, z = [float(it) for it in arg.split('/') ]
             dist_range, dist_step = (x, y), z
-        elif opt in ('--daz', '-dbaz'):
+        elif opt in ('--daz', '--dbaz'):
             daz_range = [float(it) for it in arg.split('/') ]
         elif opt in ('--gcd_ev', '--gcd', '--gcd_rcv'):
             gcd_range = [float(it) for it in arg.split('/') ]
