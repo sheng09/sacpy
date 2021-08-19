@@ -152,6 +152,16 @@ def distribute_jobs(mpi_rank, mpi_ncpu, fnm_wildcard, input_format, mpi_log_fid)
     mpi_print_log(mpi_log_fid, 1, True,  'Jobs on this node: ', len(local_jobs) )
 
     return local_jobs
+def init_whitening(tnorm, swht, mpi_log_fid):
+    """
+    """
+    wtlen, wt_f1, wt_f2 = tnorm if tnorm != None else (None, None, None)
+    wflen = swht
+
+    mpi_print_log(mpi_log_fid, 0, True,  'Set Whitening parameters.')
+    mpi_print_log(mpi_log_fid, 1, False, 'Temporal normalization: ', tnorm)
+    mpi_print_log(mpi_log_fid, 1, True,  'Spectral whitening: ', swht)
+    return (wtlen, wt_f1, wt_f2), wflen
 def init_speedup(fftsize, delta, fs, critical_level=0.01):
     """
     Return the acceleration bound (i1, i2) for spetral computation.
@@ -371,6 +381,7 @@ def rd_wh_h5(fnm, tmark, t1, t2, year_range, force_time_window, delta, npts,
     raw_gcarc = fid['hdr/gcarc'][:]
     raw_b     = fid['hdr/b'][:]
     raw_year  = fid['hdr/nzyear'][:]
+    raw_npts  = fid['hdr/npts'][:]
 
     tmp = ('t0', 't1', 't2', 't3', 't4', 't5', 't6', 't7', 't8', 't9', 0, 'b', 'e', 'o', 'a', 0) # -3 is 'o' and -5 is 'b'
     if force_time_window != None:
@@ -401,7 +412,7 @@ def rd_wh_h5(fnm, tmark, t1, t2, year_range, force_time_window, delta, npts,
                 mpi_print_log(mpi_log_fid, 2, True, '+ Insufficient data within the forced time window:', it, (b[isac], e[isac]) )
                 continue
 
-        xs = raw_mat[isac][:]
+        xs = raw_mat[isac][:raw_npts[isac] ] # There are unknown values after npts points
         #print(delta, raw_b[isac], t1[isac], t2[isac] )
         xs, new_b = cut(xs, delta, raw_b[isac], t1[isac], t2[isac])
         if (not xs.any()) or (isnan(xs).any() ): # Check if Nan or all zeros.
@@ -772,8 +783,9 @@ def main(mode,
 
     local_jobs = distribute_jobs(mpi_rank, mpi_ncpu, fnm_wildcard, input_format, mpi_log_fid)
     func_rd = rd_wh_sac if input_format in ('sac', 'SAC') else rd_wh_h5
-    wtlen, wt_f1, wt_f2 = tnorm if tnorm != None else (None, None, None)
-    wflen = swht
+
+    (wtlen, wt_f1, wt_f2), wflen = init_whitening(tnorm, swht, mpi_log_fid) # wtlen is in seconds and wflen in Hz
+
     mpi_print_log(mpi_log_fid, 0, True, 'Start running...' )
     time_rd_sum, time_preproc_sum, time_whiten_sum, time_fft_sum, time_cc_sum, time_sum = 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
     for idx, it in enumerate(local_jobs):
