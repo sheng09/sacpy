@@ -281,7 +281,7 @@ def main(mode,
         if True:
             local_tc = local_tc_rdw+ local_tc_cc + 0.001
             mpi_print_log(mpi_log_fid, 2, False,
-                            '+ rd&whiten: %.1fs(%d%%)(%d)，ccstack %.1fs(%d%%) (%d)' % (
+                            '+ rd&whiten: %.1fs(%d%%)(%d), ccstack %.1fs(%d%%) (%d)' % (
                             local_tc_rdw, local_tc_rdw/local_tc*100, nsac, local_tc_cc, local_tc_cc/local_tc*100, local_ncc ) )
     if True:
         tc = tc_rdw + tc_cc + 1.0e-3 # in case of zeros
