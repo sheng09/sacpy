@@ -10,7 +10,7 @@ from sacpy.processing import iirfilter_f32, taper, rmean, detrend, cut, tnorm_f3
 from numba import jit
 from h5py import File as h5_File
 
-from numpy import array, roll, zeros, ones, argmin, argmax, abs, float32, complex64, int32, arange, isnan, conj
+from numpy import array, roll, zeros, ones, argmin, argmax, abs, float32, complex64, int32, arange, isnan, conj, round
 from numpy.random import random
 from pyfftw.interfaces.numpy_fft import rfft, irfft
 
@@ -381,8 +381,8 @@ def rd_wh_h5(fnm, tmark, t1, t2, year_range, force_time_window, delta, npts,
     e = fid['hdr/e'][:]
 
     tref = fid['hdr'][tmp[tmark]][:]
-    t1 = tref - raw_b + t1
-    t2 = tref - raw_b + t2
+    t1 = tref + t1
+    t2 = tref + t2
 
     min_year, max_year = year_range
 
@@ -398,7 +398,7 @@ def rd_wh_h5(fnm, tmark, t1, t2, year_range, force_time_window, delta, npts,
             continue
         if force_time_window != None:
             if ftw_t1[isac] < b[isac] or ftw_t2[isac] > e[isac]:
-                mpi_print_log(mpi_log_fid, 2, True, '+ Insufficient data within the forced time window:', it)
+                mpi_print_log(mpi_log_fid, 2, True, '+ Insufficient data within the forced time window:', it, (b[isac], e[isac]) )
                 continue
 
         xs = raw_mat[isac][:]
