@@ -31,7 +31,7 @@ def init_mpi(log_prefnm, log_mode):
         mpi_print_log(mpi_log_fid, 0, True, 'Start! rank(%d) nproc(%d)' % (mpi_rank, mpi_ncpu) )
     return mpi_comm, mpi_rank, mpi_ncpu, mpi_log_fid
 def init_parameter(mode,
-    tmark, t1, t2, delta, input_format='sac',                   # input param
+    tmark, t1, t2, delta, force_time_window=None, year_range=None, input_format='sac',                   # input param
     pre_detrend=True, pre_taper_ratio= 0.005, pre_filter= None, # pre-proc param)
     speedup_fs=None, speedup_level=0.01,
     mpi_log_fid=None):
@@ -63,6 +63,8 @@ def init_parameter(mode,
     mpi_print_log(mpi_log_fid, 0, False, 'mode: ', mode)
     mpi_print_log(mpi_log_fid, 0, False, 'Set reading and pre-processing parameters')
     mpi_print_log(mpi_log_fid, 1, False, 'tmark, t1, t2:  ', tmark, t1, t2)
+    mpi_print_log(mpi_log_fid, 1, False, 'force time window:', force_time_window)
+    mpi_print_log(mpi_log_fid, 1, False, 'year range:     ', year_range)
     mpi_print_log(mpi_log_fid, 1, False, 'delta:          ', delta)
     mpi_print_log(mpi_log_fid, 1, False, 'input format:   ', input_format)
     mpi_print_log(mpi_log_fid, 1, False, 'pre_detrend:    ', pre_detrend)
@@ -207,7 +209,7 @@ def mpi_print_log(file, n_pre, flush, *objects, end='\n'):
     print(*objects, file=file, flush=flush, end=end )
 
 
-def rd_wh_sac(fnm_wildcard, tmark, t1, t2, year_range, force_time_window, delta, npts,
+def rd_wh_sac(fnm_wildcard, tmark, t1, t2, delta, force_time_window, year_range, npts,
     pre_detrend, pre_taper_halfsize, pre_filter,
     wtlen, wt_f1, wt_f2, wflen, speedup_i1, speedup_i2, whiten_taper_halfsize,
     fftsize, nrfft_valid,
@@ -242,7 +244,7 @@ def rd_wh_sac(fnm_wildcard, tmark, t1, t2, year_range, force_time_window, delta,
     baz  = zeros(nsac, dtype=float32 )
     gcarc= zeros(nsac, dtype=float32 )
 
-    min_year, max_year = year_range
+    min_year, max_year = year_range if year_range!=None else (None, None)
 
     ftw_tmark, ftw_t1, ftw_t2= force_time_window if force_time_window != None else (None, None, None)
     pre_taper_win = ones(npts, dtype=float32)
@@ -254,8 +256,9 @@ def rd_wh_sac(fnm_wildcard, tmark, t1, t2, year_range, force_time_window, delta,
 
         hdr = c_rd_sachdr(it)
 
-        if hdr.nzyear < min_year or hdr.nzyear > max_year:
-            continue
+        if year_range != None:
+            if hdr.nzyear < min_year or hdr.nzyear > max_year:
+                continue
 
         b, e = hdr.b, hdr.e
         tmp = (hdr.t0, hdr.t1, hdr.t2, hdr.t3, hdr.t4, hdr.t5, hdr.t6, hdr.t7, hdr.t8, hdr.t9, 0.0, 0.0, hdr.b, hdr.e, hdr.o, hdr.a, 0.0)
@@ -330,7 +333,7 @@ def rd_wh_sac(fnm_wildcard, tmark, t1, t2, year_range, force_time_window, delta,
         return spectra, stlo, stla, evlo, evla, az, baz, gcarc, (time_rd, time_preproc, time_whiten, time_fft)
     else:
         return None, None, None, None, None, None, None, None, (time_rd, time_preproc, time_whiten, time_fft)
-def rd_wh_h5(fnm, tmark, t1, t2, year_range, force_time_window, delta, npts,
+def rd_wh_h5(fnm, tmark, t1, t2, delta, force_time_window, year_range, npts,
     pre_detrend, pre_taper_halfsize, pre_filter,
     wtlen, wt_f1, wt_f2, wflen, speedup_i1, speedup_i2, whiten_taper_halfsize,
     fftsize, nrfft_valid,
@@ -395,7 +398,7 @@ def rd_wh_h5(fnm, tmark, t1, t2, year_range, force_time_window, delta, npts,
     t1 = tref + t1
     t2 = tref + t2
 
-    min_year, max_year = year_range
+    min_year, max_year = year_range if year_range!=None else (None, None)
 
     pre_taper_win = ones(npts, dtype=float32)
     taper(pre_taper_win, pre_taper_halfsize)
@@ -405,8 +408,9 @@ def rd_wh_h5(fnm, tmark, t1, t2, year_range, force_time_window, delta, npts,
 
         ttmp = time()
 
-        if raw_year[isac] < min_year or raw_year[isac] > max_year:
-            continue
+        if year_range != None:
+            if raw_year[isac] < min_year or raw_year[isac] > max_year:
+                continue
         if force_time_window != None:
             if ftw_t1[isac] < b[isac] or ftw_t2[isac] > e[isac]:
                 mpi_print_log(mpi_log_fid, 2, True, '+ Insufficient data within the forced time window:', it, (b[isac], e[isac]) )
@@ -472,7 +476,7 @@ def rd_wh_h5(fnm, tmark, t1, t2, year_range, force_time_window, delta, npts,
         baz  = baz[:index]
         gcarc= gcarc[:index]
 
-    mpi_print_log(mpi_log_fid, 2, False, '(n:%d) rd(%.1fs) preproc(%.1fs) whiten(%.1fs) fft(%.1fs)' % (index, time_rd, time_preproc, time_whiten, time_fft), end='; ' )
+    mpi_print_log(mpi_log_fid, 2, False, '(n:%d) rd(%.1fs) preproc(%.1fs) whiten(%.1fs) fft(%.1fs)' % (index, time_rd, time_preproc, time_whiten, time_fft) )
 
     if index > 0: # return
         return spectra, stlo, stla, evlo, evla, az, baz, gcarc, (time_rd, time_preproc, time_whiten, time_fft)
@@ -744,7 +748,7 @@ def output( stack_mat, stack_count, dist, absolute_amp,
 
 
 def main(mode,
-    fnm_wildcard, tmark, t1, t2, delta, input_format='sac', year_range=(1000, 9999), force_time_window= None, # input param
+    fnm_wildcard, tmark, t1, t2, delta, input_format='sac', force_time_window=None, year_range=None, # input param
     pre_detrend=True, pre_taper_halfratio= 0.005, pre_filter= None, # pre-proc param
     tnorm = (128.0, 0.02, 0.066666), swht= 0.02,                # whitening param
     stack_dist_range = (0.0, 180.0), stack_dist_step= 1.0,         # stack param
@@ -767,7 +771,7 @@ def main(mode,
             if speedup_f1 <= 0.0:
                 speedup_f1 = 0.0001
         speedup_fs = (speedup_f1, speedup_f2) # dont worry if speedup_fs is invalid as init_speedup(...) process whatever cases
-    tmp = init_parameter(mode, tmark, t1, t2, delta, input_format, pre_detrend, pre_taper_halfratio, pre_filter, speedup_fs, spec_acc_threshold, mpi_log_fid)
+    tmp = init_parameter(mode, tmark, t1, t2, delta, force_time_window, year_range, input_format, pre_detrend, pre_taper_halfratio, pre_filter, speedup_fs, spec_acc_threshold, mpi_log_fid)
     flag_mode, (npts, fftsize, df, speedup, pre_taper_halfsize), (cc_npts, cc_fftsize, cc_df, cc_speedup) = tmp
 
 
@@ -790,7 +794,7 @@ def main(mode,
     time_rd_sum, time_preproc_sum, time_whiten_sum, time_fft_sum, time_cc_sum, time_sum = 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
     for idx, it in enumerate(local_jobs):
         mpi_print_log(mpi_log_fid, 1, True, '- %d %s' % (idx+1, it) )
-        tmp = func_rd(  it, tmark, t1, t2, year_range, force_time_window, delta, npts,
+        tmp = func_rd(  it, tmark, t1, t2, delta, force_time_window, year_range, npts,
                         pre_detrend, pre_taper_halfsize, pre_filter,
                         wtlen, wt_f1, wt_f2, wflen, speedup[0], speedup[1], pre_taper_halfsize,
                         cc_fftsize, cc_speedup[1],
@@ -952,7 +956,7 @@ if __name__ == "__main__":
     fnm_wildcard = ''
     input_format = 'sac'
     tmark, t1, t2 = -5, 10800, 32400
-    year_range = (1000, 9999)
+    year_range = None
     force_time_window = None
     delta = 0.1
     pre_detrend=True
@@ -1103,8 +1107,8 @@ if __name__ == "__main__":
             random_sample = float(arg)
     #######
     main(mode,
-        fnm_wildcard, tmark, t1, t2, delta, input_format, year_range,
-        force_time_window,
+        fnm_wildcard, tmark, t1, t2, delta, input_format,
+        force_time_window, year_range,
         pre_detrend, pre_taper_ratio, pre_filter,
         tnorm, swht,
         dist_range, dist_step,
