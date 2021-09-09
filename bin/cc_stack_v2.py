@@ -10,7 +10,7 @@ from sacpy.processing import iirfilter_f32, taper, rmean, detrend, cut, tnorm_f3
 from numba import jit
 from h5py import File as h5_File
 
-from numpy import array, roll, zeros, ones, argmin, argmax, abs, float32, complex64, int32, arange, isnan, conj
+from numpy import array, roll, zeros, ones, argmin, argmax, abs, float32, complex64, int32, arange, isnan, conj, round
 from numpy.random import random
 from pyfftw.interfaces.numpy_fft import rfft, irfft
 
@@ -31,7 +31,7 @@ def init_mpi(log_prefnm, log_mode):
         mpi_print_log(mpi_log_fid, 0, True, 'Start! rank(%d) nproc(%d)' % (mpi_rank, mpi_ncpu) )
     return mpi_comm, mpi_rank, mpi_ncpu, mpi_log_fid
 def init_parameter(mode,
-    tmark, t1, t2, delta, input_format='sac',                   # input param
+    tmark, t1, t2, delta, force_time_window=None, year_range=None, input_format='sac',                   # input param
     pre_detrend=True, pre_taper_ratio= 0.005, pre_filter= None, # pre-proc param)
     speedup_fs=None, speedup_level=0.01,
     mpi_log_fid=None):
@@ -63,6 +63,8 @@ def init_parameter(mode,
     mpi_print_log(mpi_log_fid, 0, False, 'mode: ', mode)
     mpi_print_log(mpi_log_fid, 0, False, 'Set reading and pre-processing parameters')
     mpi_print_log(mpi_log_fid, 1, False, 'tmark, t1, t2:  ', tmark, t1, t2)
+    mpi_print_log(mpi_log_fid, 1, False, 'force time window:', force_time_window)
+    mpi_print_log(mpi_log_fid, 1, False, 'year range:     ', year_range)
     mpi_print_log(mpi_log_fid, 1, False, 'delta:          ', delta)
     mpi_print_log(mpi_log_fid, 1, False, 'input format:   ', input_format)
     mpi_print_log(mpi_log_fid, 1, False, 'pre_detrend:    ', pre_detrend)
@@ -152,6 +154,16 @@ def distribute_jobs(mpi_rank, mpi_ncpu, fnm_wildcard, input_format, mpi_log_fid)
     mpi_print_log(mpi_log_fid, 1, True,  'Jobs on this node: ', len(local_jobs) )
 
     return local_jobs
+def init_whitening(tnorm, swht, mpi_log_fid):
+    """
+    """
+    wtlen, wt_f1, wt_f2 = tnorm if tnorm != None else (None, None, None)
+    wflen = swht
+
+    mpi_print_log(mpi_log_fid, 0, True,  'Set Whitening parameters.')
+    mpi_print_log(mpi_log_fid, 1, False, 'Temporal normalization: ', tnorm)
+    mpi_print_log(mpi_log_fid, 1, True,  'Spectral whitening: ', swht)
+    return (wtlen, wt_f1, wt_f2), wflen
 def init_speedup(fftsize, delta, fs, critical_level=0.01):
     """
     Return the acceleration bound (i1, i2) for spetral computation.
@@ -197,7 +209,7 @@ def mpi_print_log(file, n_pre, flush, *objects, end='\n'):
     print(*objects, file=file, flush=flush, end=end )
 
 
-def rd_wh_sac(fnm_wildcard, tmark, t1, t2, year_range, force_time_window, delta, npts,
+def rd_wh_sac(fnm_wildcard, tmark, t1, t2, delta, force_time_window, year_range, npts,
     pre_detrend, pre_taper_halfsize, pre_filter,
     wtlen, wt_f1, wt_f2, wflen, speedup_i1, speedup_i2, whiten_taper_halfsize,
     fftsize, nrfft_valid,
@@ -232,7 +244,9 @@ def rd_wh_sac(fnm_wildcard, tmark, t1, t2, year_range, force_time_window, delta,
     baz  = zeros(nsac, dtype=float32 )
     gcarc= zeros(nsac, dtype=float32 )
 
-    ftw_tmark, ftw_t1, ftw_t2= force_time_window
+    min_year, max_year = year_range if year_range!=None else (None, None)
+
+    ftw_tmark, ftw_t1, ftw_t2= force_time_window if force_time_window != None else (None, None, None)
     pre_taper_win = ones(npts, dtype=float32)
     taper(pre_taper_win, pre_taper_halfsize)
     time_rd, time_preproc, time_whiten, time_fft = 0.0, 0.0, 0.0, 0.0
@@ -241,13 +255,19 @@ def rd_wh_sac(fnm_wildcard, tmark, t1, t2, year_range, force_time_window, delta,
         ttmp = time()
 
         hdr = c_rd_sachdr(it)
+
+        if year_range != None:
+            if hdr.nzyear < min_year or hdr.nzyear > max_year:
+                continue
+
         b, e = hdr.b, hdr.e
         tmp = (hdr.t0, hdr.t1, hdr.t2, hdr.t3, hdr.t4, hdr.t5, hdr.t6, hdr.t7, hdr.t8, hdr.t9, 0.0, 0.0, hdr.b, hdr.e, hdr.o, hdr.a, 0.0)
-        ftw_t1 = tmp[ftw_tmark] + ftw_t1
-        ftw_t2 = tmp[ftw_tmark] + ftw_t2
-        if ftw_t1 < b or ftw_t2 > e:
-            mpi_print_log(mpi_log_fid, 2, True, '+ Insufficient data within the forced time window:', it)
-            continue
+        if force_time_window != None:
+            ftw_t1 = tmp[ftw_tmark] + ftw_t1
+            ftw_t2 = tmp[ftw_tmark] + ftw_t2
+            if ftw_t1 < b or ftw_t2 > e:
+                mpi_print_log(mpi_log_fid, 2, True, '+ Insufficient data within the forced time window:', it)
+                continue
 
         st = c_rd_sac(it, tmark, t1, t2, True, False, False) # zeros will be used if gaps exist in sac recordings
         if (st is None) or (not st.dat.any()): # Check if Nan or all zeros.
@@ -313,7 +333,7 @@ def rd_wh_sac(fnm_wildcard, tmark, t1, t2, year_range, force_time_window, delta,
         return spectra, stlo, stla, evlo, evla, az, baz, gcarc, (time_rd, time_preproc, time_whiten, time_fft)
     else:
         return None, None, None, None, None, None, None, None, (time_rd, time_preproc, time_whiten, time_fft)
-def rd_wh_h5(fnm, tmark, t1, t2, year_range, force_time_window, delta, npts,
+def rd_wh_h5(fnm, tmark, t1, t2, delta, force_time_window, year_range, npts,
     pre_detrend, pre_taper_halfsize, pre_filter,
     wtlen, wt_f1, wt_f2, wflen, speedup_i1, speedup_i2, whiten_taper_halfsize,
     fftsize, nrfft_valid,
@@ -364,19 +384,21 @@ def rd_wh_h5(fnm, tmark, t1, t2, year_range, force_time_window, delta, npts,
     raw_gcarc = fid['hdr/gcarc'][:]
     raw_b     = fid['hdr/b'][:]
     raw_year  = fid['hdr/nzyear'][:]
+    raw_npts  = fid['hdr/npts'][:]
 
-    ftw_tmark, ftw_t1, ftw_t2= force_time_window
     tmp = ('t0', 't1', 't2', 't3', 't4', 't5', 't6', 't7', 't8', 't9', 0, 'b', 'e', 'o', 'a', 0) # -3 is 'o' and -5 is 'b'
-    ftw_t1 = fid['hdr'][tmp[ftw_tmark]][:] + ftw_t1
-    ftw_t2 = fid['hdr'][tmp[ftw_tmark]][:] + ftw_t2
+    if force_time_window != None:
+        ftw_tmark, ftw_t1, ftw_t2= force_time_window
+        ftw_t1 = fid['hdr'][tmp[ftw_tmark]][:] + ftw_t1
+        ftw_t2 = fid['hdr'][tmp[ftw_tmark]][:] + ftw_t2
     b = fid['hdr/b'][:]
     e = fid['hdr/e'][:]
 
     tref = fid['hdr'][tmp[tmark]][:]
-    t1 = tref - raw_b + t1
-    t2 = tref - raw_b + t2
+    t1 = tref + t1
+    t2 = tref + t2
 
-    min_year, max_year = year_range
+    min_year, max_year = year_range if year_range!=None else (None, None)
 
     pre_taper_win = ones(npts, dtype=float32)
     taper(pre_taper_win, pre_taper_halfsize)
@@ -386,18 +408,19 @@ def rd_wh_h5(fnm, tmark, t1, t2, year_range, force_time_window, delta, npts,
 
         ttmp = time()
 
-        if raw_year[isac] < min_year or raw_year[isac] > max_year:
-            continue
+        if year_range != None:
+            if raw_year[isac] < min_year or raw_year[isac] > max_year:
+                continue
+        if force_time_window != None:
+            if ftw_t1[isac] < b[isac] or ftw_t2[isac] > e[isac]:
+                mpi_print_log(mpi_log_fid, 2, True, '+ Insufficient data within the forced time window:', it, (b[isac], e[isac]) )
+                continue
 
-        if ftw_t1[isac] < b[isac] or ftw_t2[isac] > e[isac]:
-            mpi_print_log(mpi_log_fid, 2, True, '+ Insufficient data within the forced time window:', it)
-            continue
-
-        xs = raw_mat[isac][:]
+        xs = raw_mat[isac][:raw_npts[isac] ] # There are unknown values after npts points
         #print(delta, raw_b[isac], t1[isac], t2[isac] )
         xs, new_b = cut(xs, delta, raw_b[isac], t1[isac], t2[isac])
         if (not xs.any()) or (isnan(xs).any() ): # Check if Nan or all zeros.
-            mpi_print_log(mpi_log_fid, 2, True, '+ Failure Nan:', it)
+            mpi_print_log(mpi_log_fid, 2, True, '+ Failure Nan:', it, isac)
             continue
         time_rd = time_rd + time()-ttmp
 
@@ -453,7 +476,7 @@ def rd_wh_h5(fnm, tmark, t1, t2, year_range, force_time_window, delta, npts,
         baz  = baz[:index]
         gcarc= gcarc[:index]
 
-    mpi_print_log(mpi_log_fid, 2, False, '(n:%d) rd(%.1fs) preproc(%.1fs) whiten(%.1fs) fft(%.1fs)' % (index, time_rd, time_preproc, time_whiten, time_fft), end='; ' )
+    mpi_print_log(mpi_log_fid, 2, False, '(n:%d) rd(%.1fs) preproc(%.1fs) whiten(%.1fs) fft(%.1fs)' % (index, time_rd, time_preproc, time_whiten, time_fft) )
 
     if index > 0: # return
         return spectra, stlo, stla, evlo, evla, az, baz, gcarc, (time_rd, time_preproc, time_whiten, time_fft)
@@ -496,6 +519,7 @@ def spec_ccstack(spec_mat, lon, lat, gcarc, epdd,
     nstacks = stack_count.size
     nsac = spec_mat.shape[0]
 
+    d1, d2 = dist_min-dist_step*0.5, dist_max+dist_step*0.5
     for isac1 in range(nsac):
         lo1, la1, gcarc1 = lon[isac1], lat[isac1], gcarc[isac1]
         spec1 = spec_mat[isac1]
@@ -505,7 +529,7 @@ def spec_ccstack(spec_mat, lon, lat, gcarc, epdd,
             dist = abs(gcarc1-gcarc2)
             if not epdd:
                 dist = haversine(lo1, la1, lo2, la2)
-            if dist > dist_max or dist < dist_min:
+            if dist > d2 or dist < d1:
                 continue
             idx = stack_bin_index(dist, dist_min, dist_step)
             if idx < 0 or idx >= nstacks:
@@ -724,7 +748,7 @@ def output( stack_mat, stack_count, dist, absolute_amp,
 
 
 def main(mode,
-    fnm_wildcard, tmark, t1, t2, delta, input_format='sac', year_range=(1000, 9999), force_time_window= None, # input param
+    fnm_wildcard, tmark, t1, t2, delta, input_format='sac', force_time_window=None, year_range=None, # input param
     pre_detrend=True, pre_taper_halfratio= 0.005, pre_filter= None, # pre-proc param
     tnorm = (128.0, 0.02, 0.066666), swht= 0.02,                # whitening param
     stack_dist_range = (0.0, 180.0), stack_dist_step= 1.0,         # stack param
@@ -742,10 +766,12 @@ def main(mode,
     if post_filter != None:
         speedup_f1, speedup_f2 = post_filter[1], post_filter[2]
         if swht != None:
-            speedup_f1 = speedup_f1 - swht
+            speedup_f1 = speedup_f1 # - swht
             speedup_f2 = speedup_f2 + swht
-            speedup_fs = (speedup_f1, speedup_f2) # dont worry if speedup_fs is invalid as init_speedup(...) process whatever cases
-    tmp = init_parameter(mode, tmark, t1, t2, delta, input_format, pre_detrend, pre_taper_halfratio, pre_filter, speedup_fs, spec_acc_threshold, mpi_log_fid)
+            if speedup_f1 <= 0.0:
+                speedup_f1 = 0.0001
+        speedup_fs = (speedup_f1, speedup_f2) # dont worry if speedup_fs is invalid as init_speedup(...) process whatever cases
+    tmp = init_parameter(mode, tmark, t1, t2, delta, force_time_window, year_range, input_format, pre_detrend, pre_taper_halfratio, pre_filter, speedup_fs, spec_acc_threshold, mpi_log_fid)
     flag_mode, (npts, fftsize, df, speedup, pre_taper_halfsize), (cc_npts, cc_fftsize, cc_df, cc_speedup) = tmp
 
 
@@ -761,13 +787,14 @@ def main(mode,
 
     local_jobs = distribute_jobs(mpi_rank, mpi_ncpu, fnm_wildcard, input_format, mpi_log_fid)
     func_rd = rd_wh_sac if input_format in ('sac', 'SAC') else rd_wh_h5
-    wtlen, wt_f1, wt_f2 = tnorm if tnorm != None else (None, None, None)
-    wflen = swht
+
+    (wtlen, wt_f1, wt_f2), wflen = init_whitening(tnorm, swht, mpi_log_fid) # wtlen is in seconds and wflen in Hz
+
     mpi_print_log(mpi_log_fid, 0, True, 'Start running...' )
     time_rd_sum, time_preproc_sum, time_whiten_sum, time_fft_sum, time_cc_sum, time_sum = 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
     for idx, it in enumerate(local_jobs):
         mpi_print_log(mpi_log_fid, 1, True, '- %d %s' % (idx+1, it) )
-        tmp = func_rd(  it, tmark, t1, t2, year_range, force_time_window, delta, npts,
+        tmp = func_rd(  it, tmark, t1, t2, delta, force_time_window, year_range, npts,
                         pre_detrend, pre_taper_halfsize, pre_filter,
                         wtlen, wt_f1, wt_f2, wflen, speedup[0], speedup[1], pre_taper_halfsize,
                         cc_fftsize, cc_speedup[1],
@@ -929,7 +956,7 @@ if __name__ == "__main__":
     fnm_wildcard = ''
     input_format = 'sac'
     tmark, t1, t2 = -5, 10800, 32400
-    year_range = (1000, 9999)
+    year_range = None
     force_time_window = None
     delta = 0.1
     pre_detrend=True
@@ -1023,7 +1050,7 @@ if __name__ == "__main__":
         elif opt in ('--stack_dist'):
             x, y, z = [float(it) for it in arg.split('/') ]
             dist_range, dist_step = (x, y), z
-        elif opt in ('--daz', '-dbaz'):
+        elif opt in ('--daz', '--dbaz'):
             daz_range = [float(it) for it in arg.split('/') ]
         elif opt in ('--gcd_ev', '--gcd', '--gcd_rcv'):
             gcd_range = [float(it) for it in arg.split('/') ]
@@ -1080,8 +1107,8 @@ if __name__ == "__main__":
             random_sample = float(arg)
     #######
     main(mode,
-        fnm_wildcard, tmark, t1, t2, delta, input_format, year_range,
-        force_time_window,
+        fnm_wildcard, tmark, t1, t2, delta, input_format,
+        force_time_window, year_range,
         pre_detrend, pre_taper_ratio, pre_filter,
         tnorm, swht,
         dist_range, dist_step,

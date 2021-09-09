@@ -1348,7 +1348,40 @@ def sac2hdf5(fnms, hdf5_fnm, lcalda=False, info='', ignore_data=False, verbose=F
         fid.create_dataset('dat', data=mat, dtype=np.float32)
     fid.close()
     return
-def hdf52sac(hdf5_fnm, output_prefix, verbose=False):
+
+def __get_filename(template, grp_LL, grp_hdr, grp_index):
+    i0 = [i for i, c in enumerate(template) if c=='(']
+    i1 = [i for i, c in enumerate(template) if c==')']
+    filename = template[:]
+    for it0, it1 in zip(i0, i1):
+        key = template[it0+1:it1]
+        v = ''
+        if key == 'LL':
+            v = grp_LL[grp_index]
+        else:
+            v = grp_hdr[key][grp_index]
+
+        if key[0] == 'k' or key == 'LL':
+            v = v.decode('utf8').strip()
+        elif key == 'nzyear':
+            v = '%04d' % v
+        elif key == 'nzjday':
+            v = '%03d' % v
+        elif key == 'nzhour':
+            v = '%02d' % v
+        elif key == 'nzmin':
+            v = '%02d' % v
+        elif key == 'nzsec':
+            v = '%02d' % v
+        elif key == 'nzmsec':
+            v = '%03d' % v
+
+        tmp = '(%s)' % key
+        filename = filename.replace(tmp, v)
+    return filename
+        #   'junk/(knetwk).(kstnm).(LL).BHZ'
+        #   'junk/(nzyear)-(nzjday)-(nzhour)-(nzmin)-(nzsec)-(nzmsec).BHZ'
+def hdf52sac(hdf5_fnm, output_template, verbose=False):
     """
     Convert a single hdf5 file into many sac files into.
     The hdf5 file is generated with sac2hdf5(...).
@@ -1357,6 +1390,7 @@ def hdf52sac(hdf5_fnm, output_prefix, verbose=False):
     nfile = fid.attrs['nfile']
 
     grp_hdr = fid['hdr']
+    grp_LL = fid['LL'][:]
     hdr_dict = dict()
     delta     = grp_hdr['delta'][:]
     depmin    = grp_hdr['depmin'][:]
@@ -1631,7 +1665,8 @@ def hdf52sac(hdf5_fnm, output_prefix, verbose=False):
         hdr.kinst     = kinst[idx]
         ys = mat[idx,:hdr.npts]
         #print(fnmlst[idx] )
-        fnm = '%s%s' % (output_prefix, fnmlst[idx].decode('ascii').split('/')[-1] )
+        fnm = __get_filename(output_template, grp_LL, grp_hdr, idx)
+        #fnm = '%s%s' % (output_prefix, fnmlst[idx].decode('ascii').split('/')[-1] )
         if verbose:
             print(fnm)
         c_wrt_sac(fnm, ys, hdr, False, verbose)
