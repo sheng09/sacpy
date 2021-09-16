@@ -117,7 +117,7 @@ def great_circle_plane_center_triple(lon1, lat1, lon2, lat2, ptlo, ptla, critica
     """
     x1, y1, z1 = rlola_to_xyz(1.0, lon1, lat1)
     x2, y2, z2 = 0.0, 0.0, 0.0
-    if abs(lon1-lon2)>critical_distance and abs(lat1-lat2)>critical_distance:
+    if abs(lon1-lon2)>critical_distance or abs(lat1-lat2)>critical_distance:
         x2, y2, z2 = rlola_to_xyz(1.0, lon2, lat2)
     else:
         x2, y2, z2 = rlola_to_xyz(1.0, ptlo, ptla)
