@@ -1293,6 +1293,68 @@ __hs_keys=( 'kstnm',     'kevnm',
             'kt9',       'kf',        'kuser0',
             'kuser1',    'kuser2',    'kcmpnm',
             'knetwk',    'kdatrd',    'kinst'  )
+def mat2hdf5(mat, hdf5_fnm, info='', ignore_data=False, verbose=False, **kwargs):
+    """
+    Convert many traces into a single hdf5 file.
+
+    mat:         a 2D matrix of data Each row of the matrix is an 1D trace.
+    hdf5_fnm:    filename for output hdf5 file.
+    lcalda:      (default is False).
+    info:        An information string that output the hdf5.
+    ignore_data: Ignore time series, and only save sachdr data in the output.
+    verbose:     (default is False).
+
+    kwargs:      use for metadata such as data in sachdr.
+                 e.g., b = x, in which x is a list of float values.
+
+    Note: this function does not check validity of time series. If some values
+    are invalid (e.g., broken), then the related hdr data in hdf5 file will be
+    meaningless and the related time series will be zeros.
+    """
+
+    nfile = mat.shape[0]
+
+    fid = h5_File(hdf5_fnm, 'w')
+    fid.attrs['info'] = info
+    fid.attrs['nfile'] = nfile
+    if 'filename' in kwargs:
+        fid.create_dataset('filename', data=[it.encode('ascii') for it in kwargs['filename'] ] )
+    if 'LL' in kwargs:
+        fid.create_dataset('LL',       data=[it.encode('ascii') for it in kwargs['LL'] ] )
+
+    grp_hdr = fid.create_group('hdr')
+    ffi_string = ffi.string
+    empty_float32 = np.zeros(nfile, dtype=np.float32 ) -12345.0
+    empty_int32   = np.zeros(nfile, dtype=np.int32 ) -12345
+    empty_S8      = np.array([b'-12345']*nfile, dtype='S8')
+    for nm in __hf_keys:
+        if nm in kwargs:
+            grp_hdr.create_dataset(nm, data=kwargs[nm], dtype=np.float32 )
+        else:
+            grp_hdr.create_dataset(nm, data=empty_float32, dtype=np.float32 )
+    for nm in __hi_keys:
+        if nm in kwargs:
+            grp_hdr.create_dataset(nm, data=kwargs[nm], dtype=np.int32 )
+        else:
+            grp_hdr.create_dataset(nm, data=empty_int32, dtype=np.int32 )
+
+    if 'kstnm' in kwargs:
+        grp_hdr.create_dataset('kstnm', data=[ffi_string(it) for it in kwargs[nm] ],  dtype='S8' )
+    else:
+        grp_hdr.create_dataset('kstnm', data=empty_S8,  dtype='S8' )
+    if 'kevnm' in kwargs:
+        grp_hdr.create_dataset('kevnm', data=[ffi_string(it) for it in kwargs[nm] ],  dtype='S16' )
+    else:
+        grp_hdr.create_dataset('kevnm', data=empty_S8,  dtype='S16' )
+
+    for nm in __hs_keys[2:]:
+        if nm in kwargs:
+            grp_hdr.create_dataset(nm, data=[ffi_string(it) for it in kwargs[nm] ],  dtype='S8' )
+        else:
+            grp_hdr.create_dataset(nm, data=empty_S8, dtype='S8' )
+
+    if not ignore_data:
+        fid.create_dataset('dat', data=mat, dtype=np.float32)
 def sac2hdf5(fnms, hdf5_fnm, lcalda=False, info='', ignore_data=False, verbose=False):
     """
     Convert many sac files into a single hdf5 file.
@@ -1330,7 +1392,7 @@ def sac2hdf5(fnms, hdf5_fnm, lcalda=False, info='', ignore_data=False, verbose=F
     tmp_char = [ffi.cast('char*', it) for it in hdrs] ## string hdr values
     ffi_string = ffi.string
     grp_hdr.create_dataset('kstnm', data=[ffi_string(it[440:448]) for it in tmp_char],  dtype='S8' )
-    grp_hdr.create_dataset('kevnm', data=[ffi_string(it[448:464]) for it in tmp_char],  dtype='S8' )
+    grp_hdr.create_dataset('kevnm', data=[ffi_string(it[448:464]) for it in tmp_char],  dtype='S16' )
     for idx, nm in enumerate(__hs_keys[2:]):
         i1, i2 = 464+idx*8, 472+idx*8
         grp_hdr.create_dataset(nm, data=[ffi_string(it[i1:i2]) for it in tmp_char],  dtype='S8' )
@@ -2131,7 +2193,7 @@ if __name__ == "__main__":
         st.write('junk3.sac')
         print(st.start_time())
         sys.exit(0)
-    if True:
+    if False:
         st1 = c_rd_sac('test_tmp/1.sac')
         st2 = c_rd_sac('test_tmp/3.sac')
         a1, a2 = c_align_cc_sac((st2, st1), 2, None, False)
@@ -2150,8 +2212,22 @@ if __name__ == "__main__":
     #sac2hdf5('/home/catfly/00-LARGE-IMPORTANT-PERMANENT-DATA/AU_dowload/01_resampled_bhz_to_h5/01_workspace_bhz_sac/2000_008_16_47_20_+0000/*SAC',
     #            'junk.h5')
     #hdf52sac('junk.h5', 'junk/sac_', True)
-    app = scardec_stf()
-    ts, stf, metadat = app.search_stf('1992-07-13-15-34-04.000', (158.63, 51.17), False)
-    print(metadat)
-    plt.plot(ts, stf)
-    plt.show()
+    if False:
+        app = scardec_stf()
+        ts, stf, metadat = app.search_stf('1992-07-13-15-34-04.000', (158.63, 51.17), False)
+        print(metadat)
+        plt.plot(ts, stf)
+        plt.show()
+    if True:
+        nsac, npts = 10, 20
+        mat = np.zeros([nsac, npts])
+        for idx in range(nsac):
+            mat[idx, idx] = 1.0
+            mat[idx, idx+1] = -1.0
+
+        bs = [0.0 for it in range(nsac)]
+        npts = [npts]*nsac
+        delta= [1.0] *nsac
+        es   = [ib+(isz-1)*idt for (ib, isz, idt) in zip(bs, npts, delta) ]
+        mat2hdf5(mat, 'junk.h5', b=bs, npts=npts, e=es, delta=delta)
+
