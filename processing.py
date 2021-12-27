@@ -273,6 +273,57 @@ def max_amp_index(xs, t0, delta, tref, tmin, tmax, polarity=1):
     v = xs[idx]
     return idx, t0+idx*delta, v
 
+def ceil_closest_amp_index(xs, t0, delta, tref, amplitude=0.0):
+    """
+    Search for the point that have the amplitude crossing to the `amplitude` and is the closest (ceil to) the `tref`.
+
+    xs: the 1D time series. Should be an object of numpy.ndarray.
+    t0: start time of the time series in second.
+    delta: sampling time interval in second.
+    tref: reference time to search from.
+    amplitude:
+
+    Return: index, time, amplitude
+    """
+    ys = np.array(xs)
+    idx_tref = ceil_index(tref, t0, delta)
+    if idx_tref<0:
+        idx_tref = 0
+    elif idx_tref >  ys.size:
+        idx_tref = ys.size
+    ys = ys[idx_tref:] - amplitude
+    ###################################
+    vmul = ys[:-1] * ys[1:]
+    i0 = np.where(vmul<=0.0)[0][0]
+    #print(i0+idx_tref, ys[i0], t0+delta*(i0+idx_tref) )
+    return i0+idx_tref, t0+delta*(i0+idx_tref), ys[i0]
+
+def floor_closest_amp_index(xs, t0, delta, tref, amplitude=0.0):
+    """
+    Search for the point that have the amplitude crossing to the `amplitude` and is the closest (floor to) the `tref`.
+
+    xs: the 1D time series. Should be an object of numpy.ndarray.
+    t0: start time of the time series in second.
+    delta: sampling time interval in second.
+    tref: reference time to search from.
+    amplitude:
+
+    Return: index, time, amplitude
+    """
+    ys = np.array(xs)
+    idx_tref = floor_index(tref, t0, delta)
+    if idx_tref<0:
+        idx_tref = 0
+    elif idx_tref >  ys.size:
+        idx_tref = ys.size
+    ys = ys[:idx_tref] - amplitude
+    ###################################
+    vmul = ys[:-1] * ys[1:]
+    i0 = np.where(vmul<=0.0)[0][-1]
+    return i0, t0+delta*i0, ys[i0]
+
+
+
 #############################################################################################################################
 # JIT cut
 #############################################################################################################################
