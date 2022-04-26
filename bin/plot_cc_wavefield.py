@@ -140,7 +140,7 @@ def run(h5_filename, figname, dist_range=None, cc_time_range=None,
     ###
     #ax1.set_xlim(dist_range)
     if not axhist:
-        ax1.set_xlabel('Inter-receiver distance ($\degree$)')
+        ax1.set_xlabel('Distance ($\degree$)')
     else:
         ax1.set_xticklabels(())
     if ylabel == 'all' or ylabel == 'cc':
