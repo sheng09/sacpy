@@ -3,6 +3,8 @@
 Executable files for cross-correlation and stacking operations
 """
 from glob import glob
+
+from scipy import rand
 from sacpy.sac import c_rd_sac, c_mk_sachdr_time, c_rd_sachdr, c_wrt_sac
 from sacpy.geomath import haversine, azimuth, point_distance_to_great_circle_plane, great_circle_plane_center_triple
 from sacpy.processing import iirfilter_f32, taper, rmean, detrend, cut, tnorm_f32, fwhiten_f32
@@ -10,7 +12,7 @@ from sacpy.processing import iirfilter_f32, taper, rmean, detrend, cut, tnorm_f3
 from numba import jit
 from h5py import File as h5_File
 
-from numpy import array, roll, zeros, ones, argmin, argmax, abs, float32, complex64, int32, arange, isnan, conj, round
+from numpy import array, roll, zeros, ones, argmin, argmax, abs, float32, complex64, int32, arange, isnan, conj, round, sign
 from numpy.random import random
 from pyfftw.interfaces.numpy_fft import rfft, irfft
 
@@ -214,6 +216,7 @@ def rd_wh_sac(fnm_wildcard, tmark, t1, t2, delta, force_time_window, year_range,
     wtlen, wt_f1, wt_f2, wflen, speedup_i1, speedup_i2, whiten_taper_halfsize,
     fftsize, nrfft_valid,
     min_recordings,
+    rnd_dev_ot,
     mpi_log_fid):
     """
     Read, whiten, and compute the spectra given sac filenames.
@@ -227,6 +230,7 @@ def rd_wh_sac(fnm_wildcard, tmark, t1, t2, delta, force_time_window, year_range,
         Parameters for whitening.
     fftsize, nrfft_valid:
         Parameters for optaining spectra.
+    rnd_dev_ot: random deviations for origin time in seconds.
     """
     fnms = sorted(glob(fnm_wildcard))
     nsac = len(fnms)
@@ -251,7 +255,9 @@ def rd_wh_sac(fnm_wildcard, tmark, t1, t2, delta, force_time_window, year_range,
     taper(pre_taper_win, pre_taper_halfsize)
     time_rd, time_preproc, time_whiten, time_fft = 0.0, 0.0, 0.0, 0.0
     index = 0
-    for it in fnms:
+
+    dev_ot_lst = zeros(len(fnms), dtype=float32) if rnd_dev_ot < 0.0 else (random(len(fnms), dtype=float32)-0.5)*2.0*rnd_dev_ot
+    for it, dev_ot in zip(fnms, dev_ot_lst):
         ttmp = time()
 
         hdr = c_rd_sachdr(it)
@@ -260,7 +266,7 @@ def rd_wh_sac(fnm_wildcard, tmark, t1, t2, delta, force_time_window, year_range,
             if hdr.nzyear < min_year or hdr.nzyear > max_year:
                 continue
 
-        b, e = hdr.b, hdr.e
+        b, e = hdr.b+dev_ot, hdr.e
         tmp = (hdr.t0, hdr.t1, hdr.t2, hdr.t3, hdr.t4, hdr.t5, hdr.t6, hdr.t7, hdr.t8, hdr.t9, 0.0, 0.0, hdr.b, hdr.e, hdr.o, hdr.a, 0.0)
         if force_time_window != None:
             ftw_t1 = tmp[ftw_tmark] + ftw_t1
@@ -338,6 +344,7 @@ def rd_wh_h5(fnm, tmark, t1, t2, delta, force_time_window, year_range, npts,
     wtlen, wt_f1, wt_f2, wflen, speedup_i1, speedup_i2, whiten_taper_halfsize,
     fftsize, nrfft_valid,
     min_recordings,
+    rnd_dev_ot,
     mpi_log_fid):
     """
     Read, whiten, and compute the spectra given a hdf5 file.
@@ -350,6 +357,7 @@ def rd_wh_h5(fnm, tmark, t1, t2, delta, force_time_window, year_range, npts,
         Parameters for whitening.
     fftsize, nrfft_valid:
         Parameters for optaining spectra.
+    rnd_dev_ot: random deviations for origin time in seconds.
     """
 
     fid = h5_File(fnm, 'r')
@@ -385,6 +393,9 @@ def rd_wh_h5(fnm, tmark, t1, t2, delta, force_time_window, year_range, npts,
     raw_b     = fid['hdr/b'][:]
     raw_year  = fid['hdr/nzyear'][:]
     raw_npts  = fid['hdr/npts'][:]
+
+    if rnd_dev_ot > 0.0:
+        raw_b += ( (random(nsac, dtype=float32)-0.5)*2.0*rnd_dev_ot )
 
     tmp = ('t0', 't1', 't2', 't3', 't4', 't5', 't6', 't7', 't8', 't9', 0, 'b', 'e', 'o', 'a', 0) # -3 is 'o' and -5 is 'b'
     if force_time_window != None:
@@ -756,7 +767,8 @@ def main(mode,
     post_fold = False, post_detrend=False, post_taper_halfratio = 0.005, post_filter=None, post_cut= None, post_scale = False,           # post-proc param
     output_fnm_prefix= 'junk', output_format= ['hdf5'],                                                             # output param
     log_prefnm= 'cc_mpi_log', log_mode=None,           # log param
-    spec_acc_threshold = 0.01, random_sample=-1.0 ):  # other param
+    spec_acc_threshold = 0.01, random_sample=-1.0,    # other param
+    rnd_dev_loc=None, rnd_dev_ot=0.0):   # artificial inaccuracy param
     """
     """
     tc_main = time()
@@ -799,6 +811,7 @@ def main(mode,
                         wtlen, wt_f1, wt_f2, wflen, speedup[0], speedup[1], pre_taper_halfsize,
                         cc_fftsize, cc_speedup[1],
                         min_recordings,
+                        rnd_dev_ot,
                         mpi_log_fid)
 
         spec_mat, stlo, stla, evlo, evla, az, baz, gcarc, (time_rd, time_preproc, time_whiten, time_fft) = tmp
@@ -813,6 +826,15 @@ def main(mode,
         lon, lat, azimuth = (stlo, stla, az) if flag_mode == 0 else (evlo, evla, baz)
         pt_lon, pt_lat = (evlo[0], evla[0])  if flag_mode == 0 else (stlo[0], stla[0])
 
+        if rnd_dev_loc: # randomly deviate the locations
+            junk = (random( (2, lon.size) )-0.5)*2.0
+            dlon, dlat = junk[0], junk[1]
+            dlon *= rnd_dev_loc[0]
+            dlat *= rnd_dev_loc[1]
+            lon  += dlon
+            lat  += dlat
+            lon = lon % 360
+            lat = array( [90.0*sign(it) for it in lat if it>89.99 or it<-89.99 ], dtype=float32 )
 
         ttmp = time()
         if flag_selection:
@@ -879,6 +901,7 @@ HMSG = """%s --mode r2r -I "in*/*.sac" -T -5/10800/32400 -D 0.1 --input_format s
     [--w_temporal 128.0/0.02/0.06667] [--w_spec 0.02]
     [--post_fold] [--post_taper 0.05] [--post_filter bandpass/0.02/0.0666] [--post_norm] [--post_cut]
      --log cc_log  [--log_mode 0] [--acc=0.01] [--random_sample 0.6]
+    [--rnd_dev_loc 5.0/5.0] [--rnd_dev_ot 50.0]
 
 Args:
     #0. Mode:
@@ -936,6 +959,12 @@ Args:
     --acc : acceleration threshold. (default is 0.01)
     --random_sample : random resample the cross-correlation functions in the stacking.  (a value between 0 and 1)
 
+    #7. Add artificial inaccuracy into the input data.
+    --rnd_dev_loc : randomly deviate the location (longitude/latitude) of stations or events for inter-station or inter-source correlations, respectively.
+                E.g., `--rnd_dev_loc 2.0/5.0` will randomly deviate the longitude for up to 2.0 degree and latitude for up to 5.0 degree.
+    --rnd_dev_ot: randomly deviate the origin time of events.
+                E.g., `--rnd_dev_ot 50.0` will randomly deviate the origin time for up to 50.0 seconds.
+
 E.g.,
     %s --mode r2r -I "in*/*.sac" -T -5/10800/32400 -D 0.1 --input_format sac \
 --year_range 2010/2020 \
@@ -948,6 +977,7 @@ E.g.,
 --gc_area N,300/30/10,330/-10/50.0 --min_recordings 100 \
 --post_fold --post_taper 0.005 --post_filter bandpass/0.01/0.06667 --post_norm  --post_cut 0/5000 \
 --log cc_log --log_mode=0 --acc 0.01 --random_sample 0.6
+--rnd_dev_loc 5.0/5.0  --rnd_dev_ot 50.0
 
     """
 if __name__ == "__main__":
@@ -991,6 +1021,9 @@ if __name__ == "__main__":
 
     spec_acc_threshold = 0.01
     random_sample = -1.0
+
+    rnd_dev_loc = None
+    rnd_dev_ot  = 0.0
     ######################
     if len(sys.argv) <= 1:
         print(HMSG % (sys.argv[0], sys.argv[0]), flush=True)
@@ -1009,7 +1042,8 @@ if __name__ == "__main__":
                              'gc_center_rect=', 'gc_center_circle=', 'gc_area=',
                              'min_recordings=', 'min_ev_per_rcv=', 'min_rcv_per_ev=', 'epdd',
                              'post_fold', 'post_taper=', 'post_filter=', 'post_norm', 'post_cut=',
-                             'log=', 'log_mode=', 'acc=', 'random_sample='] )
+                             'log=', 'log_mode=', 'acc=', 'random_sample=',
+                             'rnd_dev_loc=', 'rnd_dev_ot='] )
     for opt, arg in options:
         if opt in ('--mode'):
             mode = arg
@@ -1105,6 +1139,10 @@ if __name__ == "__main__":
             spec_acc_threshold = float(arg)
         elif opt in ('--random_sample'):
             random_sample = float(arg)
+        elif opt in '--rnd_dev_loc':
+            rnd_dev_loc= [float(it) for it in arg.split('/')]
+        elif opt in '--rnd_dev_ot':
+            rnd_dev_ot= float(arg)
     #######
     main(mode,
         fnm_wildcard, tmark, t1, t2, delta, input_format,
@@ -1116,6 +1154,7 @@ if __name__ == "__main__":
         post_fold, post_detrend, post_taper_ratio, post_filter, post_cut, post_norm,
         output_pre_fnm, output_format,
         log_prefnm, log_mode,
-        spec_acc_threshold, random_sample)
+        spec_acc_threshold, random_sample,
+        rnd_dev_loc, rnd_dev_ot)
 
 
