@@ -290,17 +290,20 @@ if __name__ == '__main__':
     #plot_globe3d(p, globe, style='fancy1', alpha=1.0, culling='back', clip=('plane', ((0, 0, 1), (0, 0, 0), False) )  ) #('plane', (normal, origin, invert) )
 
     #plot_vertical_half_globe3d(p, globe, style='Mars', alpha=1.0, culling='back', cut_longitude=30.0 )
-    plot_horizontal_half_globe3d(p, globe, style='fancy1', alpha=1.0, culling='back')
-    plot_great_circle_plane(p, globe, normal=(0, 0, 1), color_method=('vp', None), cmap='copper' )
-    plot_point(p, globe, 0, 0, 300.0, size=600, symbol='cylinder')
-    plot_point(p, globe, 30, 0, 300.0, size=600, symbol='sphere1')
-    plot_point(p, globe, 60, 0, 300.0, size=600, symbol='cone')
+    #plot_horizontal_half_globe3d(p, globe, style='fancy1', alpha=1.0, culling='back')
+    #plot_great_circle_plane(p, globe, normal=(0, 0, 1), color_method=('vp', None), cmap='copper' )
+    #plot_point(p, globe, 0, 0, 300.0, size=600, symbol='cylinder')
+    #plot_point(p, globe, 30, 0, 300.0, size=600, symbol='sphere1')
+    #plot_point(p, globe, 60, 0, 300.0, size=600, symbol='cone')
 
 
-    #globe2 = globe3d(radius=6371, center=(0, 0, 4000) )
-    #plot_globe3d(p, globe2, style='Mars', alpha=1.0, culling='back', clip=('plane', ((0, 0, 1), (0, 0, 4000), False) )  ) #('plane', (normal, origin, invert) )
+    globe2 = globe3d(radius=6371, center=(0, 0, 2000) )
+    plot_globe3d(p, globe2, style='Mars', alpha=1.0, culling='back', clip=('plane', ((0, 0, 1), (0, 0, 2000), False) )  ) #('plane', (normal, origin, invert) )
+    plot_great_circle_plane(p, globe2, normal=(0, 0, 1), color_method=('vp', None), cmap='copper' )
+
+    #globe2 = globe3d(radius=6371, center=(0, 0, 000) )
+    #plot_globe3d(p, globe2, style='Mars', alpha=1.0, culling='back', clip=('plane', ((0, 0, 1), (0, 0, 0), True) )  ) #('plane', (normal, origin, invert) )
     #plot_great_circle_plane(p, globe2, normal=(0, 0, 1), color_method=('vp', None), cmap='copper' )
-
     #plot_globe3d(p, radius=6371, style=None, coastline=True, culling='back', alpha=0.3, color='#AACCFF')
     #plot_globe3d(p, radius=3480, style=None, coastline=True, culling='back', alpha=0.3)
     #plot_globe3d(p, radius=1215, style=None, coastline=True, culling='back', alpha=0.6, color='r')
