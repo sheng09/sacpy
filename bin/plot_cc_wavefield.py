@@ -45,6 +45,7 @@ def run(h5_filename, figname, dist_range=None, cc_time_range=None,
         i1 = np.argmin(abs(dist-d1))
         i2 = np.argmin(abs(dist-d2)) + 1
         mat = mat[i1:i2, :]
+        dist = dist[i1:i2]
         stack_count = stack_count[i1:i2]
         abs_amp = abs_amp[i1:i2]
 
@@ -139,7 +140,7 @@ def run(h5_filename, figname, dist_range=None, cc_time_range=None,
     ###
     #ax1.set_xlim(dist_range)
     if not axhist:
-        ax1.set_xlabel('Inter-receiver distance ($\degree$)')
+        ax1.set_xlabel('Distance ($\degree$)')
     else:
         ax1.set_xticklabels(())
     if ylabel == 'all' or ylabel == 'cc':
