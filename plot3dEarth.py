@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 # sphinx_gallery_thumbnail_number = 1
+from glob import glob
 from PIL.Image import radial_gradient
 from matplotlib.colors import LightSource
 from numpy.core.numeric import ones
@@ -10,7 +11,7 @@ from pyvista import examples as pv_examples
 import numpy as np
 import pickle
 from scipy.interpolate import interp1d
-
+from scipy.ndimage import gaussian_filter
 import obspy.taup as taup
 
 from os.path import abspath as os_path_abspath
@@ -112,6 +113,10 @@ def get_global_map(style='simple', coastline=False, land=None, ocean=None):
     elif style == 'Cat1':
         figname1 = '%s/Cat1.jpeg' % loc
         figname2 = '%s/Cat1.jpeg' % loc
+    elif style == 'Mosaic':
+        figname1 = '%s/Mosaic.jpeg' % loc
+        figname2 = '%s/Mosaic.jpeg' % loc
+        #plot_mosaic_map(figname1)
     else:
         print('Wrong style for get_global_map(...)', style)
         sys.exit(-1)
@@ -141,7 +146,14 @@ def plot_global_map(files, style='simple', coastline=False, land=None, ocean=Non
         ax.axis('off')
         plt.savefig(figname, bbox_inches = 'tight', pad_inches = 0, dpi=300, transparent=True)
         plt.close()
-
+def plot_mosaic_map(figname):
+    mat = np.random.random((1000, 1000) )-0.5
+    mat = gaussian_filter(mat, 3)
+    fig, ax = plt.subplots(1, 1, figsize=(20, 10))
+    ax.imshow(mat, cmap='gray') #, vmax=0.5, vmin=-1)
+    ax.axis('off')
+    plt.savefig(figname, bbox_inches = 'tight', pad_inches = 0, dpi=300, transparent=True)
+    pass
 #############################################################################################################################################################################################
 # Functions for plotting globe and great-circle planes
 #############################################################################################################################################################################################
@@ -167,7 +179,7 @@ def plot_globe3d(p, globe, style='simple', coastline=False, land=None, ocean=Non
             normal, origin, invert = clip[1]
             sphere.clip(normal, origin, invert, inplace= True)
 
-    if style in ('simple', 'fancy1', 'fancy2', 'Mars', 'Cat1'):
+    if style in ('simple', 'fancy1', 'fancy2', 'Mars', 'Cat1', 'Mosaic'):
         tex1, tex2 = get_global_texture(style, coastline, land, ocean)
         PI2_INV = 1.0/(2 * np.pi)
         PI_INV  = 2.0*PI2_INV
@@ -210,16 +222,19 @@ def plot_grid(p, globe, lons=(0, 60, 120, 180, 240, 300), lats= (-60, -30, 0, 30
         r = radius*np.cos(la)
         disc = pv.Disc(center=center, inner=r, outer=r, normal=(0, 0, 1), r_res=1, c_res=360)
         p.add_mesh(disc, edge_color=color, show_edges=True, culling=culling, opacity=alpha, line_width=line_width)
-def plot_great_circle_plane(p, globe, normal, alpha=1.0, culling=None, color_method=('uniform', 'k'), cmap='plasma'):
+def plot_great_circle_plane(p, globe, normal, r_range=None, alpha=1.0, culling=None, color_method=('uniform', 'k'), cmap='plasma'):
     """
     """
     radius, center = globe.radius, globe.center
+    inner, outer = 0.0, radius
+    if r_range:
+        inner, outer = r_range
     if color_method[0] == 'uniform':
-        circle_plane = pv.Disc(center=center, inner=0.0, outer=radius, normal=normal, r_res=100, c_res=360)
+        circle_plane = pv.Disc(center=center, inner=inner, outer=outer, normal=normal, r_res=100, c_res=360)
         color=color_method[1]
         p.add_mesh(circle_plane, color=color, show_edges=False, opacity=alpha, smooth_shading=True, lighting=True, culling=culling, show_scalar_bar=False)
     elif color_method[0] == 'radial': # ('radial', (rs, values) )
-        circle_plane = pv.Disc(center=center, inner=0.0, outer=radius, normal=normal, r_res=100, c_res=360)
+        circle_plane = pv.Disc(center=center, inner=inner, outer=outer, normal=normal, r_res=100, c_res=360)
 
         rs, vs = color_method[1]
         func = interp1d(rs, vs,)
@@ -274,11 +289,30 @@ def plot_point(p, globe, lo, la, dp=0.0, size=300, symbol='cone', color='r', alp
         sta = pv.Cylinder(center=center, direction=direction, radius=size*0.5, height=size, resolution=30, capping=True)
 
     p.add_mesh(sta, color=color, show_edges=False, opacity=alpha, smooth_shading=True, lighting=True, culling=culling)
+def plot_line(p, globe, xs, ys, zs, color, show_edges=True, opacity=0.5, lighting=False, line_width=5):
+    points = np.column_stack((xs, ys, zs) )
+    poly = pv.Spline(points, xs.size)
+    p.add_mesh(poly, show_edges=show_edges, opacity=opacity, color=color, lighting=lighting, line_width=line_width)
+
 
 if __name__ == '__main__':
     p = pv.Plotter(notebook=0, shape=(1, 1), border=False, window_size=(1700, 1200) )
-    p.set_background('black')
+    p.set_background('white')
     globe = globe3d(radius=6371, center=(0, 0, 0) )
+    plot_globe3d(p, globe, style='Mosaic', alpha=1.0, culling='back', clip=('plane', ((0, 0, 1), (0, 0, 0), True) )  ) #('plane', (normal, origin, invert) )
+    #globe2 = globe3d(radius=6371, center=(0, 0, 5000) )
+    #plot_globe3d(p, globe2, style='Mosaic', alpha=1.0, culling='back', clip=('plane', ((0, 0, 1), (0, 0, 5000), False) )  ) #('plane', (normal, origin, invert) )
+    #plot_globe3d(p, globe, style='Mosaic', alpha=1.0, culling='back', clip=('plane', ((0, 1, 0), (0, 0, 0), True) )  ) #('plane', (normal, origin, invert) )
+    #plot_globe3d(p, globe, style='Mosaic', alpha=1.0, culling='back', clip=('box', [[-10000, 0, -10000, 0, -10000, 10000], True]) ) #('box', ((xmin, xmax, ymin, ymax, zmin, zmax), invert)) )
+    rs, vs = (0, 3500, 3500, 3500, 6371), (9, 8, 12, 13, 5)
+    plot_great_circle_plane(p, globe, normal=(0, 0, 1), color_method=('radial', (rs, vs)), cmap='gray' )
+
+    # Plot stations and events
+    plot_point(p, globe, 0, 0, 0, size=300, symbol='sphere1', color='r', culling='back')
+
+
+
+    #plot_great_circle_plane(p, globe, normal=(0, 1, 0), color_method=('vp', None), cmap='gray' )
 
     #plot_globe3d(p, globe, style='simple', coastline=True, culling='back')
     #plot_globe3d(p, globe, style='simple', coastline=False, land='#9B7E55', ocean=None, alpha=1, culling='back')
@@ -297,9 +331,9 @@ if __name__ == '__main__':
     #plot_point(p, globe, 60, 0, 300.0, size=600, symbol='cone')
 
 
-    globe2 = globe3d(radius=6371, center=(0, 0, 2000) )
-    plot_globe3d(p, globe2, style='Mars', alpha=1.0, culling='back', clip=('plane', ((0, 0, 1), (0, 0, 2000), False) )  ) #('plane', (normal, origin, invert) )
-    plot_great_circle_plane(p, globe2, normal=(0, 0, 1), color_method=('vp', None), cmap='copper' )
+    #globe2 = globe3d(radius=6371, center=(0, 0, 2000) )
+    #plot_globe3d(p, globe2, style='Mars', alpha=1.0, culling='back', clip=('plane', ((0, 0, 1), (0, 0, 2000), False) )  ) #('plane', (normal, origin, invert) )
+    #plot_great_circle_plane(p, globe2, normal=(0, 0, 1), color_method=('vp', None), cmap='copper' )
 
     #globe2 = globe3d(radius=6371, center=(0, 0, 000) )
     #plot_globe3d(p, globe2, style='Mars', alpha=1.0, culling='back', clip=('plane', ((0, 0, 1), (0, 0, 0), True) )  ) #('plane', (normal, origin, invert) )
