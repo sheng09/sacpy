@@ -117,6 +117,10 @@ def get_global_map(style='simple', coastline=False, land=None, ocean=None):
         figname1 = '%s/Mosaic.jpeg' % loc
         figname2 = '%s/Mosaic.jpeg' % loc
         #plot_mosaic_map(figname1)
+    elif style == 'Mosaic_copper':
+        figname1 = '%s/Mosaic_copper.jpeg' % loc
+        figname2 = '%s/Mosaic_copper.jpeg' % loc
+        plot_mosaic_map(figname1, cmap='copper_r')
     else:
         print('Wrong style for get_global_map(...)', style)
         sys.exit(-1)
@@ -146,11 +150,13 @@ def plot_global_map(files, style='simple', coastline=False, land=None, ocean=Non
         ax.axis('off')
         plt.savefig(figname, bbox_inches = 'tight', pad_inches = 0, dpi=300, transparent=True)
         plt.close()
-def plot_mosaic_map(figname):
-    mat = np.random.random((1000, 1000) )-0.5
+def plot_mosaic_map(figname, cmap='gray'):
+    mat1 = np.random.random((500, 1000) )-0.5
+    mat = np.concatenate([mat1, mat1[::-1,:]])
+    mat = mat.transpose()
     mat = gaussian_filter(mat, 3)
     fig, ax = plt.subplots(1, 1, figsize=(20, 10))
-    ax.imshow(mat, cmap='gray') #, vmax=0.5, vmin=-1)
+    ax.imshow(mat, cmap=cmap) #, vmax=0.5, vmin=-1)
     ax.axis('off')
     plt.savefig(figname, bbox_inches = 'tight', pad_inches = 0, dpi=300, transparent=True)
     pass
@@ -179,7 +185,7 @@ def plot_globe3d(p, globe, style='simple', coastline=False, land=None, ocean=Non
             normal, origin, invert = clip[1]
             sphere.clip(normal, origin, invert, inplace= True)
 
-    if style in ('simple', 'fancy1', 'fancy2', 'Mars', 'Cat1', 'Mosaic'):
+    if style in ('simple', 'fancy1', 'fancy2', 'Mars', 'Cat1', 'Mosaic', 'Mosaic_copper'):
         tex1, tex2 = get_global_texture(style, coastline, land, ocean)
         PI2_INV = 1.0/(2 * np.pi)
         PI_INV  = 2.0*PI2_INV
