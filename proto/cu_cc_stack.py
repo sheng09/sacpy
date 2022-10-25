@@ -91,7 +91,8 @@ stack = stack[:,rollsize:]
 stack *= 0.5
 
 for irow in range(nstack):
-    stack[irow] *= (1.0/stack_hist[irow])
+    if stack_hist[irow] > 0:
+        stack[irow] *= (1.0/stack_hist[irow])
 
 ###
 #  8. output
