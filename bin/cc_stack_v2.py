@@ -36,6 +36,7 @@ def init_parameter(mode,
     tmark, t1, t2, delta, force_time_window=None, year_range=None, input_format='sac',                   # input param
     pre_detrend=True, pre_taper_ratio= 0.005, pre_filter= None, # pre-proc param)
     speedup_fs=None, speedup_level=0.01,
+    rnd_dev_loc=None, rnd_dev_ot=0.0,   # artificial inaccuracy param
     mpi_log_fid=None):
     """
     Return critical parameters for cross-correlation computations.
@@ -83,6 +84,11 @@ def init_parameter(mode,
     mpi_print_log(mpi_log_fid, 1, False, 'cc_npts:        ', cc_npts)
     mpi_print_log(mpi_log_fid, 1, False, 'cc_fftsize:     ', cc_fftsize)
     mpi_print_log(mpi_log_fid, 1, True,  'cc_df:          ', cc_df)
+
+    # random deviation parameters
+    mpi_print_log(mpi_log_fid, 0, False, 'Random deviation parameters:')
+    mpi_print_log(mpi_log_fid, 1, False, 'source/station location deviation max:', rnd_dev_loc)
+    mpi_print_log(mpi_log_fid, 1, True,  'event origin time deviation max:      ', rnd_dev_ot)
 
     return flag_mode, (npts, fftsize, df, speedup, pre_taper_halfsize), (cc_npts, cc_fftsize, cc_df, cc_speedup)
 def init_ccstack_spec_buf(dist_min, dist_max, dist_step, nrfft_valid, mpi_log_fid):
@@ -256,7 +262,7 @@ def rd_wh_sac(fnm_wildcard, tmark, t1, t2, delta, force_time_window, year_range,
     time_rd, time_preproc, time_whiten, time_fft = 0.0, 0.0, 0.0, 0.0
     index = 0
 
-    dev_ot_lst = zeros(len(fnms), dtype=float32) if rnd_dev_ot < 0.0 else (random(len(fnms), dtype=float32)-0.5)*2.0*rnd_dev_ot
+    dev_ot_lst = zeros(len(fnms), dtype=float32) if rnd_dev_ot < 0.0 else (random(len(fnms))-0.5)*2.0*rnd_dev_ot
     for it, dev_ot in zip(fnms, dev_ot_lst):
         ttmp = time()
 
@@ -395,7 +401,7 @@ def rd_wh_h5(fnm, tmark, t1, t2, delta, force_time_window, year_range, npts,
     raw_npts  = fid['hdr/npts'][:]
 
     if rnd_dev_ot > 0.0:
-        raw_b += ( (random(nsac, dtype=float32)-0.5)*2.0*rnd_dev_ot )
+        raw_b += ( (random(nsac)-0.5)*2.0*rnd_dev_ot )
 
     tmp = ('t0', 't1', 't2', 't3', 't4', 't5', 't6', 't7', 't8', 't9', 0, 'b', 'e', 'o', 'a', 0) # -3 is 'o' and -5 is 'b'
     if force_time_window != None:
@@ -783,7 +789,7 @@ def main(mode,
             if speedup_f1 <= 0.0:
                 speedup_f1 = 0.0001
         speedup_fs = (speedup_f1, speedup_f2) # dont worry if speedup_fs is invalid as init_speedup(...) process whatever cases
-    tmp = init_parameter(mode, tmark, t1, t2, delta, force_time_window, year_range, input_format, pre_detrend, pre_taper_halfratio, pre_filter, speedup_fs, spec_acc_threshold, mpi_log_fid)
+    tmp = init_parameter(mode, tmark, t1, t2, delta, force_time_window, year_range, input_format, pre_detrend, pre_taper_halfratio, pre_filter, speedup_fs, spec_acc_threshold, rnd_dev_loc, rnd_dev_ot, mpi_log_fid)
     flag_mode, (npts, fftsize, df, speedup, pre_taper_halfsize), (cc_npts, cc_fftsize, cc_df, cc_speedup) = tmp
 
 
@@ -833,8 +839,15 @@ def main(mode,
             dlat *= rnd_dev_loc[1]
             lon  += dlon
             lat  += dlat
+
             lon = lon % 360
-            lat = array( [90.0*sign(it) for it in lat if it>89.99 or it<-89.99 ], dtype=float32 )
+            lat = [90.0*sign(it) if (it>89.99 or it<-89.99) else it  for it in lat ]
+            lat = array(lat, dtype=float32 )
+            
+            #mpi_print_log(mpi_log_fid, 1, True, dlon)
+            #mpi_print_log(mpi_log_fid, 1, True, dlat)
+
+            
 
         ttmp = time()
         if flag_selection:
