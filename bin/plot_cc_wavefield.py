@@ -16,7 +16,7 @@ def run(h5_filename, figname, dist_range=None, cc_time_range=None,
         filter_setting =(None, 0.02, 0.0666), taper_sec =0.,
         norm_settings = (None, 'pos', (-10, 10) ), adjust_time_axis = None,
         lines= None, search_amp= None,
-        figsize= (6, 15), interpolation= None, title='', vmax= 1.0, axhist=True, yticks='all', ylabel='all', grid=False, dpi=150):
+        figsize= (6, 15), interpolation= None, title='', vmax= 1.0, axhist=True, yticks='all', ylabel='all', grid=False, dpi=150, xlabel='Distance (\degree)'):
     """
     adjust_time_axis: a tupel of (sc, xc). This will change {t-x} domain into {t-sc(x-xc),x} domain. 
                       This option help flat a steep phase.
@@ -119,7 +119,7 @@ def run(h5_filename, figname, dist_range=None, cc_time_range=None,
     
     ax1, ax2 = None, None
     if axhist:
-        fig, (ax1, ax2) = plt.subplots(2, 1, figsize= figsize, gridspec_kw={'height_ratios': [4.6, 1], 'hspace': 0.02 } )
+        fig, (ax1, ax2) = plt.subplots(2, 1, figsize= figsize, gridspec_kw={'height_ratios': [6, 1], 'hspace': 0.02 } )
     else:
         fig, ax1 = plt.subplots(1, 1, figsize= figsize )
     ###
@@ -140,7 +140,7 @@ def run(h5_filename, figname, dist_range=None, cc_time_range=None,
     ###
     #ax1.set_xlim(dist_range)
     if not axhist:
-        ax1.set_xlabel('Distance ($\degree$)')
+        ax1.set_xlabel(xlabel)
     else:
         ax1.set_xticklabels(())
     if ylabel == 'all' or ylabel == 'cc':
@@ -164,14 +164,14 @@ def run(h5_filename, figname, dist_range=None, cc_time_range=None,
         ax1.grid(linestyle=':', color='k' )
     if cc_time_range:
         ax1.set_ylim(cc_time_range)
-    ax1.set_title(title, fontsize=15)
+    ax1.set_title(title, fontsize=12)
     ###
     if axhist:
         tmp = stack_count[stack_count>0]
         ax2.bar(dist, stack_count, align='center', color='gray', width= dist[1]-dist[0] )
         ax2.set_xlim(dist_range)
         ax2.set_ylim(bottom=0, top=np.max(stack_count[1:])+30 )
-        ax2.set_xlabel('Inter-receiver distance ($\degree$)')
+        ax2.set_xlabel(xlabel)
 
         #fmt = '{x:,.0f}'
         #tick = mtick.StrMethodFormatter(fmt)
@@ -202,6 +202,7 @@ def plt_options(args):
     ylabel = None
     grid   = False
     dpi    = 150
+    xlabel = 'Distance (\degree)'
     ###
     for it in args.split(','):
         opt, value = it.split('=')
@@ -231,7 +232,9 @@ def plt_options(args):
             grid = True if value == 'True' else False
         elif opt == 'dpi':
             dpi = float(value)
-    return figsize, interpolation, title, vmax, axhist, yticks, ylabel, grid, dpi
+        elif opt == 'xlabel':
+            xlabel = '%s' % value
+    return figsize, interpolation, title, vmax, axhist, yticks, ylabel, grid, dpi, xlabel
 
 def get_lines(fnms):
     """
@@ -318,6 +321,7 @@ if __name__ == "__main__":
     ylabel = 'all'
     grid = False
     dpi = 100
+    xlabel = 'Distance (\degree)'
     #### adjust amplitude to plot
     #### line along which to normalize
     norm_settings = 'raw'
@@ -406,7 +410,7 @@ Args:
         elif opt in ('--lines'):
             lines = get_lines(arg)
         elif opt in ('--plt'):
-            figsize, interpolation, title, vmax, axhist, yticks, ylabel, grid, dpi = plt_options(arg)
+            figsize, interpolation, title, vmax, axhist, yticks, ylabel, grid, dpi, xlabel = plt_options(arg)
         else:
             print(HMSG)
             exit(0)
@@ -415,5 +419,5 @@ Args:
         filter_setting, taper_sec,
         norm_settings, adjust_time_axis,
         lines, search_amp,
-        figsize, interpolation, title, vmax, axhist, yticks, ylabel, grid, dpi)
+        figsize, interpolation, title, vmax, axhist, yticks, ylabel, grid, dpi, xlabel)
 
