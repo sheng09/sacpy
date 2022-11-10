@@ -9,15 +9,64 @@ import matplotlib.pyplot as plt
 import matplotlib.transforms
 import pickle
 import os.path
-import sys
-from numpy import array, argsort, rad2deg, linspace, interp
-from time import time as compute_time
-from sacpy.taupplotlib import plotPrettyEarth, plotStation, plotEq
 import sacpy
+import sys
+from numpy import array, argsort, rad2deg
+from time import time as compute_time
 
 mod_ak135 = taup.TauPyModel('ak135')
 
-def _plotPrettyEarth(ax, model, distlabel=False):
+def get_intersection(pt1, pt2, qt1, qt2):
+    """
+    Check if two line segments intersect and return the intersection point.
+    return (Ture/False, (x, y) )
+    """
+    x1, y1 = pt1
+    x2, y2 = pt2
+    x3, y3 = qt1
+    x4, y4 = qt2
+    if x1 == x2 or x3 == x4:
+        return False, (None, None)
+    ##
+    nx =   ((x1*y2 - x2*y1)*(x3 - x4)) - ((x3*y4 - x4*y3)*(x1 - x2) ) # x = nx/d
+    ny =   ((x1*y2 - x2*y1)*(y3 - y4)) - ((x3*y4 - x4*y3)*(y1 - y2) ) # y = ny/d
+    
+    d  = (x1*y3 - x3*y1 - x1*y4 - x2*y3 + x3*y2 + x4*y1 + x2*y4 - x4*y2)
+    
+    #if d == 0.0:
+    #    print(nx, ny, d, pt1, pt2, qt1, qt2)
+    #    return False, (None, None)
+    x = nx/d # if d != 0.0 else 0.0
+    y = ny/d # if d != 0.0 else 0.0
+    ## x1 <= x    <=  x2
+    #  x1 <= nx/d <=  x2
+    # dx1 <= nx   M= dx2
+    flag1 = (x1-x)*(x2-x)
+    flag2 = (x3-x)*(x4-x)
+    if flag1 <=0 and flag2 <=0:
+        #print(flag1, flag2)
+        return True, (x, y)
+    else:
+        return False, (x, y)
+def get_intersection_between_list_points(pts, qts):
+    ips, iqs, xs, ys = list(), list(), list(), list()
+    flag = False
+    for ip, (pt1, pt2) in enumerate( zip( pts[:-1], pts[1:] ) ):
+        for iq, (qt1, qt2) in enumerate(zip(qts[:-1], qts[1:] ) ):
+            flag, (x, y) = get_intersection(pt1, pt2, qt1, qt2)
+            #print(flag, x, y)
+            #sys.exit()
+            if flag:
+                ips.append(ip)
+                iqs.append(iq)
+                xs.append(x)
+                ys.append(y)
+                flag=False
+    if len(xs)>0:
+        return True, ips, iqs, xs, ys
+    else:
+        return False, ips, iqs, xs, ys
+def plotPrettyEarth(ax, model, distlabel=False):
     """
     Plot Earth with discontinuities.
     ax: axes to plot;
@@ -31,7 +80,7 @@ def _plotPrettyEarth(ax, model, distlabel=False):
     
     if distlabel:
         ticks = np.arange(0, 360, 45)
-        ticklabels = ticks #[it if it <=180.0 else it-360.0 for it in ticks ]
+        ticklabels = [it if it <=180.0 else it-360.0 for it in ticks ]
         ax.set_xticks( np.deg2rad(ticks) )
         ax.set_xticklabels( ticklabels )
     ax.xaxis.grid(False)
@@ -43,7 +92,7 @@ def _plotPrettyEarth(ax, model, distlabel=False):
     #ax.xaxis.set_major_formatter(plt.NullFormatter())
     ax.yaxis.set_major_formatter(plt.NullFormatter())
     ax.set_ylim([0.0, model.model.radius_of_planet]) 
-def _plotStation(ax, model, stdp_list, stlo_list, color='#E5E5E5'):
+def plotStation(ax, model, stdp_list, stlo_list, color='#E5E5E5'):
     """
     Plot stations.
     ax: axes to plot;
@@ -74,7 +123,7 @@ def _plotStation(ax, model, stdp_list, stlo_list, color='#E5E5E5'):
                     textcoords='data',
                     arrowprops=arrowprops,
                     clip_on=False)
-def _plotEq(ax, model, eqdp_list, eqlo_list):
+def plotEq(ax, model, eqdp_list, eqlo_list):
     """
     Plot Earthquake.
     ax: axes to plot;
@@ -115,7 +164,7 @@ class cc_feature_time:
         Get and build dataset for seismic phases.
         """
         ttmp = compute_time()
-        ###
+
         filename = '%s/bin/dataset/cc_feature_time.pkl' % sacpy.__path__[0]
         evdp_meter = int(evdp_km*1000)
         search_key = (phase, evdp_meter)
@@ -124,120 +173,123 @@ class cc_feature_time:
             with open(filename, 'rb') as fid:
                 vol = pickle.load(fid)
         if search_key not in vol:
-            ### get all possible arrivals
+            ###
             arrs = []
             for dist in np.arange(dist_start, dist_end+dist_step, dist_step):
-                arrs.extend( mod_ak135.get_travel_times(evdp_km, dist, [phase] )  )
+                arrs.extend( mod_ak135.get_ray_paths(evdp_km, dist, [phase] )  )
             rp = array( [it.ray_param_sec_degree for it in arrs] )
             time = array( [it.time for it in arrs] )
-            purist_distance = array( [it.purist_distance for it in arrs] ) # purist_distance other than actual distance
-            tmp = (purist_distance.min() // 360)*360 # make distance within [0, 360)
-            purist_distance = purist_distance - tmp
-            ### sort
+            distance = rad2deg( [it.path['dist'][-1] for it in arrs] ) # .path['dist'][-1] but not .distance here which is only between 0 and 360
+            distance -= (min(distance[0], distance[-1]) // 360.0) * 360.0 # make sure everything is positive
+            
             idx = argsort(rp)
             rp = rp[idx]
             time = time[idx]
-            purist_distance = purist_distance[idx]
+            distance = distance[idx]
+            
+            #tmp = np.argsort( [it.ray_param_sec_degree for it in arrs] )
+            #distance = np.rad2deg( [arrs[idx].path['dist'][-1] for idx in tmp] ) # .path['dist'][-1] but not .distance here which is only between 0 and 360
+            #distance -= (min(distance[0], distance[-1]) // 360.0) * 360.0 # make sure everything is positive
+            #rp       = np.array( [arrs[idx].ray_param_sec_degree for idx in tmp] )
+            #time     = np.array( [arrs[idx].time for idx in tmp] )
+            vol[search_key] = { 'distance': distance, 'rp': rp, 'time': time }
             ###
-            vol[search_key] = { 'purist_distance': purist_distance, 'rp': rp, 'time': time }
             with open(filename, 'wb') as fid:
                 pickle.dump(vol, fid)
-        ###
+        
         self.time_get_dist_rayparam_time  = self.time_get_dist_rayparam_time  + (compute_time() - ttmp)
         return vol[search_key]
-    def internel_get_feature(self, phase1, phase2, inter_rcv_distance_deg, fig=None, ax1=None, ax2=None, evdp_km=0.0, plot=False):
+    def internel_get_feature(self, phase1, phase2, stlo1, stlo2, fig=None, ax1=None, ax2=None, evdp_km=0.0, plot=False):
         """
         Given fixed two receivers, so that phase1 must arrive at stlo1, and phase2 at stlo2
         """
-        ##############################################################################################################
-        #  Get rp-dist-time data for the two seismic phases
-        ##############################################################################################################
         vol1 = self.get_dist_rayparam_time(phase1, evdp_km=evdp_km)
         vol2 = self.get_dist_rayparam_time(phase2, evdp_km=evdp_km)
-        pd1, rp1, t1 = vol1['purist_distance'], vol1['rp'], vol1['time'] # d1 is betwewen 0 and 360
-        pd2, rp2, t2 = vol2['purist_distance'], vol2['rp'], vol2['time'] # d2 ...
-        ##############################################################################################################
-        #  search for the rp
-        ##############################################################################################################
+        d1, rp1, t1 = vol1['distance'], vol1['rp'], vol1['time'] # d1 >= 0.0, and d1 can be greater than 360.0, and d1 is monotonically increasing or decreasing 
+        d2, rp2, t2 = vol2['distance'], vol2['rp'], vol2['time'] # d2 >= 0.0, and d2 can be greater than 360.0, and d1 is monotonically increasing or decreasing 
+        #### The relationship is: distance = stlo - evlo
+        evlo1 = 360.0+stlo1-d1 # add 360.0 here to avoid too many negative longitudes. Do not touch it
+        evlo2 = 360.0+stlo2-d2
+        print(d1[0], d1[-1])
+        ####
+        ip = list()
+        iq = list()
+        ak_ev = list()
+        ak_rp = list()
         flag = False
-        ak_rp, ak_pd1, ak_pd2, ak_tt1, ak_tt2, ak_ct = list(), list(), list(), list(), list(), list()
-        npts = 7201
-        rp_min= max(rp1.min(), rp2.min() )
-        rp_max= min(rp1.max(), rp2.max() )
-        if rp_min < rp_max:
-            denser_rps = linspace(rp_min, rp_max, npts)
-            denser_pd1 = interp(denser_rps, rp1, pd1)
-            denser_pd2 = interp(denser_rps, rp2, pd2)
-            for inter in (inter_rcv_distance_deg, -inter_rcv_distance_deg):
-                diff = ((denser_pd1-denser_pd2)-inter)
-                product = diff[:-1] * diff[1:]
-                idx = np.where(product<=0.0)[0]
-                if idx.size > 0:
-                    flag = True
-                    ak_rp.extend( denser_rps[idx]  )
-                    ak_pd1.extend( denser_pd1[idx]  )
-                    ak_pd2.extend( denser_pd2[idx]  )
-                    ak_tt1.extend( np.array( [interp(it, rp1, t1) for it in ak_rp] )  )
-                    ak_tt2.extend( np.array( [interp(it, rp2, t2) for it in ak_rp] )  )
-                #ak_ct  = ak_tt1 - ak_tt2
-        print(ak_pd1, ak_pd2) #, ak_pd1-ak_pd2)
-        ##############################################################################################################
-        #  search for the intersection between two Rp-Evlo curves
-        ##############################################################################################################
-        #flag, ak_evlo, ak_rp, ak_tt1, ak_tt2, ak_d1, ak_d2, ak_ct = False, list(), list(), list(), list(), list(), list(), list()
-        #npts = 7201
-        #rp_min= max(rp1.min(), rp2.min() )
-        #rp_max= min(rp1.max(), rp2.max() )
-        #if rp_min < rp_max:
-        #    rps = linspace(rp_min, rp_max, npts)
-        #    new_evlo1 = interp(rps, rp1, evlo1)
-        #    new_evlo2 = interp(rps, rp2, evlo2)
-        #    evlo_diff = new_evlo1-new_evlo2
-        #    product = evlo_diff[:-1] * evlo_diff[1:]
-        #    idx = np.where(product<=0.0)[0]
-        #    if idx.size > 0:
-        #        flag = True
-        #        ak_evlo = new_evlo1[idx]
-        #        ak_rp = rps[idx]
-        #        ak_tt1 = np.array( [interp(it, rp1, t1) for it in ak_rp] )
-        #        ak_tt2 = np.array( [interp(it, rp2, t2) for it in ak_rp] )
-        #        ak_d1  = np.array( [interp(it, rp1, d1) for it in ak_rp] )
-        #        ak_d2  = np.array( [interp(it, rp2, d2) for it in ak_rp] )
-        #        ak_ct  = ak_tt1 - ak_tt2
-        #print(ak_evlo)
-        ##############################################################################################################
-        #  plot
-        ##############################################################################################################
+        ####
+        pts = [(x,y) for x, y in zip(evlo1, rp1) ] 
+        qts = [(x,y) for x, y in zip(evlo2, rp2) ]
+        v_flag, v_ip, v_iq, v_ak_ev, v_ak_rp= get_intersection_between_list_points(pts, qts)
+        ip.extend(v_ip); iq.extend(v_iq); ak_ev.extend(v_ak_ev); ak_rp.extend(v_ak_rp)
+        flag = flag or v_flag
+        
+        qts = [(x-360.0,y) for x, y in zip(evlo2, rp2) ]
+        v_flag, v_ip, v_iq, v_ak_ev, v_ak_rp= get_intersection_between_list_points(pts, qts)
+        ip.extend(v_ip); iq.extend(v_iq); ak_ev.extend(v_ak_ev); ak_rp.extend(v_ak_rp)
+        flag = flag or v_flag
+
+        qts = [(x-720.0,y) for x, y in zip(evlo2, rp2) ]
+        v_flag, v_ip, v_iq, v_ak_ev, v_ak_rp= get_intersection_between_list_points(pts, qts)
+        ip.extend(v_ip); iq.extend(v_iq); ak_ev.extend(v_ak_ev); ak_rp.extend(v_ak_rp)
+        flag = flag or v_flag
+
+        qts = [(x+360.0,y) for x, y in zip(evlo2, rp2) ]
+        v_flag, v_ip, v_iq, v_ak_ev, v_ak_rp= get_intersection_between_list_points(pts, qts)
+        ip.extend(v_ip); iq.extend(v_iq); ak_ev.extend(v_ak_ev); ak_rp.extend(v_ak_rp)
+        flag = flag or v_flag
+
+        qts = [(x+720.0,y) for x, y in zip(evlo2, rp2) ]
+        v_flag, v_ip, v_iq, v_ak_ev, v_ak_rp= get_intersection_between_list_points(pts, qts)
+        ip.extend(v_ip); iq.extend(v_iq); ak_ev.extend(v_ak_ev); ak_rp.extend(v_ak_rp)
+        flag = flag or v_flag
+        ####
+        time1 = list()
+        time2 = list()
+        cc_time = list()
+        for (e, rp) in zip(ak_ev, ak_rp ):
+            arrs = mod_ak135.get_travel_times(evdp_km, stlo1-e, [phase1] )
+            itmp = np.argmin( [abs(it.ray_param_sec_degree-rp) for it in arrs] )
+            arr1 = arrs[itmp]
+
+            arrs = mod_ak135.get_travel_times(evdp_km, stlo2-e, [phase2] )
+            itmp = np.argmin( [abs(it.ray_param_sec_degree-rp) for it in arrs] )
+            arr2 = arrs[itmp]
+                
+            dt = arr1.time - arr2.time
+            time1.append(arr1.time)
+            time2.append(arr2.time)
+            cc_time.append(dt)
         if plot:
             if ax1 == None or ax2 == None:
                 pass
             else:
                 ########
                 radius = mod_ak135.model.radius_of_planet
-                for evlo, rp, dist1, dist2 in zip(ak_evlo, ak_rp, ak_d1, ak_d2):
-                    for idx, (phase, dist, clr, line) in enumerate(zip([phase1, phase2], [dist1, dist2], ['C0', 'k'], ['-', '--'])):
-                        arrs = mod_ak135.get_ray_paths(evdp_km, dist, [phase] )
+                for e, rp in zip(ak_ev, ak_rp):
+                    #
+                    for idx, (phase, stlo, clr, line) in enumerate(zip([phase1, phase2], [stlo1, stlo2], ['C0', 'k'], ['-', '--'])):
+                        arrs = mod_ak135.get_ray_paths(evdp_km, stlo-e, [phase] )
                         itmp = np.argmin( [abs(it.ray_param_sec_degree-rp) for it in arrs] )
                         arr = arrs[itmp]
-                        lons = arr.path['dist'] + np.deg2rad(evlo)
-                        rs   = radius-arr.path['depth']
-                        #arr = geo_arrival(evdp_km, evlo, 0.0, arr.distance+evlo, arr, mod_ak135 )
-                        #lons, rs = arr.get_raypath()
-                        ax1.plot(lons, rs, line, color=clr, label=phase, alpha= 0.8)
-                        plotEq(ax1, mod_ak135, [evdp_km],  [np.rad2deg(lons[0] )], markersize=16 )
-                        ax1.plot([ lons[0], lons[0] ], [evdp_km, radius], ':', color='gray', linewidth= 0.6)
+                        evlo = stlo-arr.distance
+                        #print(phase, stlo, arr.distance, e, evlo)
+                        xs= arr.path['dist'] + np.deg2rad(evlo)
+                        ys = radius-arr.path['depth']
+                        ax1.plot(xs, ys, line, color=clr, label=phase, alpha= 0.8)
+                        plotEq(ax1, mod_ak135, [evdp_km],  [np.rad2deg(xs[0] )] )
+                        ax1.plot([ xs[0], xs[0] ], [evdp_km, radius], ':', color='gray', linewidth= 0.6)    
                 if True: # plot Earth basemape whereever
                     ax1.axis('on')
                     ax1.legend(loc='lower right')
                     for stlo, clr in zip([stlo1, stlo2], ['C0', 'k']):
                         plotStation(ax1, mod_ak135, [0.0], [stlo], color=clr )
-                    _plotPrettyEarth(ax1, mod_ak135, True)
-                for evlo, rp in zip(ak_evlo, ak_rp):
+                    plotPrettyEarth(ax1, mod_ak135, True)
+                for e, rp in zip(ak_ev, ak_rp):
                     #ax2.plot([e], [rp], 'o', color='k', alpha= 0.6)
                     #ax2.plot([-999.0, 999.0], [rp, rp], 'k:', alpha= 0.6)
-                    ax2.plot([rp], [evlo], 'o', color='k', alpha= 0.6)
-                    ax2.plot([rp_min, rp_max], [evlo, evlo], 'k:', alpha= 0.6)
-                    #ax2.plot([rp, rp], [-999.0, 999.0], 'k:', alpha= 0.6)
+                    ax2.plot([rp], [e], 'o', color='k', alpha= 0.6)
+                    ax2.plot([rp, rp], [-999.0, 999.0], 'k:', alpha= 0.6)
                     #ax2.text(5.0, rp, '%.2f s/$\degree$' % rp, bbox=dict(facecolor='white', alpha=0.95, edgecolor='white'), verticalalignment='center' )
                     #for stlo, clr in zip([stlo1, stlo2], ['C0', 'k'] ):
                     #    dist = (stlo-e)%360
@@ -250,16 +302,16 @@ class cc_feature_time:
                     ax2.axis('on')
                     
                     ax2.plot(rp1, evlo1,       'C0', label=phase1)
-                    #ax2.plot(rp1, evlo1+360,   'C0')
-                    #ax2.plot(rp1, evlo1+720,   'C0')
-                    #ax2.plot(rp1, evlo1-360.0, 'C0')
-                    #ax2.plot(rp1, evlo1-720,   'C0')
+                    ax2.plot(rp1, evlo1+360,   'C0')
+                    ax2.plot(rp1, evlo1+720,   'C0')
+                    ax2.plot(rp1, evlo1-360.0, 'C0')
+                    ax2.plot(rp1, evlo1-720,   'C0')
 
                     ax2.plot(rp2, evlo2,       'k' , label=phase2)
-                    #ax2.plot(rp2, evlo2+360.0, 'k' )
-                    #ax2.plot(rp2, evlo2+720.0, 'k' )
-                    #ax2.plot(rp2, evlo2-360.0, 'k' )
-                    #ax2.plot(rp2, evlo2-720.0, 'k' )
+                    ax2.plot(rp2, evlo2+360.0, 'k' )
+                    ax2.plot(rp2, evlo2+720.0, 'k' )
+                    ax2.plot(rp2, evlo2-360.0, 'k' )
+                    ax2.plot(rp2, evlo2-720.0, 'k' )
 
                     #ax2.plot(evlo1, rp1, 'C0', label=phase1)
                     #ax2.plot(evlo1+360, rp1, 'C0')
@@ -276,9 +328,9 @@ class cc_feature_time:
                     ax2.set_ylabel('Event longitude ($\degree$)')
                     ax2.set_xlabel('Ray paramter (s/$\degree$)')
                     ax2.legend(loc='lower left' )
-                    #ax2.set_ylim([-180, 180])
-                    #ax2.set_xlim(left=0)
-        return ak_evlo, ak_rp, ak_tt1, ak_tt2, ak_ct
+                    ax2.set_ylim([-180, 180])
+                    ax2.set_xlim(left=0)
+        return ak_ev, ak_rp, time1, time2, cc_time
     def get_feature_time(self, phase1, phase2, inter_rcv_distance_deg, evdp_km=0.0, max_interation= 100, show=False, figname= None):
         """
         Given two phases observed at two receivers, the distance between
@@ -288,47 +340,46 @@ class cc_feature_time:
         evlo_min, evlo_max: event longitude range for search.
 
         """
-        fig, ax1, ax2, ax3, ax4 = None, None, None, None, None
-        flag_plot = show or figname
-        if flag_plot:
-            fig = plt.figure(figsize=(11, 8) )
-            ax1 = plt.subplot(2, 2, 1, projection='polar')
-            ax2 = plt.subplot(2, 2, 2)
-            ax3 = plt.subplot(2, 2, 3, projection='polar')
-            ax4 = plt.subplot(2, 2, 4)
+        fig = plt.figure(figsize=(11, 8) )
+        ax1 = plt.subplot(2, 2, 1, projection='polar')
+        ax2 = plt.subplot(2, 2, 2)
+        ax3 = plt.subplot(2, 2, 3, projection='polar')
+        ax4 = plt.subplot(2, 2, 4)
         ###############################################################################################
-        ak_ev, ak_rp, cc_time, time1, time2 = list(), list(), list(), list(), list()
+        ak_ev, ak_rp, cc_time = list(), list(), list()
+        time1, time2 = list(), list()
         dist1, dist2 = list(), list()
         # search for evlo that present the same slowness for two body waves
-        #1.
-        tmp1, tmp2, tmp4, tmp5, tmp3 = self.internel_get_feature(phase1, phase2, inter_rcv_distance_deg, fig, ax1, ax2, evdp_km, flag_plot)
-        #ak_ev.extend(tmp1)
-        #ak_rp.extend(tmp2)
-        #cc_time.extend(tmp3)
-        #time1.extend(tmp4)
-        #time2.extend(tmp5)
-        #dist1.extend( [(stlo1-it)%360 for it in tmp1] )
-        #dist2.extend( [(stlo2-it)%360 for it in tmp1] )
+        #1. d2-d1 = inter_dist
+        stlo1, stlo2 = inter_rcv_distance_deg*-0.5, inter_rcv_distance_deg*0.5
+        tmp1, tmp2, tmp4, tmp5, tmp3 = self.internel_get_feature(phase1, phase2, stlo1, stlo2, fig, ax1, ax2, evdp_km, True)
+        ak_ev.extend(tmp1)
+        ak_rp.extend(tmp2)
+        cc_time.extend(tmp3)
+        time1.extend(tmp4)
+        time2.extend(tmp5)
+        dist1.extend( [(stlo1-it)%360 for it in tmp1] )
+        dist2.extend( [(stlo2-it)%360 for it in tmp1] )
         #print('tmp', tmp1, tmp2, tmp4, tmp5, tmp3)
-        #2.
-        stlo2, stlo1 = inter_rcv_distance_deg, 0.0
-        #if len(ak_ev) <= 0:
-        #    pass
+        #2. d2-d1 = inter_dist
+        stlo2, stlo1 = inter_rcv_distance_deg*-0.5, inter_rcv_distance_deg*0.5
+        if len(ak_ev) <= 0:
+            pass
             #ax3.axis('off')
             #ax4.axis('off')
             #ax3, ax4 = ax1, ax2
-        tmp1, tmp2, tmp4, tmp5, tmp3 = self.internel_get_feature(phase1, phase2, -inter_rcv_distance_deg, fig, ax3, ax4, evdp_km, flag_plot)
-        #ak_ev.extend(tmp1)
-        #ak_rp.extend(tmp2)
-        #cc_time.extend(tmp3)
-        #time1.extend(tmp4)
-        #time2.extend(tmp5)
-        #dist1.extend( [stlo1-it for it in tmp1] )
-        #dist2.extend( [stlo2-it for it in tmp1] )
+        tmp1, tmp2, tmp4, tmp5, tmp3 = self.internel_get_feature(phase1, phase2, stlo1, stlo2, fig, ax3, ax4, evdp_km, True)
+        ak_ev.extend(tmp1)
+        ak_rp.extend(tmp2)
+        cc_time.extend(tmp3)
+        time1.extend(tmp4)
+        time2.extend(tmp5)
+        dist1.extend( [stlo1-it for it in tmp1] )
+        dist2.extend( [stlo2-it for it in tmp1] )
         #print('tmp', tmp1, tmp2, tmp4, tmp5, tmp3)
         #3. d1+d2 = inter_dist
         ###############################################################################################
-        if flag_plot:
+        if show or figname!=None:
             plt.tight_layout()
             if figname!=None:
                 plt.savefig(figname, bbox_inches = 'tight', pad_inches = 0.2)
