@@ -168,7 +168,8 @@ class CacheRun:
                     del h5cache[group_name]
                 grp = h5cache.create_group(group_name)
                 for _k, _v in data_dict.items():
-                    grp.create_dataset(_k, data=_v)
+                    if _k != 'attrs':
+                        grp.create_dataset(_k, data=_v)
                 if attrs_dict:
                     for _k, _v in attrs_dict.items():
                         grp.attrs[_k] = _v

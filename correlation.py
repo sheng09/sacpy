@@ -7,8 +7,8 @@ from obspy.taup.seismic_phase import SeismicPhase
 from matplotlib import pyplot as plt
 import sacpy
 from copy import deepcopy
-
-
+import sys, os, os.path, pickle
+import matplotlib
 
 __global_verbose= False
 
@@ -35,15 +35,18 @@ def get_corrected_model(reference_model, evdp_km, rcvdp_km):
     tau_model_corrected = tau_model.depth_correct(evdp_km)
     tau_model_corrected.split_branch(rcvdp_km)
     return tau_model_corrected
-def get_arrival_from_ray_param(ray_param, tau_model_corrected, phase_name, rcvdp_km):
-    """
-    """
-    phase = SeismicPhase(phase_name, tau_model_corrected, rcvdp_km)
-    arr = phase.shoot_ray(0.0, ray_param) # Arrival not Arrivals
-    arr.distance = round_degree_180(arr.purist_distance)
-    return arr
-@CacheRun('%s/bin/dataset/cc_feature_time.h5' % sacpy.__path__[0])
-def get_ccs(tau_model1_corrected, tau_model2_corrected, phase1_name, phase2_name, rcvdp1_km, rcvdp2_km, threshold_distance=0.1, max_interation=None):
+
+######################################################################################################################################################################
+# Dealing with correlation features
+######################################################################################################################################################################
+mpi_cache_tag = ''
+try:
+    mpi_cache_tag = '_mpi_%4d' % int(os.environ['OMPI_COMM_WORLD_RANK'])
+except:
+    pass
+@CacheRun('%s/bin/dataset/cc_feature_time%s.h5' % (sacpy.__path__[0], mpi_cache_tag) )
+def get_ccs(tau_model1_corrected, tau_model2_corrected, phase1_name, phase2_name, rcvdp1_km, rcvdp2_km, 
+            threshold_distance=0.1, max_interation=None, enable_h5update=True):
     """
     Compute all possible correlation features.
 
@@ -64,17 +67,23 @@ def get_ccs(tau_model1_corrected, tau_model2_corrected, phase1_name, phase2_name
     # The load_from_cache(...) is added by the CacheRun decorator
     temp = get_ccs.load_from_cache(cache_key) # return None if cannot find anything
     if temp:
-        cached_threshold_distance = temp['attrs']['threshold_distance']
-        if cached_threshold_distance <= threshold_distance:
-            rps             = temp['ray_param'][:]
-            cc_time            = temp['cc_time'][:]
-            cc_purist_distance = temp['cc_purist_distance'][:]
-            cc_distance        = temp['cc_distance'][:]
-            trvt1 = temp['trvt1'][:]
-            trvt2 = temp['trvt2'][:]
-            purist_distance1 = temp['purist_distance1'][:]
-            purist_distance2 = temp['purist_distance2'][:]
-            return rps, cc_time, trvt1, trvt2, cc_purist_distance, cc_distance, purist_distance1, purist_distance2
+        if 'threshold_distance' in temp['attrs']:
+            cached_threshold_distance = temp['attrs']['threshold_distance']
+            if cached_threshold_distance <= threshold_distance:
+                try:
+                    rps                = temp['ray_param'][:]
+                    cc_time            = temp['cc_time'][:]
+                    cc_purist_distance = temp['cc_purist_distance'][:]
+                    cc_distance        = temp['cc_distance'][:]
+                    trvt1              = temp['trvt1'][:]
+                    trvt2              = temp['trvt2'][:]
+                    purist_distance1 = temp['purist_distance1'][:]
+                    purist_distance2 = temp['purist_distance2'][:]
+                    junk = (rps.size, cc_time.size, cc_purist_distance.size, cc_distance.size, trvt1.size, trvt2.size, purist_distance1.size, purist_distance2.size)
+                    if len(set(junk)) == 1:
+                        return rps, cc_time, trvt1, trvt2, cc_purist_distance, cc_distance, purist_distance1, purist_distance2
+                except Exception:
+                    pass
     #### Does not exist in the cache. Hence we need to compute the new
     # Step 0 ###################################################################
     phase1 = SeismicPhase(phase1_name, tau_model1_corrected, rcvdp1_km)
@@ -83,7 +92,7 @@ def get_ccs(tau_model1_corrected, tau_model2_corrected, phase1_name, phase2_name
     max_rp = min(phase1.max_ray_param, phase2.max_ray_param)
     #print(min_rp, max_rp, )
     if min_rp > max_rp:
-        return array([]), array([]), array([]), array([])
+        return [array([]) for it in range(8) ]
     # Step 1 Init all arrivals #################################################
     rps = list( linspace(min_rp, max_rp, 20) )
     arrs1 = [phase1.shoot_ray(0.0, it) for it in rps]
@@ -127,14 +136,15 @@ def get_ccs(tau_model1_corrected, tau_model2_corrected, phase1_name, phase2_name
     cc_distance = round_degree_180(cc_purist_distance)
     rps = array(rps)
     ## Step 4 update cache #####################################################
-    data_dict = {  'ray_param': rps, 'trvt1': trvt1, 'trvt2': trvt2, 'cc_time': cc_time, 'cc_purist_distance': cc_purist_distance, 'cc_distance': cc_distance, 'purist_distance1': purist_distance1, 'purist_distance2':purist_distance2 }
-    attrs_dict = { 'threshold_distance': threshold_distance }
-    get_ccs.dump_to_cache(cache_key, data_dict, attrs_dict)
+    if enable_h5update:
+        data_dict = {  'ray_param': rps, 'trvt1': trvt1, 'trvt2': trvt2, 'cc_time': cc_time, 'cc_purist_distance': cc_purist_distance, 'cc_distance': cc_distance, 'purist_distance1': purist_distance1, 'purist_distance2':purist_distance2 }
+        attrs_dict = { 'threshold_distance': threshold_distance }
+        get_ccs.dump_to_cache(cache_key, data_dict, attrs_dict)
     return rps, cc_time, trvt1, trvt2, cc_purist_distance, cc_distance, purist_distance1, purist_distance2
-
 def get_ccs_from_cc_dist(cc_distances_deg, tau_model1_corrected, tau_model2_corrected,
     phase1_name, phase2_name, rcvdp1_km, rcvdp2_km, threshold_distance=0.1, max_interation=None):
     """
+    Get cross-correlation features given interrceiver or intersource distances
     """
     rp1, trvt1, purist_distance1, junk = get_arrivals(tau_model1_corrected, phase1_name, rcvdp1_km, None, 0.5)
     rp2, trvt2, purist_distance2, junk = get_arrivals(tau_model2_corrected, phase2_name, rcvdp2_km, None, 0.5)
@@ -214,12 +224,111 @@ def get_ccs_from_cc_dist(cc_distances_deg, tau_model1_corrected, tau_model2_corr
     cct_found = trvt1_found-trvt2_found
     #cct_found = interp(rps_found, rp1, trvt1) - interp(rps_found, rp2, trvt2)
     return rps_found, cct_found, trvt1_found, trvt2_found, cc_purist_distance_found, cc_distance_found, pd1_found, pd2_found
+def get_all_cc_names():
+    """
+    Get all possible correlation features.
+    """
+    bw = dict()
+    ##### All first order body waves
+    bw['direct']         = ('P', 'S', 'PKP', 'PKS', 'SKS', 'PKIKP', 'PKIKS', 'SKIKS', 'PKJKP', 'PKJKS', 'SKJKS', )
+    bw['cmb_reflection'] = ('PcP', 'PcS', 'ScS', 'PKKP', 'PKKKP', 'PKKKKP', 'PKKS', 'PKKKS', 'PKKKKS', 'SKKS', 'SKKKS', 'SKKKKS', )
+    bw['icb_reflection'] = ('PKiKP', 'PKIIKP', 'PKIIKS', 'SKIIKS')
+
+    ##### All reverberation from the surface for twice
+    temp = list(bw['direct'])
+    temp.extend(bw['cmb_reflection'] )
+    temp.extend(bw['icb_reflection'] )
+    bw['reverberation2'] = ['%s%s' %(it, it) for it in temp]
+
+    ##### All cross-terms
+    temp.extend(bw['reverberation2'])
+    cc_set1 = set( temp )# type X* where X is a seismic phase
+    cc_set2 = set()      # type Z* where X-Y=Z*
+    cc_set3 = set()      # type X-Y where X and Y are seismic phases
+    for idx1, ph1 in enumerate(temp):
+        for idx2, ph2 in enumerate(temp[idx1+1:]):
+            if ph1 in ph2:
+                cc_set2.add( ph2.replace(ph1, '', 1) )
+            elif ph2 in ph1:
+                cc_set2.add( ph1.replace(ph2, '', 1) )
+            else:
+                cc_set3.add( '%s-%s' % (ph1, ph2) )
+    ###### remove 'cc', 'ccc', 'cccc', ....
+    for n in range(2, 5):
+        junk = 'c'*n
+        cc_set2 = set([it.replace(junk, 'c') for it in cc_set2])
+    cc_set2 = set(valid_seismic_phases(cc_set2) )
+    ###### remove the inverted duplications, e.g., SKP and PKS
+    temp = set()
+    for it in cc_set2:
+        if (it not in temp) and (it[::-1] not in temp):
+            temp.add(it)
+    cc_set2 = temp
+    ###### The result
+    ccs = sorted( ['%s*' % it for it in cc_set1.union(cc_set2) ] )
+    ccs.extend(cc_set3)
+    return sorted(ccs)
+def get_all_interrcv_ccs(cc_feature_names=None, evdp_km=25.0, model_name='ak135', log=sys.stdout, selection_ratio=None, save_to_pickle_file=None):
+    """
+    """
+    #############################################################################################
+    verbose = True if log else False
+    modc = get_corrected_model( taup.TauPyModel(model_name).model, evdp_km=evdp_km, rcvdp_km=0.0)
+    if cc_feature_names == None:
+        cc_feature_names = get_all_cc_names()
+    local_cc_feature_names = cc_feature_names
+    if selection_ratio:
+        step = int(len(cc_feature_names)*selection_ratio)
+        local_cc_feature_names = cc_feature_names[::step]
+    results = list()
+    n = len(local_cc_feature_names)
+    for idx, feature_name in enumerate(local_cc_feature_names):
+        message = '[%d/%d]%s' % (idx+1, n, feature_name)
+        with Timer(message=message, verbose=verbose, file=log):
+            ak = None
+            if '*' in feature_name:
+                phase = feature_name[:-1]
+                rps, trvt, purist_distance, distance = get_arrivals(modc, phase, 0.0, None, 0.5, 20, True)
+                if rps.size>0:
+                    ak = rps, trvt, purist_distance, distance
+            elif '-' in feature_name:
+                phase1, phase2= feature_name.split('-')
+                tmp = get_ccs(modc, modc, phase1, phase2, 0.0, 0.0, 0.5, 20)
+                rps, cc_time, trvt1, trvt2, cc_purist_distance, cc_distance, purist_distance1, purist_distance2  = tmp
+                if rps.size>0:
+                    ak = rps, cc_time, cc_purist_distance, cc_distance 
+            if ak:
+                rps, time, pdist, dist = ak
+                results.append( {   'name': feature_name, 'ray_param': rps, 'time': time, 
+                                    'purist_distance': pdist, 'distance': dist } )
+    #############################################################################################
+    if save_to_pickle_file:
+        direc = '/'.join(save_to_pickle_file.split('/')[:-1])
+        if not os.path.exists(direc):
+            os.makedirs(direc)
+        with open(save_to_pickle_file, 'wb') as fid:
+            pickle.dump(results, fid)
+    #############################################################################################
+    #if plot:
+    #    n = len(results)
+    #    cmap = matplotlib.cm.get_cmap('Spectral')
+    #    fig, ax = plt.subplots(1, 1, figsize=(6, 11) )
+    #    for idx, ((rps, cc_time, cc_purist_distance, cc_distance), nm) in enumerate(zip(results, local_cc_feature_names)):
+    #        clr = cmap(idx/n)
+    #        ax.plot(cc_distance, abs(cc_time), label=nm, color=clr)
+    #    plt.show()
+    return results
 ######################################################################################################################################################################
 # Dealing with arrivals
 ######################################################################################################################################################################
-@CacheRun('%s/bin/dataset/cc_feature_time.h5' % sacpy.__path__[0])
+mpi_cache_tag = ''
+try:
+    mpi_cache_tag = '_mpi_%4d' % int(os.environ['OMPI_COMM_WORLD_RANK'])
+except:
+    pass
+@CacheRun('%s/bin/dataset/cc_feature_time%s.h5' % (sacpy.__path__[0], mpi_cache_tag) )
 def get_arrivals(tau_model_corrected, phase_name, rcvdp_km, ray_param_range=None, threshold_distance=0.3, max_interation=None,
-                 enable_h5update=True, ):
+                 enable_h5update=True):
     """
     return: ray_params, trvts, purist_distances, distances
     """
@@ -276,14 +385,65 @@ def get_arrivals(tau_model_corrected, phase_name, rcvdp_km, ray_param_range=None
     rps = array(rps)
     # Step 4 update cache #####################################################
     # The dump_to_cache(...) is added by the CacheRun decorator
-    data_dict = {  'ray_param': rps, 'time': trvt, 'purist_distance': purist_distance, 'distance': distance }
-    attrs_dict = { 'threshold_distance': threshold_distance }
-    temp = get_arrivals.dump_to_cache(cache_key, data_dict, attrs_dict)
+    if enable_h5update:
+        data_dict  = { 'ray_param': rps, 'time': trvt, 'purist_distance': purist_distance, 'distance': distance }
+        attrs_dict = { 'threshold_distance': threshold_distance }
+        get_arrivals.dump_to_cache(cache_key, data_dict, attrs_dict)
     ###########################################################################
     return deepcopy((rps, trvt, purist_distance, distance))
+def get_arrival_from_ray_param(ray_param, tau_model_corrected, phase_name, rcvdp_km):
+    """
+    """
+    phase = SeismicPhase(phase_name, tau_model_corrected, rcvdp_km)
+    arr = phase.shoot_ray(0.0, ray_param) # Arrival not Arrivals
+    arr.distance = round_degree_180(arr.purist_distance)
+    return arr
+@CacheRun(None)
+def valid_seismic_phases(phase_names):
+    """
+    Check if a set of seismic `phase_name` are valid or not.
 
+    Return the valid set of seismic phase.
+    """
+    cache_key = 'Valid_seismic_phases'
+    temp = valid_seismic_phases.load_from_cache(cache_key)
+    temp = temp if temp else dict()
+    ######################################################
+    valid_phases = [it for it in phase_names if it in temp]
+    ######################################################
+    reminders = [it for it in phase_names if it not in valid_phases]
+    if len(reminders)<=0:
+        return sorted(set(valid_phases) ) # no need to update the cache
+    else:
+        mod = taup.TauPyModel('ak135')
+        new_valid_phase_set = set()
+        for it in reminders:
+            exist = True
+            # ask obspy
+            try:
+                junk = SeismicPhase(it, mod.model)
+            except Exception:
+                exist = False
+            # test if name start/end with P or S
+            if exist:
+                if (it[0] not in 'psPS') or (it[-1] not in 'PS'):
+                    exist = False
+            # test
+            if exist:
+                if ('KPK' in it) or ('KSK' in it) or ('IKI' in it):
+                    exist = False
+            if exist:
+                new_valid_phase_set.add(it)
+    ###################################################### 
+    if new_valid_phase_set:
+        valid_phases.extend( new_valid_phase_set )
+        for it in new_valid_phase_set:
+            temp[it] = 1
+        valid_seismic_phases.dump_to_cache(cache_key, temp)
+    ######################################################
+    return sorted(set(valid_phases))
 if __name__ == "__main__":
-    __global_verbose= True
+    __global_verbose= False
     if False:
         with Timer(message='main', verbose=__global_verbose):
             evdp_km = 50
@@ -315,7 +475,7 @@ if __name__ == "__main__":
             with CacheRun('junssssk.h5') as cache:
                 cache.dump_to_cache('test', {'a':[1,2,3,4]}, {'who': 'sw'})
                 pass
-    if True:
+    if False:
         with Timer(message='main', verbose=__global_verbose):
             evdp_km = 50
             r1dp_km, r2dp_km = 0.1, 0.2
@@ -338,3 +498,11 @@ if __name__ == "__main__":
             print(cc_distance)
             print(round_degree_180(cc_purist_distance))
             plt.show()
+    if False:
+        tmp = valid_seismic_phases(['Pc'])
+        print(tmp)
+        ccs = get_cc_names()
+        print(ccs, len(ccs) )
+    if True:
+        get_all_interrcv_ccs(log=sys.stdout)
+    pass

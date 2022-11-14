@@ -7,16 +7,20 @@ from h5py import File as h5_File
 import matplotlib.pyplot as plt
 from getopt import getopt
 from sys import exit, argv
+import sys
 import numpy as np
 from sacpy.processing import iirfilter_f32, taper, max_amp_index
 import os, os.path
 import matplotlib.ticker as mtick
+from sacpy import correlation
+from obspy import taup
 
 def run(h5_filename, figname, dist_range=None, cc_time_range=None,
         filter_setting =(None, 0.02, 0.0666), taper_sec =0.,
         norm_settings = (None, 'pos', (-10, 10) ), adjust_time_axis = None,
         lines= None, search_amp= None,
-        figsize= (6, 15), interpolation= None, title='', vmax= 1.0, axhist=True, yticks='all', ylabel='all', grid=False, dpi=150, xlabel='Distance (\degree)'):
+        cc_features_to_plot= None, cc_features_plt_args= None,
+        figsize= (6, 15), interpolation= None, title='', vmax= 1.0, axhist=True, yticks='all', ylabel='all', grid=False, dpi=150, xlabel='Distance ($\degree$)'):
     """
     adjust_time_axis: a tupel of (sc, xc). This will change {t-x} domain into {t-sc(x-xc),x} domain. 
                       This option help flat a steep phase.
@@ -117,21 +121,61 @@ def run(h5_filename, figname, dist_range=None, cc_time_range=None,
     mat = mat.transpose()
     mat *= (1.0/np.max(mat) )
     
-    ax1, ax2 = None, None
-    if axhist:
-        fig, (ax1, ax2) = plt.subplots(2, 1, figsize= figsize, gridspec_kw={'height_ratios': [6, 1], 'hspace': 0.02 } )
+    ax1, ax2, ax3, ax4 = None, None, None, None
+    if cc_features_to_plot and cc_features_plt_args['dual']:
+        width, heigh= figsize
+        width = width*2
+        if axhist:
+            fig, ((ax1, ax3), (ax2, ax4)) = plt.subplots(2, 2, figsize=(width, heigh), gridspec_kw={'height_ratios': [6, 1], 'hspace': 0.02, 'wspace': 0.08 } )
+            #ax4.axis('off')
+        else:
+            fig, ax1 = plt.subplots(1, 2, figsize= (width, heigh) )
     else:
-        fig, ax1 = plt.subplots(1, 1, figsize= figsize )
+        if axhist:
+            fig, (ax1, ax2) = plt.subplots(2, 1, figsize= figsize, gridspec_kw={'height_ratios': [6, 1], 'hspace': 0.02, 'wspace': 0.08 } )
+        else:
+            fig, ax1 = plt.subplots(1, 1, figsize= figsize )
     ###
-    ax1.imshow(mat, extent=(dist_range[0], dist_range[1], cc_t0, cc_t1 ), aspect='auto', cmap='gray', interpolation= interpolation,
-            vmin=-vmax, vmax=vmax, origin='lower')
+    for it_ax in (ax1, ax3):
+        if it_ax:
+            it_ax.imshow(mat, extent=(dist_range[0], dist_range[1], cc_t0, cc_t1 ), aspect='auto', cmap='gray', interpolation= interpolation,
+                vmin=-vmax, vmax=vmax, origin='lower')
     ###
     if lines != None:
         for d, t in lines:
             if adjust_time_axis != None:
                 sc, xc = adjust_time_axis
                 t = t - sc*(d-xc)
-            ax1.plot(d, t, '.', color='C0', alpha= 0.6, markersize=3)
+            for it_ax in (ax1, ax3):
+                if it_ax:
+                    it_ax.plot(d, t, '.', color='C0', alpha= 0.6, markersize=3)
+    ###
+    if cc_features_to_plot:
+        try:
+            cmap = matplotlib.cm.get_cmap(cc_features_plt_args['colormap'])
+        except Exception:
+            cc_features_plt_args['colormap'] = 'Spectral'
+            print('Warning, wrong colormap name', cc_features_plt_args['colormap'], 'Roll back to Spectral', file=sys.stderr, flush=True)
+            cmap = matplotlib.cm.get_cmap(cc_features_plt_args['colormap'] )
+        mod = taup.TauPyModel(cc_features_plt_args['model_name'] )
+        modc = correlation.get_corrected_model(mod.model, cc_features_plt_args['evdp'], 0.0 )
+        cc_results = correlation.get_all_interrcv_ccs(cc_features_to_plot, cc_features_plt_args['evdp'],  cc_features_plt_args['model_name'], None )
+        n_features = len(cc_results)
+        rp_min, rp_max = None, None
+        if cc_features_plt_args['slowness']:
+            rp_min, rp_max = cc_features_plt_args['slowness']
+        it_ax = ax3 if cc_features_plt_args['dual'] else ax1
+        for idx, vol in enumerate(cc_results):
+            clr = cmap(idx/n_features)
+            nm = vol['name']
+            rp = vol['ray_param']
+            cc_t = vol['time']
+            cc_d = vol['distance']
+            #if rp_min:
+            #    np.where(rp>=rp_min)
+            it_ax.text(cc_d[-1], cc_t[-1], '%d' %idx, fontsize=9)
+            it_ax.plot(cc_d, cc_t, color=clr, label='(%d)%s' % (idx, nm) )
+        it_ax.legend(loc=(1.02, 0.0), ncol = int(n_features//18)+1 )
     ###
     dist_range = (dist[0], dist[-1] ) if dist_range == None else dist_range
     ### search for max/min points for each trace
@@ -140,9 +184,13 @@ def run(h5_filename, figname, dist_range=None, cc_time_range=None,
     ###
     #ax1.set_xlim(dist_range)
     if not axhist:
-        ax1.set_xlabel(xlabel)
+        for it_ax in (ax1, ax3):
+            if it_ax:
+                it_ax.set_xlabel(xlabel)
     else:
-        ax1.set_xticklabels(())
+        for it_ax in (ax1, ax3):
+            if it_ax:
+                it_ax.set_xticklabels(())
     if ylabel == 'all' or ylabel == 'cc':
         if adjust_time_axis != None:
             sc, xc = adjust_time_axis
@@ -165,27 +213,32 @@ def run(h5_filename, figname, dist_range=None, cc_time_range=None,
     if cc_time_range:
         ax1.set_ylim(cc_time_range)
     ax1.set_title(title, fontsize=12)
+
+    if ax3:
+        ax3.set_yticklabels([])
     ###
     if axhist:
         tmp = stack_count[stack_count>0]
-        ax2.bar(dist, stack_count, align='center', color='gray', width= dist[1]-dist[0] )
-        ax2.set_xlim(dist_range)
-        ax2.set_ylim(bottom=0, top=np.max(stack_count[1:])+30 )
-        ax2.set_xlabel(xlabel)
-
+        for it_ax in (ax2, ax4):
+            if it_ax:
+                it_ax.bar(dist, stack_count, align='center', color='gray', width= dist[1]-dist[0] )
+                it_ax.set_xlim(dist_range)
+                it_ax.set_ylim(bottom=0, top=np.max(stack_count[1:])+30 )
+                it_ax.set_xlabel(xlabel)
+                it_ax.yaxis.set_major_formatter(mtick.FormatStrFormatter('%.0e'))
         #fmt = '{x:,.0f}'
         #tick = mtick.StrMethodFormatter(fmt)
         #ax2.yaxis.set_major_formatter(tick)
 
         #ax2.ticklabel_format(axis='y', style='sci', scilimits=(0, 0) )
 
-        ax2.yaxis.set_major_formatter(mtick.FormatStrFormatter('%.0e'))
-
         if ylabel == 'all' or ylabel == 'hist':
             ax2.set_ylabel('Number of\n receiver pairs')
 
         if yticks == None or yticks == 'cc':
             ax2.set_yticklabels([])
+        if ax4:
+            ax4.set_yticklabels([])
     #plt.tight_layout()
     plt.savefig(figname, bbox_inches = 'tight', pad_inches = 0.05, dpi=dpi)
     plt.close()
@@ -202,7 +255,7 @@ def plt_options(args):
     ylabel = None
     grid   = False
     dpi    = 150
-    xlabel = 'Distance (\degree)'
+    xlabel = 'Distance ($\degree$)'
     ###
     for it in args.split(','):
         opt, value = it.split('=')
@@ -235,6 +288,27 @@ def plt_options(args):
         elif opt == 'xlabel':
             xlabel = '%s' % value
     return figsize, interpolation, title, vmax, axhist, yticks, ylabel, grid, dpi, xlabel
+
+def plt_cf_options(args):
+    options = {
+        'dual': False,
+        'evdp': 25.0,
+        'slowness': (-1000, 1000),
+        'colormap': 'Spectral',
+        'model_name':'ak135',
+    }
+    for it in args.split(','):
+        if '=' in it:
+            opt, value = it.split('=')
+            if opt == 'slowness':
+                options[opt] = tuple( [float(it) for it in value.split('/')] )
+            elif opt == 'evdp':
+                options[opt] = float(value)
+            else:
+                options[opt] = value
+        else:
+            options[it] = True
+    return options
 
 def get_lines(fnms):
     """
@@ -305,7 +379,6 @@ def search_max_amplitude(ax, mat, search_amp, cc_t0, delta, adjust_time_axis):
             ax.scatter(xs, ys, 5, marker=marker, color=clr)
 
 if __name__ == "__main__":
-
     #run(filename, figname, None)
     h5_fnm = None
     figname = None
@@ -321,7 +394,7 @@ if __name__ == "__main__":
     ylabel = 'all'
     grid = False
     dpi = 100
-    xlabel = 'Distance (\degree)'
+    xlabel = 'Distance ($\degree$)'
     #### adjust amplitude to plot
     #### line along which to normalize
     norm_settings = 'raw'
@@ -330,6 +403,9 @@ if __name__ == "__main__":
     filter_setting = (None, 0.02, 0.0666)
     adjust_time_axis = None
     taper_sec = 10
+    #### correlation feature to plot
+    cc_features_to_plot = list()
+    cc_features_plt_args = None
     #### find max/min amplitude for each trace
     search_amp = None #('pn', 10, None)
     ####
@@ -341,6 +417,7 @@ Plot cc wavefield in hdf5 file generated by cc_stack_sac.py.
     [--norm fnm=in.txt,method=pos,outfnm=o.txt] [--adjust_time_axis 5/0]
     [--search_amp p,10,None] [--lines fnm1,fnm2,fnm3]
     [--plt figsize=6/12,interpolation=gaussian,title=all,vmax=1.0,axhist=False,yticks=all,ylabel=True,grid=False,dpi=150] [-H]
+    [--plt_cf ScS*,PcP*,PKIKPPKIKP-PKJKP  --plt_cf_args dual,colormap=Spectral ] 
 
 Args:
     -I:
@@ -360,6 +437,20 @@ Args:
             the half_window_length is in seconds,
             the fnm can be a string of filename or None.
     --line: a list of filenames for plotting lines.
+    
+    --plt_cf: a list of correlation feature names separated by comma 
+              to enable plotting their distance-time curves.
+              e.g., -cc_features PcP*,ScS*,PKIKPPKIKP-PKJKP
+
+    --plt_cf_args: options for plotting the correlation features.
+            dual: plot doul correlation wavefields, and only plot the correlation
+                  feature distance-time curves on the right one.
+                  (default is not used)
+            slowness: min/max  the slowness range to cut the the correlation feature 
+                               distance-time curves.
+            colormap: 'Spectral' color map to use for annotating the correlation features.
+            evdp:     depth in km of event for computing the correlatin features.
+                      (default: 25)
 
     --plt: plot options.
             figsize: width/height
@@ -376,7 +467,10 @@ Args:
         print(HMSG)
         exit(0)
     ####
-    options, remainder = getopt(argv[1:], 'I:P:D:T:VHh?', ['filter=', 'adjust_time_axis=', 'taper_sec=', 'amp_adjust=', 'search_amp=', 'norm=', 'search=', 'lines=', 'plt='] )
+    options, remainder = getopt(argv[1:], 'I:P:D:T:VHh?', 
+                ['filter=', 'adjust_time_axis=', 'taper_sec=', 'amp_adjust=', 
+                'search_amp=', 'norm=', 'search=', 'lines=', 'plt_cf=', 'plt_cf_args=',
+                'plt='] )
     for opt, arg in options:
         if opt in ('-I'):
             h5_fnm = arg
@@ -407,9 +501,13 @@ Args:
                 norm_settings = get_norm_methods(arg)
             else:
                 norm_settings = arg
-        elif opt in ('--lines'):
+        elif opt in ('--lines', ):
             lines = get_lines(arg)
-        elif opt in ('--plt'):
+        elif opt in ('--plt_cf', ):
+            cc_features_to_plot = arg.split(',')
+        elif opt in ('--plt_cf_args', ):
+            cc_features_plt_args = plt_cf_options(arg)
+        elif opt in ('--plt', ):
             figsize, interpolation, title, vmax, axhist, yticks, ylabel, grid, dpi, xlabel = plt_options(arg)
         else:
             print(HMSG)
@@ -418,6 +516,7 @@ Args:
     run(h5_fnm, figname, dist_range, cc_time_range,
         filter_setting, taper_sec,
         norm_settings, adjust_time_axis,
-        lines, search_amp,
+        lines,  search_amp,
+        cc_features_to_plot, cc_features_plt_args,
         figsize, interpolation, title, vmax, axhist, yticks, ylabel, grid, dpi, xlabel)
 

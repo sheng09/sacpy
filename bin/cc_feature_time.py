@@ -18,20 +18,28 @@ class cc_feature_time:
         self.rcv1dp, self.rcv2dp = rcv1dp_km, rcv2dp_km
         self.debug = debug
         pass
-    def run(self, distances, phase1, phase2, show=False, figname=None, print_result=True, dist_accuracy_deg=0.5, max_interation=10):
-        if distances is None:
-            rps, cc_time, trvt1, trvt2, cc_pd, cc_d, pd1, pd2 = correlation.get_ccs(self.tau_modc1, self.tau_modc2, phase1, phase2, self.rcv1dp, self.rcv2dp, dist_accuracy_deg, max_interation)
+    def run(self, distances, feature_name, show=False, figname=None, print_result=True, dist_accuracy_deg=0.5, max_interation=10):
+        if '-' in cc_feature_name:
+            phase1, phase2 = cc_feature_name.split('-')
+            if distances is None:
+                rps, cc_time, trvt1, trvt2, cc_pd, cc_d, pd1, pd2 = correlation.get_ccs(self.tau_modc1, self.tau_modc2, phase1, phase2, self.rcv1dp, self.rcv2dp, dist_accuracy_deg, max_interation)
+            else:
+                rps, cc_time, trvt1, trvt2, cc_pd, cc_d, pd1, pd2 = correlation.get_ccs_from_cc_dist(distances, self.tau_modc1, self.tau_modc2, phase1, phase2, self.rcv1dp, self.rcv2dp, dist_accuracy_deg, max_interation)
         else:
-            rps, cc_time, trvt1, trvt2, cc_pd, cc_d, pd1, pd2 = correlation.get_ccs_from_cc_dist(distances, self.tau_modc1, self.tau_modc2, phase1, phase2, self.rcv1dp, self.rcv2dp, dist_accuracy_deg, max_interation)
+            name = cc_feature_name.replace('*', '')
+            rps, trvt1, cc_pd, cc_d = correlation.get_arrivals(self.tau_modc1, name, self.rcv1dp)
+            cc_time = trvt1
+            trvt2 = np.zeros(cc_time.size)
+            pd1 = cc_pd
+            pd2 = np.zeros(cc_time.size)
         if self.verbose:
-            self.verbose(phase1, phase2, rps, cc_time, trvt1, trvt2, cc_pd, cc_d, pd1, pd2)
-    def verbose(self, phase1, phase2, ray_params, cc_time, trvt1, trvt2, cc_purist_distance, cc_distance, purist_distance1, purist_distance2):
+            self.verbose(feature_name, rps, cc_time, trvt1, trvt2, cc_pd, cc_d, pd1, pd2)
+    def verbose(self, feature_name, ray_params, cc_time, trvt1, trvt2, cc_purist_distance, cc_distance, purist_distance1, purist_distance2):
         print('#############################################################################')
         print('################################# Result ####################################')
         print('#############################################################################')
         print('cross-term inter-dist(deg)  dist1(deg)  dist2(deg)  ray_param(s/deg)  t1(s)  t2(s)  cc_time(s)')
         #PcS-PcP 10.0 28.244999 38.244999 3.100130 770.354077 576.068671 194.285406
-        feature_name = '%s-%s' % (phase1, phase2)
         distance1= correlation.round_degree_180(purist_distance1)
         distance2= correlation.round_degree_180(purist_distance2)
         for rp, ct, it1, it2, cpd, cd, d1, d2 in zip(ray_params, cc_time, trvt1, trvt2, cc_purist_distance, cc_distance, distance1, distance2):
@@ -116,9 +124,9 @@ class cc_feature_time:
 
 if __name__ == "__main__":
     # -F PcS-PcP -D 10 -E -30/0
-    evdp_km = 0.0
-    rcv1dp_km, rcv2dp_km = 0.0, 0.0
-    ph1, ph2 = None, None
+    evdp_km = 25.0
+    rcv1dp_km, rcv2dp_km = (0.0, 0.0)
+    cc_feature_name = None
     distances = None
     show = False
     figname = None
@@ -129,7 +137,8 @@ if __name__ == "__main__":
     options, remainder = getopt.getopt(sys.argv[1:], 'F:D:L:SV', ['max_interation=', 'accuracy=', 'debug',] )
     for opt, arg in options:
         if opt in ('-F', ):
-            ph1, ph2 = arg.split('-')
+            cc_feature_name = arg
+            #ph1, ph2 = arg.split('-')
         elif opt in ('-D',):
             distances = np.array( [float(it) for it in arg.split(',')] )
         elif opt in ('-S', ):
@@ -146,12 +155,12 @@ if __name__ == "__main__":
             debug = True
         else:
             print('invalid options: %s' % (opt) )
-    if ph1 == None or ph2 == None:
+    if cc_feature_name == None:
         print('e.g.: %s -F PcS-PcP [-D 7.5,8.5,10,11,12,13] [-L out.png] [--accuracy=0.5] [--max_interation=5] [-S] [-V]' % (sys.argv[0]) )
         sys.exit(-1)
     with Timer(message='#run main(...)', verbose=True):
         app = cc_feature_time('ak135', evdp_km, rcv1dp_km, rcv2dp_km, debug=debug)
-        app.run(distances, ph1, ph2, show=show, figname=figname, print_result=True, dist_accuracy_deg=dist_accuracy, max_interation=max_interation)
+        app.run(distances, cc_feature_name, show=show, figname=figname, print_result=True, dist_accuracy_deg=dist_accuracy, max_interation=max_interation)
       #self, distances, phase1, phase2, show=False, figname=None, print_result=True, dist_accuracy_deg=0.5, max_interation=10
     if debug:
         pass
