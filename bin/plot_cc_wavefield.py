@@ -9,7 +9,7 @@ from getopt import getopt
 from sys import exit, argv
 import sys
 import numpy as np
-from sacpy.processing import iirfilter_f32, taper, max_amp_index
+from sacpy.processing import iirfilter_f32, taper, max_amp_index, split_arrays_range
 import os, os.path
 import matplotlib.ticker as mtick
 from sacpy import correlation
@@ -129,7 +129,7 @@ def run(h5_filename, figname, dist_range=None, cc_time_range=None,
             fig, ((ax1, ax3), (ax2, ax4)) = plt.subplots(2, 2, figsize=(width, heigh), gridspec_kw={'height_ratios': [6, 1], 'hspace': 0.02, 'wspace': 0.08 } )
             #ax4.axis('off')
         else:
-            fig, ax1 = plt.subplots(1, 2, figsize= (width, heigh) )
+            fig, (ax1, ax3) = plt.subplots(1, 2, figsize= (width, heigh) )
     else:
         if axhist:
             fig, (ax1, ax2) = plt.subplots(2, 1, figsize= figsize, gridspec_kw={'height_ratios': [6, 1], 'hspace': 0.02, 'wspace': 0.08 } )
@@ -168,16 +168,32 @@ def run(h5_filename, figname, dist_range=None, cc_time_range=None,
         for idx, vol in enumerate(cc_results):
             clr = cmap(idx/n_features)
             nm = vol['name']
-            rp = vol['ray_param']
+            rp = np.deg2rad(vol['ray_param'])
             cc_t = vol['time']
             cc_d = vol['distance']
-            #if rp_min:
-            #    np.where(rp>=rp_min)
-            it_ax.text(cc_d[-1], cc_t[-1], '%d' %idx, fontsize=9)
-            it_ax.plot(cc_d, cc_t, color=clr, label='(%d)%s' % (idx, nm) )
+            if adjust_time_axis != None:
+                sc, xc = adjust_time_axis
+                cc_t = cc_t - sc*(cc_d-xc)
+                
+            if rp_min is None:
+                it_ax.text(cc_d[-1], cc_t[-1], '%d' %idx, fontsize=9, color='w')
+                it_ax.plot(cc_d, cc_t, color=clr, label='(%d)%s' % (idx, nm), alpha=cc_features_plt_args['alpha'], linewidth=0.8 )
+            else:
+                rp_segments, cct_segments, ccd_segments = split_arrays_range(rp_min, rp_max, rp, cc_t, cc_d, edge='i')
+                for ilabel, (_rp, cc_d, cc_t) in enumerate(zip(rp_segments, ccd_segments, cct_segments) ):
+                    if ilabel == 0:
+                        it_ax.text(cc_d[-1], cc_t[-1], '%d' %idx, fontsize=9, color='w')
+                        it_ax.plot(cc_d, cc_t, color=clr, label='(%d)%s' % (idx, nm), alpha=cc_features_plt_args['alpha'], linewidth=0.8 )
+                    else:
+                        it_ax.plot(cc_d, cc_t, color=clr, alpha=cc_features_plt_args['alpha'], linewidth=0.8)
+            
         it_ax.legend(loc=(1.02, 0.0), ncol = int(n_features//18)+1 )
     ###
     dist_range = (dist[0], dist[-1] ) if dist_range == None else dist_range
+    for it_ax in (ax1, ax3):
+        if it_ax:
+            it_ax.set_xlim(dist_range)
+            it_ax.set_ylim( (cc_t0, cc_t1) )
     ### search for max/min points for each trace
     if search_amp != None:
         search_max_amplitude(ax1, mat, search_amp, cc_t0, delta, adjust_time_axis)
@@ -254,7 +270,7 @@ def plt_options(args):
     yticks = None
     ylabel = None
     grid   = False
-    dpi    = 150
+    dpi    = 300
     xlabel = 'Distance ($\degree$)'
     ###
     for it in args.split(','):
@@ -293,9 +309,10 @@ def plt_cf_options(args):
     options = {
         'dual': False,
         'evdp': 25.0,
-        'slowness': (-1000, 1000),
+        'slowness': None,
         'colormap': 'Spectral',
         'model_name':'ak135',
+        'alpha': 0.8,
     }
     for it in args.split(','):
         if '=' in it:
@@ -303,6 +320,8 @@ def plt_cf_options(args):
             if opt == 'slowness':
                 options[opt] = tuple( [float(it) for it in value.split('/')] )
             elif opt == 'evdp':
+                options[opt] = float(value)
+            elif opt == 'alpha':
                 options[opt] = float(value)
             else:
                 options[opt] = value
@@ -393,7 +412,7 @@ if __name__ == "__main__":
     yticks = 'all'
     ylabel = 'all'
     grid = False
-    dpi = 100
+    dpi = 300
     xlabel = 'Distance ($\degree$)'
     #### adjust amplitude to plot
     #### line along which to normalize
@@ -430,7 +449,7 @@ Args:
 
     --norm: 'raw', 'unit', 'stack_average'.
             or: something like `--norm fnm=test.txt,method=pos,window=-10/10,outfnm=o.txt`.
-    --adjust_time_axis: adjust time axis via T' = T-k(x-x0)
+    --adjust_time_axis k/xc: adjust time axis via t' = t-k*(x-xc)
 
     --search_amp type,half_window_length,fnm :
             the type can be 'p', 'n', 'pn',
@@ -446,11 +465,12 @@ Args:
             dual: plot doul correlation wavefields, and only plot the correlation
                   feature distance-time curves on the right one.
                   (default is not used)
-            slowness: min/max  the slowness range to cut the the correlation feature 
-                               distance-time curves.
+            slowness: min/max  the slowness (degree/sec) range to cut the
+                               correlation feature distance-time curves.
             colormap: 'Spectral' color map to use for annotating the correlation features.
             evdp:     depth in km of event for computing the correlatin features.
                       (default: 25)
+            alpha:  transparency between 0.0 and 1.0. (default 0.8)
 
     --plt: plot options.
             figsize: width/height

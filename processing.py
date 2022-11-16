@@ -451,30 +451,268 @@ def fwhiten_f32(xs, delta, winlen, water_level_ratio= 1.0e-5, taper_halfsize=0, 
         taper(xs, taper_halfsize)
 
 
-if __name__ == "__main__":
-    import sys
-    x1 = [0, 1, 2, 1]
-    x2 = [0, 0, 0, 0, 0, 0, 0, 1, 2, 2, 0, 0, 0]
-    n = cc_delay(x1, x2, 'pos')
-    sys.exit(0)
-    import matplotlib.pyplot as plt
-    from copy import deepcopy
-    from sacpy.sac import c_rd_sac
-    import numpy as np
-    st = c_rd_sac('junk/2010/20100103_223625.a/processed/II.NNA.00.BHZ')
-    delta = st.hdr.delta # sampling time interval
-    st.truncate(10800, 32300)
-    st.write('junk.sac')
-    st.detrend()
-    st.taper(0.005)
-    ts = st.get_time_axis()
-    xs = deepcopy(st.dat)
-    ys = deepcopy(st.dat)
-    zs = deepcopy(st.dat)
+#############################################################################################################################
+# JIT For angle computations
+#############################################################################################################################
+@jit(nopython=True, nogil=True)
+def round_degree_360(xs):
+    """
+    Round degrees to be in [0, 360)
+    xs: a single value or a list of values (e.g., an object ot np.array)
+    """
+    return xs % 360
+def round_degree_180(deg):
+    """
+    First, round degrees to be in [0, 360), and then angles in [80, 360) will be rounded to 360-angles.
 
-    plt.subplot(311); plt.plot(ts, xs)
-    plt.subplot(312); plt.plot(ts, ys)
-    plt.subplot(313); plt.plot(ts, zs)
+    xs: a single value or a list of values (e.g., an object ot np.array)
+    """
+    x = round_degree_360(deg)
+    return round_degree_360((x//180)*(-2*x) + x)
+
+#############################################################################################################################
+# JIT array processing
+#############################################################################################################################
+#@jit(nopython=True, nogil=True)
+def insert_values(xcs, xs, *args):
+    """
+    Insert many `xc` into an array `xs`, so that the result `new_xs` must not have two successive points 
+    `new_xs[i]` and `new_xs[i+1]` across the value of `xc`. In other words, it is not allowed to have
+    `new_xs[i] < xc < new_xs[i+1]` or new_xs[i+1] < xc < new_xs[i]`.
+    Also, insertion are conducted for each array of the `*args` with respect to the insertion of `xc`
+    into `xs`. Linear interpolation method is taken for the insertion.
+
+    xcs: a single number or a list of numbers.
+    """
+    try:
+        junk = len(xcs)
+    except Exception:
+        xcs = [xcs]
+    #############################################################
+    for xc in xcs:
+        junk = np.array(xs)-xc
+        junk2 = junk[:-1]*junk[1:]
+        idx_cross_left  = np.where(junk2<0)[0]
+        if idx_cross_left.size>0:
+            xs = list(xs)
+            args = [list(it) for it in args]
+        for il in idx_cross_left[::-1]:
+            ir = il+1
+            xl, xr = xs[il], xs[ir]
+            xs.insert(ir, xc)
+            for ys in args:
+                yl, yr = ys[il], ys[ir]
+                yc = yl*(xr-xc)/(xr-xl) + yr*(xc-xl)/(xr-xl)
+                ys.insert(ir, yc)
+    if len(args)==0:
+        return np.array(xs)
+    results = [np.array(xs)]
+    results.extend( [np.array(ys) for ys in args] )
+    return tuple(results)
+def split_arrays(xcs, xs, *args, edge='i', **kwargs):
+    """
+    xcs: a single or a list of critical values to split the array `xs`.
+
+    edge: an argument for how to process the xs values across the a xc.
+          '+': extend one more outside the selected range.
+          '-': do not extend ...
+          'i': use linear interpolation to compute the values at the x_c.
+          's': split the array using the exact appearnce of `x_c` in the `xs`.
+    e.g., 
+           >>> xs = [0,  1,  2,  3,  4,  5,  6,  5,  4,  3,  2,  1,  0]
+           >>> ys = [10,21, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22]
+           >>> ys = [10,21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32]\
+           >>>
+           >>> x_segments, y_segments, z_segments = split_arrays(4.1, xs, ys, zs, edge='i' )
+           >>> # or
+           >>> x_segments = split_arrays(4.1, xs, edge='i' )
+           >>>
+           >>> x_segments, y_segments, z_segments = split_arrays((4.1, 5.1), xs, ys, zs, edge='i' )
+           >>> # or
+           >>> x_segments = split_arrays((4.1, 5.1), xs, edge='i' )
+    """
+    xs = np.array(xs).astype(np.float64)
+    try:
+        junk = len(xcs)
+    except Exception:
+        xcs = (xcs, )
+    #############################################
+    if edge == 's':
+        # find all indexs where elements in the xs equal to xc
+        idxs = list()
+        for x_c in xcs:
+            difference = xs-x_c
+            zero = np.abs( np.max(difference) )*1.0e-12 # 
+            idxs.extend( np.where(np.abs(difference)<=zero)[0] )
+        # add the 0 and n-1 to the idxs are they are natural boundaries
+        idxs = sorted( set(idxs).union( (0, difference.size-1) ) )
+        # segments = [x_segments, y_segments,...]
+        segments = [list() for it in range(len(args)+1) ]
+        x_segments = segments[0]
+        for i1, i2 in zip( idxs[:-1], idxs[1:] ):
+            x_segments.append( xs[i1:i2+1] )
+            for ys_segments, ys in zip(segments[1:], args):
+                ys_segments.append( ys[i1:i2+1] )
+        if len(args) == 0:
+            return x_segments
+        return segments
+    if edge == 'i':
+        # Add necessary xc values into xs, and interpolated values to ys, zs,...
+        # Then run split_arrays(... edge='s') to split with respect to all
+        tmp = insert_values(xcs, xs, *args)
+        if len(args)==0:
+            xs, args = tmp, tuple()
+        else:
+            xs, args = tmp[0], tmp[1:]
+        kwargs['edge'] = 's'
+        return split_arrays(xcs, xs, *args, **kwargs)
+    #############################################
+    if edge in '-+':
+        # Call split_array(..., edge='s') first
+        kwargs['edge'] = 's'
+        tmp = split_arrays(xcs, xs, *args, **kwargs)
+        if len(args)==0:
+            xs_segments, args_segments = tmp, tuple()
+        else:
+            xs_segments, args_segments = tmp[0], tmp[1:]
+        # then split
+        new_segments = [list() for it in range(len(args)+1) ]
+        ihead, itail = (-1, -1) if edge == '-' else (0, -2)
+        di0, di1 = (1, 1) if edge == '-'  else (0, 2)
+        for iseg, xs in enumerate(xs_segments):
+            idxs = [ihead, xs.size+itail]
+            for x_c in xcs:
+                junk = xs-x_c
+                junk2 = junk[:-1]*junk[1:]
+                idxs.extend(np.where(junk2<0.0)[0])
+            idxs = sorted(idxs)
+            for i0, i1 in zip( idxs[:-1], idxs[1:] ):
+                i0, i1 = i0+di0, i1+di1
+                new_segments[0].append( xs[i0:i1] )
+                for ys_segments, new_ys_segments in zip(args_segments, new_segments[1:]):
+                    ys = ys_segments[iseg]
+                    new_ys_segments.append( ys[i0:i1] )
+        if len(args)==0:
+            return new_segments[0]
+        return new_segments
+def split_arrays_range(xmin, xmax, xs, *args, edge='i'):
+    """
+    e.g.,
+        >>> x_segments = split_arrays_range(xmin=10, xmin=30, xs)
+        >>> x_segments, y_segmemts, z_segments  = split_arrays_range(xmin=10, xmin=30, xs, ys, zs)
+    """
+    if xmin>=xmax:
+        return [tuple() for it in range(len(args)+1) ]
+    ########################################################
+    tmp = split_arrays((xmin, xmax), xs, *args, edge=edge)
+    if len(args)==0:
+        x_segments, args_segments = tmp, tuple()
+    else:
+        x_segments, args_segments = tmp[0], tmp[1:]
+    ########################################################
+    segments = [list() for it in range(len(args)+1) ]
+    for iseg, xs in enumerate(x_segments):
+        mid_index = int((len(xs) - 1)/2)
+        v = xs[mid_index]  # the mid index value
+        if xmin <= v <= xmax:
+            segments[0].append(xs)
+            for qqq, www in zip(segments[1:], args_segments):
+                qqq.append(www[iseg])
+    ########################################################
+    if len(args) == 0:
+        segments = segments[0]
+    return segments
+
+if __name__ == "__main__":
+    import matplotlib.pyplot as plt
+    if True:
+        xs = np.array([0, 1, 2, 4, 5, 6, 7, 5, 3, 2, 1, 0])
+        ys = np.array(xs)+10
+        zs = np.array(xs)+20
+        xcs = 1.1, 5.0
+        print('x', xs)
+        print('xcs', xcs)
+        vx = insert_values(xcs, xs)
+        print('vx', vx)
+        vx, vy, vz = insert_values(xcs, xs, ys, zs)
+        print('vx', vx)
+        print('vy', vy)
+        print('vz', vz)
+        print()
+        for edge in 'si-+':
+            vx = split_arrays(xcs, xs, edge=edge)
+            print('xs', xs)
+            print('xcs', xcs)
+            print(edge, 'vx', vx)
+            #print(v[1])
+            vx, vy = split_arrays(xcs, xs, ys, edge=edge)
+            print(edge, 'vx', vx)
+            print(edge, 'vy', vy)
+            print()
+        
+        for edge in 'i-+':
+            xmin, xmax=1.1, 5.0
+            vx = split_arrays_range(xmin, xmax, xs, edge=edge)
+            print('xs', xs)
+            print('xmin, xmax', xmin, xmax)
+            print(edge, 'vx', vx)
+            #print(v[1])
+            vx, vy, vz = split_arrays_range(xmin, xmax, xs, ys, zs, edge=edge)
+            print(edge, 'vx', vx)
+            print(edge, 'vy', vy)
+            print(edge, 'vy', vz)
+            print()
+
+        for edge in 'i-+':
+            c = np.linspace(0, 10, 100)
+            xs = np.sin(c)
+            ys = xs+1
+            zs = np.cos(xs)
+            xmin, xmax= -0.2, 0.3
+            vx, vy, vz = split_arrays_range(xmin, xmax, xs, ys, zs, edge=edge)
+            plt.plot(xs, ys, 'o', color='C0')
+            plt.plot(xs, zs, 'o', color='C4')
+            for ivx, ivy, ivz in zip(vx, vy, vz):
+                plt.plot(ivx, ivy, 'x', color='C1')
+                plt.plot(ivx, ivz, 'x', color='C3')
+                #plt.plot(c, ivy)
+                #plt.plot(c, ivz)
+            plt.show()
+        print()
+
+        #print(x)
+        #print(y)
+        #x, y = insert_x(3, x, y)
+        #print(x)
+        #print(y)
+        #v = split_arrays(1.1, x, edge='-') #, edge='s') #, y, z, edge='-')
+        #for it in v:
+        #    print('final', it)
+        #    pass
+    if False:
+        import sys
+        x1 = [0, 1, 2, 1]
+        x2 = [0, 0, 0, 0, 0, 0, 0, 1, 2, 2, 0, 0, 0]
+        n = cc_delay(x1, x2, 'pos')
+        sys.exit(0)
+        import matplotlib.pyplot as plt
+        from copy import deepcopy
+        from sacpy.sac import c_rd_sac
+        import numpy as np
+        st = c_rd_sac('junk/2010/20100103_223625.a/processed/II.NNA.00.BHZ')
+        delta = st.hdr.delta # sampling time interval
+        st.truncate(10800, 32300)
+        st.write('junk.sac')
+        st.detrend()
+        st.taper(0.005)
+        ts = st.get_time_axis()
+        xs = deepcopy(st.dat)
+        ys = deepcopy(st.dat)
+        zs = deepcopy(st.dat)
+
+        plt.subplot(311); plt.plot(ts, xs)
+        plt.subplot(312); plt.plot(ts, ys)
+        plt.subplot(313); plt.plot(ts, zs)
     #Inplace IIR filter
     #-------------------------
     if False:
@@ -532,7 +770,7 @@ if __name__ == "__main__":
 
     #Inplace whitening
     #-------------------------
-    if True:
+    if False:
         wtlen = 128.0 # sec
         f1, f2 = 0.02, 0.0667
         water_level_ratio, taper_halfsize = 1.0e-5, 30
@@ -543,4 +781,4 @@ if __name__ == "__main__":
         plt.subplot(311); plt.plot(ts, xs)
         plt.subplot(312); plt.plot(ts, ys)
         plt.subplot(313); plt.plot(ts, zs)
-    plt.show()
+        plt.show()

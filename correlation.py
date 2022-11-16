@@ -9,20 +9,10 @@ import sacpy
 from copy import deepcopy
 import sys, os, os.path, pickle
 import matplotlib
+from sacpy.processing import round_degree_180, round_degree_360
 
 __global_verbose= False
 
-def round_degree_360(deg):
-    """
-    Round degress to be in [0, 360)
-    """
-    return deg % 360
-def round_degree_180(deg):
-    """
-    Round degress to be in [0, 360), and then angles in [80, 360) will be rounded to 360-angles.
-    """
-    x = round_degree_360(deg)
-    return round_degree_360((x//180)*(-2*x) + x)
 def get_corrected_model(reference_model, evdp_km, rcvdp_km):
     """
     reference_model: an object a tau_model.
