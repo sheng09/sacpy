@@ -29,12 +29,7 @@ def get_corrected_model(reference_model, evdp_km, rcvdp_km):
 ######################################################################################################################################################################
 # Dealing with correlation features
 ######################################################################################################################################################################
-mpi_cache_tag = ''
-try:
-    mpi_cache_tag = '_mpi_%4d' % int(os.environ['OMPI_COMM_WORLD_RANK'])
-except:
-    pass
-@CacheRun('%s/bin/dataset/cc_feature_time%s.h5' % (sacpy.__path__[0], mpi_cache_tag) )
+@CacheRun('%s/bin/dataset/cc_feature_time.h5' % sacpy.__path__[0] )
 def get_ccs(tau_model1_corrected, tau_model2_corrected, phase1_name, phase2_name, rcvdp1_km, rcvdp2_km, 
             threshold_distance=0.1, max_interation=None, enable_h5update=True):
     """
@@ -311,12 +306,7 @@ def get_all_interrcv_ccs(cc_feature_names=None, evdp_km=25.0, model_name='ak135'
 ######################################################################################################################################################################
 # Dealing with arrivals
 ######################################################################################################################################################################
-mpi_cache_tag = ''
-try:
-    mpi_cache_tag = '_mpi_%4d' % int(os.environ['OMPI_COMM_WORLD_RANK'])
-except:
-    pass
-@CacheRun('%s/bin/dataset/cc_feature_time%s.h5' % (sacpy.__path__[0], mpi_cache_tag) )
+@CacheRun('%s/bin/dataset/cc_feature_time.h5' % sacpy.__path__[0] )
 def get_arrivals(tau_model_corrected, phase_name, rcvdp_km, ray_param_range=None, threshold_distance=0.3, max_interation=None,
                  enable_h5update=True):
     """

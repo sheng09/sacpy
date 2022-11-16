@@ -142,7 +142,14 @@ class CacheRun:
         except Exception:
             pass
         #print('enter CacheRun._init__(...)')
-        self.h5cache = h5py.File(h5_filename, 'a') if h5_filename else None
+        self.h5cache = None
+        if h5_filename:
+            try:
+                mpi_rank = int(os.environ['OMPI_COMM_WORLD_RANK'])
+                h5_filename = '%s_mpi_%4d' % (h5_filename, mpi_rank)
+            except:
+                pass
+            self.h5cache = h5py.File(h5_filename, 'a')
         self.cache   = dict()
         #######################################################
         def __load(group_name):
