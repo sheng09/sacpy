@@ -9,6 +9,11 @@ import numpy as np
 import h5py
 import os
 
+from numpy.random import randint
+import time
+from smtplib import SMTP, SMTP_SSL
+from email.mime.text import MIMEText
+
 class TimeSummary(OrderedDict):
     def __init__(self):
         pass
@@ -123,8 +128,6 @@ class Timer:
             return result
         return __wrapper
 
-
-
 class CacheRun:
     """
     Please note. This CacheRun as a decorator with be constructed for once no matter how
@@ -202,7 +205,36 @@ class CacheRun:
         def __wrapper(*args, **kwargs):
             return func(*args, **kwargs)
         return __wrapper
+
+
+def send_email(content, subject, recipient, sender, passwd, host="smtp.163.com", port=25):
+    """
+    Send an email.
+
+    content, subject: string, the content and subject of the email. 
+    recipient: email address of the recipient.
+    sender:    email address of the sender.
+    passwd:    email passwd of the sender.
+    host:      host of the sender server.
+    port:      port of the sender server.
+
+    """
+    msg = MIMEText(content)
+    msg['From'] = sender
+    msg['To']   = recipient
+    msg['Subject'] = subject
+    with SMTP(host=host, port=port) as smtp:
+        smtp.set_debuglevel(0)
+        smtp.ehlo()
+        smtp.starttls()
+        smtp.login(sender, passwd)
+        smtp.sendmail(sender, [recipient], msg.as_string() )
+    time.sleep(randint(3, 9) )
+
 if __name__ == '__main__':
+    if False:
+        content = 'Test content %d' % randint(0, 99999999)
+        subject = 'Test Subject %d' % randint(0, 99999999)
     if False:
         time_summary = TimeSummary()
         with Timer(message='test1', color='red', summary=None):
@@ -218,7 +250,7 @@ if __name__ == '__main__':
         print(time_summary)
         time_summary.plot_rough()
         time_summary.plot(show=True)
-    if True:
+    if False:
         with CacheRun('junk.h5', clear=True) as cache:
             print( cache.load_from_cache('key1') )
             cache.dump_to_cache( 'key2', {'xs': [1,2,3,4,5], 'ys': 'sdfdfadfd'}, {'maker': 'her', 'date': 'first day'} )
