@@ -278,6 +278,66 @@ class SeismogramsTuner(Stream):
             return SeismogramsTuner( [tr for tr in self.traces if (tr.stats.starttime<=min_time and tr.stats.endtime>=max_time) ] )
         elif method =='loose':
             return SeismogramsTuner( [tr for tr in self.traces if (tr.stats.starttime<=max_time and min_time<=tr.stats.endtime) ] )
+    def group_network(self):
+        """
+        Group all the traces within the `self.traces` with respect to network code XXXX
+        where XXXX is the network code.
+
+        Return a dictionary. The keys of the dictionary are in the format of XXXX. Each
+        value of the dictionary is a list of objects of `SeismogramsTuner`. Each element
+        of the list contains traces having the same network code `XXXX` while their
+        station codes, location identifier, and channels codes can be different.
+        """
+        nets = [tr.stats.network for tr in self.traces]
+        vol = { it:Stream() for it in set(nets) }
+        for net, tr in zip(nets, self.traces):
+            vol[net].append(tr)
+        return vol
+    def group_station(self):
+        """
+        Group all the traces within the `self.traces` with respect to station name XXXX.YYYY.ZZZZ
+        where XXXX is the network code, and YYYY the station code, and ZZZZ the location identifier.
+
+        Return a dictionary. The keys of the dictionary are in the format of XXXX.YYYY.ZZZZ. Each
+        value of the dictionary is a list of objects of `SeismogramsTuner`. Each element of the list
+        contains traces having the same station name `XXXX.YYYY.ZZZZ` while their channels can be
+        different.
+        """
+        stations = ['%s.%s.%s' % (tr.stats.network, tr.stats.station, tr.stats.location)  for tr in self.traces]
+        vol = { it:Stream() for it in set(stations) }
+        for st, tr in zip(stations, self.traces):
+            vol[st].append(tr)
+        return vol
+    def group_location(self):
+        """
+        Group all the traces within the `self.traces` with respect to location identifier
+        ZZZZ where the ZZZZ is the location identifier.
+
+        Return a dictionary. The keys of the dictionary are in the format of ZZZZ. Each
+        value of the dictionary is a list of objects of `SeismogramsTuner`. Each element
+        of the list contains traces having the same location identifier `ZZZZ` while
+        their network codes, station codes, and channel codes can be different.
+        """
+        locs = [tr.stats.location for tr in self.traces]
+        vol = { it:Stream() for it in set(locs) }
+        for loc, tr in zip(locs, self.traces):
+            vol[loc].append(tr)
+        return vol
+    def group_channel(self):
+        """
+        Group all the traces within the `self.traces` with respect to channel name CCCC
+        where the CCCC is the station code.
+
+        Return a dictionary. The keys of the dictionary are in the format of CCCC. Each
+        value of the dictionary is a list of objects of `SeismogramsTuner`. Each element
+        of the list contains traces having the same channel name `CCCC` while their
+        network codes, station codes, and location identifier can be different.
+        """
+        channels = [tr.stats.channel for tr in self.traces]
+        vol = { it:Stream() for it in set(channels) }
+        for ch, tr in zip(channels, self.traces):
+            vol[ch].append(tr)
+        return vol
     def update_stats_sac(self, lcalda=False):
         """
         Update the `trace.stats.sac` for each element of `self.traces`
@@ -295,10 +355,16 @@ class SeismogramsTuner(Stream):
             if lcalda:
                 if 'evlo' in sac_dict and  'evla' in sac_dict   and   'stlo' in sac_dict  and   'stla' in sac_dict:
                     evlo, evla, stlo, stla = sac_dict.evlo, sac_dict.evla, sac_dict.stlo, sac_dict.stla
-                    sac_dict.az = azimuth(evlo, evla, stlo, stla)
-                    sac_dict.baz = azimuth(stlo, stla, evlo, evla)
-                    sac_dict.gcarc = haversine(stlo, stla, evlo, evla)
+                    az    = azimuth(evlo, evla, stlo, stla)
+                    baz   = azimuth(stlo, stla, evlo, evla)
+                    gcarc = haversine(stlo, stla, evlo, evla)
+                    sac_dict.az    = az
+                    sac_dict.baz   = baz
+                    sac_dict.gcarc = gcarc
                     sac_dict.lcalda = 1
+                    tr.stats.back_azimuth = baz
+                    tr.stats.azimuth = az
+
         pass
     def set_stats_sac_reference_time(self, reference_time):
         """
@@ -309,6 +375,9 @@ class SeismogramsTuner(Stream):
         reference_time: an object of UTCDateTime.
         """
         for tr in self.traces:
+            if not hasattr(tr.stats, 'sac_reference_time'):
+                tr.stats.sac_reference_time = tr.stats.starttime
+            #############################################################
             if not hasattr(tr.stats, 'sac'):
                 tr.stats.sac = AttribDict()
             sac_dict = tr.stats.sac
@@ -318,12 +387,13 @@ class SeismogramsTuner(Stream):
             sac_dict['nzmin']  = reference_time.minute
             sac_dict['nzsec']  = reference_time.second
             sac_dict['nzmsec'] = int(reference_time.microsecond*0.001)
-            time_shift_sec = tr.stats.starttime-reference_time
-            sac_dict['b'] = time_shift_sec
+            sac_dict['b'] = tr.stats.starttime - reference_time
+            #############################################################
+            time_shift_sec = tr.stats.sac_reference_time - reference_time
             for k in ('t0', 't1', 't2', 't3', 't4',  't5', 't6', 't7', 't8', 't9', 'a', 'f', 'o'):
                 if hasattr(sac_dict, k):
                     if sac_dict[k] != -12345.0:
-                        sac_dict[k] = sac_dict[k]-time_shift_sec
+                        sac_dict[k] = sac_dict[k] + time_shift_sec
     def set_stats_sac_station(self, inventory, verbose=False):
         """
         Set metadata of stations from `inventory` to each element of `self.traces`.
