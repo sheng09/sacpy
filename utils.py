@@ -13,6 +13,10 @@ from numpy.random import randint
 import time
 from smtplib import SMTP, SMTP_SSL
 from email.mime.text import MIMEText
+from bs4 import BeautifulSoup
+import requests
+import re
+import wget
 
 class TimeSummary(OrderedDict):
     def __init__(self):
@@ -206,7 +210,17 @@ class CacheRun:
             return func(*args, **kwargs)
         return __wrapper
 
+def get_folder(filename, makedir=True):
+    """
+    Get the folder for hosting a filename, and make the folder if it does not exist and `makedir=True`.
 
+    filename:
+    makedir:  True or False
+    """
+    folder = '/'.join(filename.split('/')[:-1])
+    if makedir and (not os.path.exists(folder)):
+        os.makedirs(folder)
+    return folder
 def send_email(content, subject, recipient, sender, passwd, host="smtp.163.com", port=25):
     """
     Send an email.
@@ -230,8 +244,47 @@ def send_email(content, subject, recipient, sender, passwd, host="smtp.163.com",
         smtp.login(sender, passwd)
         smtp.sendmail(sender, [recipient], msg.as_string() )
     time.sleep(randint(3, 9) )
+def get_http_files(url, re_template_string):
+    """
+    Return a list of file urls inside a http page by matching a template string.
+
+    url: the url of the http page.
+    re_template_string: the template string to select files.
+                        e.g., `re_template_string=r'^head.*txt$'` will match any filenames
+                        starting with `head` and end with `txt`. `.*` means zero or any number
+                        of any characters in the middle.
+    """
+    template = re.compile(re_template_string)
+    page = requests.get(url).text
+    soup = BeautifulSoup(page, 'html.parser')
+    fnms = [node.get('href') for node in soup.find_all('a') ]
+    return ['%s/%s' % (url, it)  for it in fnms if template.match(it)]
+def wget_http_files(urls, filename_prefix='testtest/s_', overwrite=True):
+    """
+    Use wget to download files from a list of urls.
+
+    urls:
+    filename_prefix: filename prefix to save the files.
+    overwrite: True or False to overwrite the existing files.
+    """
+    get_folder(filename_prefix, True)
+    for url in urls:
+        ofnm = '%s%s'% (filename_prefix, url.split('/')[-1])
+        print('wget %s ...' % (url)  )
+        if os.path.exists(ofnm):
+            if overwrite:
+                print('Will overwrite the file %s' % (ofnm) )
+                os.remove(ofnm)
+        real_ofnm = wget.download(url, ofnm)
+        print('\nSaved to %s\nDone!' % (real_ofnm) )
+    pass
 
 if __name__ == '__main__':
+    if True:
+        urls = get_http_files('http://ds.iris.edu/pub/userdata/Sheng_Wang/', '^exam-.*')
+        for it in urls:
+            print(it)
+        wget_http_files(urls, overwrite=True)
     if False:
         content = 'Test content %d' % randint(0, 99999999)
         subject = 'Test Subject %d' % randint(0, 99999999)

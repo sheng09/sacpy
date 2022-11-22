@@ -8,7 +8,7 @@ from obspy.core.stream import Stream
 from obspy.core.util.attribdict import AttribDict
 from obspy.core.inventory.inventory import Inventory
 import pickle
-from sacpy.utils import send_email
+from sacpy.utils import send_email, get_http_files, wget_http_files
 from h5py import File as h5_File
 from numpy import float32, int32, zeros
 from numpy import max as np_max
@@ -22,26 +22,35 @@ class BreqFast:
         >>> from obspy.clients.fdsn.client import Client
         >>> from obspy.core.utcdatetime import UTCDateTime
         >>> #
+        >>> app = BreqFast(email='who_email', name='name', institute='inst', mail_address='where', phone='555 5555 555', fax='555 5555 555', hypo=None, sender_email='sender@email', sender_passwd='pass', sender_host='what', sender_port=25 )
+        >>> #
+        >>> # 1. Request continuous time series
         >>> starttime, endtime = UTCDateTime(2021, 8, 21, 0, 0, 0), UTCDateTime(2021, 8, 21, 4, 0, 0)
+        >>> app.do_not_send_emails = True # set to False to send emails
+        >>> app.continuous_run('cont', starttime, endtime, interval_sec=3600, stations=('IU.PAB', 'II.ALE', 'AU.MCQ'), channels=('BH?', 'SH?'), location_identifiers=('00', '10'), label_prefix='cont', request_dataless=True, request_miniseed=True )
         >>> #
-        >>> app = BreqFast(email='email' label='exam-events-data-new1', name='name', institute='inst', mail_address='where', phone='555 5555 555', fax='555 5555 555', hypo=None, sender_email='email', sender_passwd='pass', sender_host='what', sender_port=25 )
-        >>> app.continuous_run('bfc.txt', starttime, endtime, 3600, ('IU.PAB', 'II.ALE', 'AU.MCQ'), location_identifiers=('00', '10') ) )
-        >>> app.continuous_run('bfc.txt', starttime, endtime, 3600, ('IU.PAB', 'II.ALE', 'AU.MCQ'), location_identifiers=('00', '10') )
-        >>> #
+        >>> # 2。 Request records for catalog events
         >>> client = Client('USGS')
         >>> starttime = UTCDateTime(2021, 1, 1, 0, 0, 0)
         >>> endtime   = UTCDateTime(2021, 3, 1, 0, 0, 0)
         >>> catalog = client.get_events(starttime, endtime, mindepth=10, minmagnitude=6.5) #, includeallorigins=True)
         >>> catalog = catalog[:2]
-        #
-        >>> app = BreqFast(email='email' label='exam-events-data-new1', name='name', institute='inst', mail_address='where', phone='555 5555 555', fax='555 5555 555', hypo=None, sender_email='email', sender_passwd='pass', sender_host='what', sender_port=25 )
-        >>> app.continuous_run('bfc.txt', starttime, endtime, 3600, ('IU.PAB', 'II.ALE', 'AU.MCQ'), location_identifiers=('00', '10') ) )
-        >>> app.earthquake_run('bfe.txt', catalog, -10, 100, ('IU.PAB', 'II.ALE', 'AU.WRKA'), channels=('BH?','SH?'), location_identifiers=('00', '10'), request_dataless=False, request_miniseed=True)
+        >>> app.do_not_send_emails = True # set to False to send emails
+        >>> app.earthquake_run('cat.txt', catalog, -10, 100, stations=('IU.PAB', 'II.ALE', 'AU.WRKA'), channels=('BH?','SH?'), label='cat', location_identifiers=('00', '10'), request_dataless=True, request_miniseed=True )
+        >>> #
+        >>> # 3。 Customize run
+        >>> app.do_not_send_emails = True # set to False to send emails
+        >>> time_windows = [(UTCDateTime(2000,1,1,0), UTCDateTime(2000,1,1,1)), (UTCDateTime(2002,2,3,12), UTCDateTime(2002,2,3,14)) ]
+        >>> app.custom_time_run('tw.txt', time_windows, stations=('IU.PAB', 'II.ALE', 'AU.WRKA'), channels=('BH?','SH?'), label='tw', location_identifiers=('00', '10'), request_dataless=True, request_miniseed=True )
+        >>> #
+        >>> # 4. Download the files from BREQFAST HTTP server once they are ready
+        >>> url = 'http://ds.iris.edu/pub/userdata/Sheng_Wang'
+        >>> app.breqfast_wget(url, re_template_string='^exam-.*mseed$', output_filename_prefix='junk1034343/d_', overwrite=True)
 
     """
-    def __init__(self, email="you@where.com", label='your-label', 
-                       name='your_name', institute='your_institute', mail_address='', phone='', fax='', hypo=None,
-                       sender_email=None, sender_passwd=None, sender_host=None, sender_port=None ):
+    def __init__(self, email="you@where.com", name='your_name', institute='your_institute', mail_address='', phone='', fax='', hypo=None,
+                       sender_email=None, sender_passwd=None, sender_host=None, sender_port=None,
+                       do_not_send_emails=False ):
         """
         e.g.,:
             >>> hypo={  'ot': an datetime object, 
@@ -49,7 +58,6 @@ class BreqFast:
                         'mag': 0.0, 'magtype': 'Mw' }, 
         """
         self.email = email
-        self.label = label
         self.name = name
         self.institute = institute
         self.mail_address = mail_address
@@ -60,6 +68,7 @@ class BreqFast:
         self.sender_passwd=sender_passwd
         self.sender_host=sender_host
         self.sender_port=sender_port
+        self.do_not_send_emails=do_not_send_emails
     @staticmethod
     def earthquake_time_segments(catalog, pretime_sec=-100, posttime_sec=3600):
         """
@@ -118,7 +127,10 @@ class BreqFast:
             if request_dataless:
                 recipients.append( address_book['dataless'] )
             for it in recipients:
-                send_email(content, subject, it, sender=self.sender_email, passwd=self.sender_passwd, host=self.sender_host, port=self.sender_port)
+                print('Content: %s, Subject/BreqfastLabel: %s, Host: %s, Port: %s, Recipient: %s Sender: %s' % (
+                        filename, subject, self.sender_host, self.sender_port, it, self.sender_email) )
+                if not self.do_not_send_emails:
+                    send_email(content, subject, it, sender=self.sender_email, passwd=self.sender_passwd, host=self.sender_host, port=self.sender_port)
     def __hdr(self):
         """
         """
@@ -148,52 +160,149 @@ class BreqFast:
                         ))
         hdr = '\n'.join(hdr_lines)
         return hdr
-    def continuous_run( self, filename, min_time, max_time, interval_sec, stations, channels=('BH?', 'SH?'), location_identifiers=[], 
+    def continuous_run( self, filename_prefix, min_time, max_time, interval_sec,
+                        stations, channels=('BH?', 'SH?'), location_identifiers=[], label_prefix=None,
                         request_miniseed=True, request_dataless=False):
         """
-        e.g., 
-            >>> from obspy.core.utcdatetime import UTCDateTime
-            >>> starttime, endtime = UTCDateTime(2021, 8, 21, 0, 0, 0), UTCDateTime(2021, 8, 21, 4, 0, 0)
-            >>> #
-            >>> app = BreqFast(email='email' label='exam-events-data-new1', 
-            >>>                name='name', institute='inst', mail_address='where', phone='555 5555 555', fax='555 5555 555', hypo=None,
-            >>>                sender_email='email', sender_passwd='pass', sender_host='what', sender_port=25 )
-            >>> app.continuous_run('bfc.txt', starttime, endtime, 3600, ('IU.PAB', 'II.ALE', 'AU.MCQ'), location_identifiers=('00', '10') )
-            
+        Generate BREQFAST request files by providing a time span, and send emails to breqfast@IRIS.
+        For each time segment, a BREQFAST request file will be generated and a request will be made.
+
+        filename_prefix: the filename prefix to store the BREQFAST request file.
+        min_time, max_time: the time span to download continuous time series.
+        interval_sec: the time interval in seconds for separating the continuous time series into many segments.
+        stations: a list of station names in the format of XXXX.YYYY in which XXXX represent
+                  network code and YYYY station code.
+        channels: a list of channels that allow wildcards of `?` and `*`. (e.g., channels=('BH?', 'SH?') ).
+        location_identifiers: a list of location identifiers. (e.g., location_identifiers=('00', '10') ).
+                              in default, all location identifiers will be considered.
+        label_prefix: a prefix string for label used in the BREQFAST request files.
+                      If set to None, then the filename will be used for the label.
+        request_miniseed: True or False to send email to request miniseed data.
+        request_dataless: True or False to send email to request dataless metadata.
         """
         tseg = BreqFast.continuous_time_segments(min_time, max_time, interval_sec)
-        tab = list()
+        print('Will make %d BREQFAST(+DATALESS) requests' % (len(tseg)) )
         for t0, t1 in tseg:
-            tab.extend( BreqFast.table_for_time_time_interval(stations, t0, t1, channels=channels, location_identifiers=location_identifiers) )
-        tab = sorted(tab)
-        return self.__send_email_and_print(filename, tab, request_miniseed, request_dataless)
-    def earthquake_run( self, filename, catalog, pretime_sec, posttime_sec, stations, channels=('BH?', 'SH?'), location_identifiers=[], 
+            tab = BreqFast.table_for_time_time_interval(stations, t0, t1, channels=channels, location_identifiers=location_identifiers)
+            tab = sorted(tab)
+            filename = '%s%s.txt' % (filename_prefix, t0.__str__() )
+            if label_prefix:
+                self.label = '%s_%s' % (label_prefix, t0.__str__() )
+            else:
+                self.label = filename.split('/')[-1].replace('.txt', '')
+            self.__send_email_and_print(filename, tab, request_miniseed, request_dataless)
+        self.label=None
+    def earthquake_run( self, filename, catalog, pretime_sec, posttime_sec,
+                        stations, channels=('BH?', 'SH?'), location_identifiers=[], label=None,
                         request_miniseed=True, request_dataless=False):
         """
+        Generate BREQFAST request file by providing an event catalog, and send email to breqfast@IRIS.
+
+        filename: the filename to store the BREQFAST request file.
         catalog: an object returned from `obspy.clients.fdsn.client.Client.get_events(...)`
-
-        e.g.,
-
-            >>> from obspy.core.utcdatetime import UTCDateTime
-            >>> from obspy.clients.fdsn.client import Client
-            >>> client = Client('USGS')
-            >>> starttime = UTCDateTime(2021, 1, 1, 0, 0, 0)
-            >>> endtime   = UTCDateTime(2021, 3, 1, 0, 0, 0)
-            >>> catalog = client.get_events(starttime, endtime, mindepth=10, minmagnitude=6.5) #, includeallorigins=True)
-            >>> catalog = catalog[:2]
-            >>> #
-            >>> app = BreqFast(email='email' label='exam-events-data-new1', 
-            >>>                name='name', institute='inst', mail_address='where', phone='555 5555 555', fax='555 5555 555', hypo=None,
-            >>>                sender_email='email', sender_passwd='pass', sender_host='what', sender_port=25 )
-            >>> app.earthquake_run('bfe.txt', catalog, -10, 100, ('IU.PAB', 'II.ALE', 'AU.WRKA'), channels=('BH?','SH?'), location_identifiers=('00', '10'), request_dataless=False,    >>> request_miniseed=True)
+        pretime_sec, posttime_sec: the time window in respect to the origin time of an event.
+        stations: a list of station names in the format of XXXX.YYYY in which XXXX represent
+                  network code and YYYY station code.
+        channels: a list of channels that allow wildcards of `?` and `*`. (e.g., channels=('BH?', 'SH?') ).
+        location_identifiers: a list of location identifiers. (e.g., location_identifiers=('00', '10') ).
+                              in default, all location identifiers will be considered.
+        label: a string for label used in the BREQFAST request files.
+               If set to None, then the filename will be used for the label.
+        request_miniseed: True or False to send email to request miniseed data.
+        request_dataless: True or False to send email to request dataless metadata.
         """
         t_segs = BreqFast.earthquake_time_segments(catalog, pretime_sec, posttime_sec)
         tab = list()
         for t0, t1 in t_segs:
             tab.extend( BreqFast.table_for_time_time_interval(stations, t0, t1, channels=channels, location_identifiers=location_identifiers) )
         tab = sorted(tab)
-        return self.__send_email_and_print(filename, tab, request_miniseed, request_dataless)
+        if label:
+            self.label = label
+        else:
+            self.label = filename.split('/')[-1].replace('.txt', '')
+        print('Will make 1 BREQFAST(+DATALESS) requests' )
+        self.__send_email_and_print(filename, tab, request_miniseed, request_dataless)
+        self.label=None
+    def custom_time_run(self, filename, time_windows,
+                        stations, channels=('BH?', 'SH?'), location_identifiers=[], label=None,
+                        request_miniseed=True, request_dataless=False):
+        """
+        Generate BREQFAST request files by providing a list of time windows, and send a single email to breqfast@IRIS.
 
+        filename: the filename to store the BREQFAST request file.
+        time_windows: a list of time windows. e.g., time_windows = [ (UTCDateTime(2000,1,1,0), UTCDateTime(2000,1,1,1)), (UTCDateTime(2002,2,3,12), UTCDateTime(2002,2,3,14)) ]
+        stations: a list of station names in the format of XXXX.YYYY in which XXXX represent
+                  network code and YYYY station code.
+        channels: a list of channels that allow wildcards of `?` and `*`. (e.g., channels=('BH?', 'SH?') ).
+        location_identifiers: a list of location identifiers. (e.g., location_identifiers=('00', '10') ).
+                              in default, all location identifiers will be considered.
+        label: a string for label used in the BREQFAST request files.
+               If set to None, then the filename will be used for the label.
+        request_miniseed: True or False to send email to request miniseed data.
+        request_dataless: True or False to send email to request dataless metadata.
+        """
+        tab = list()
+        for t0, t1 in time_windows:
+            tab.extend( BreqFast.table_for_time_time_interval(stations, t0, t1, channels=channels, location_identifiers=location_identifiers) )
+        tab = sorted(tab)
+        if label:
+            self.label = label
+        else:
+            self.label = filename.split('/')[-1].replace('.txt', '')
+        print('Will make 1 BREQFAST(+DATALESS) requests' )
+        self.__send_email_and_print(filename, tab, request_miniseed, request_dataless)
+        self.label=None
+    @classmethod
+    def breqfast_wget(cls, url, re_template_string, output_filename_prefix, overwrite=True):
+        """
+        Use wget to download files from the breqfast `http://ds.iris.edu/pub/userdata/user_name`.
+
+        url: your BREQFAST http url.
+        re_template_string: the template string to select files.
+                            e.g., `re_template_string=r'^head.*txt$'` will match any filenames
+                            starting with `head` and end with `txt`. `.*` means zero or any number
+                            of any characters in the middle.
+        output_filename_prefix: filename prefix to save the files.
+        overwrite: True or False to overwrite the existing files.
+        """
+        urls = get_http_files(url, re_template_string=re_template_string )
+        print(url, re_template_string, urls)
+        wget_http_files(urls, filename_prefix=output_filename_prefix, overwrite=overwrite )
+    @classmethod
+    def test_run(cls):
+        from obspy.core.utcdatetime import UTCDateTime
+        from obspy.clients.fdsn.client import Client
+        from obspy.core.utcdatetime import UTCDateTime
+        #
+        app = BreqFast(email='who_email', name='name', institute='inst', mail_address='where', phone='555 5555 555', fax='555 5555 555', hypo=None, sender_email='sender@email', sender_passwd='pass', sender_host='what', sender_port=25 )
+        #
+        # 1 Request continuous time series
+        starttime, endtime = UTCDateTime(2021, 8, 21, 0, 0, 0), UTCDateTime(2021, 8, 21, 4, 0, 0)
+        app.do_not_send_emails = True # set to False to send emails
+        app.continuous_run('cont', starttime, endtime, interval_sec=3600,
+                            stations=('IU.PAB', 'II.ALE', 'AU.MCQ'), channels=('BH?', 'SH?'), location_identifiers=('00', '10'),
+                            label_prefix='cont', request_dataless=True, request_miniseed=True )
+        #
+        # 2 Request records for catalog events
+        client = Client('USGS')
+        starttime = UTCDateTime(2021, 1, 1, 0, 0, 0)
+        endtime   = UTCDateTime(2021, 3, 1, 0, 0, 0)
+        catalog = client.get_events(starttime, endtime, mindepth=10, minmagnitude=6.5) #, includeallorigins=True)
+        catalog = catalog[:2]
+        app.do_not_send_emails = True # set to False to send emails
+        app.earthquake_run('cat.txt', catalog, -10, 100, stations=('IU.PAB', 'II.ALE', 'AU.WRKA'), channels=('BH?','SH?'),
+                            label='cat', location_identifiers=('00', '10'), request_dataless=True, request_miniseed=True )
+        #
+        # 3 Customize run
+        app.do_not_send_emails = True # set to False to send emails
+        time_windows = [(UTCDateTime(2000,1,1,0), UTCDateTime(2000,1,1,1)),
+                        (UTCDateTime(2002,2,3,12), UTCDateTime(2002,2,3,14)) ]
+        app.custom_time_run('tw.txt', time_windows, stations=('IU.PAB', 'II.ALE', 'AU.WRKA'), channels=('BH?','SH?'),
+                            label='tw', location_identifiers=('00', '10'), request_dataless=True, request_miniseed=True )
+        #
+        # 4. Download the files from BREQFAST HTTP server once they are ready
+        url = 'http://ds.iris.edu/pub/userdata/Sheng_Wang'
+        app.breqfast_wget(url, re_template_string='^exam-.*mseed$', output_filename_prefix='junk1034343/d_', overwrite=True)
 class SeismogramsTuner(Stream):
     """
     """
@@ -647,10 +756,12 @@ class Converter:
         fid.close()
 
 if __name__ == '__main__':
+    if True:
+        BreqFast.test_run()
     if False:
         starttime, endtime = UTCDateTime(2021, 8, 20, 0, 0, 0), UTCDateTime(2021, 8, 22, 0, 0, 0)
         #
-    if True:
+    if False:
         import os.path
         from obspy.core.utcdatetime import UTCDateTime
         from obspy.clients.fdsn.client import Client
