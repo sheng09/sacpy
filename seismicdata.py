@@ -389,63 +389,78 @@ class SeismogramsTuner(Stream):
             return SeismogramsTuner( [tr for tr in self.traces if (tr.stats.starttime<=max_time and min_time<=tr.stats.endtime) ] )
     def group_network(self):
         """
-        Group all the traces within the `self.traces` with respect to network code XXXX
-        where XXXX is the network code.
+        Group all the traces within the `self.traces` with respect to network code `XXXX`
+        where `XXXX` is the network code.
 
-        Return a dictionary. The keys of the dictionary are in the format of XXXX. Each
+        Return a dictionary. The keys of the dictionary are in the format of `XXXX`. Each
         value of the dictionary is a list of objects of `SeismogramsTuner`. Each element
         of the list contains traces having the same network code `XXXX` while their
         station codes, location identifier, and channels codes can be different.
         """
         nets = [tr.stats.network for tr in self.traces]
-        vol = { it:Stream() for it in set(nets) }
+        vol = { it:SeismogramsTuner() for it in set(nets) }
         for net, tr in zip(nets, self.traces):
             vol[net].append(tr)
         return vol
     def group_station(self):
         """
-        Group all the traces within the `self.traces` with respect to station name XXXX.YYYY.ZZZZ
-        where XXXX is the network code, and YYYY the station code, and ZZZZ the location identifier.
+        Group all the traces within the `self.traces` with respect to station name `XXXX.YYYY.ZZZZ`
+        where `XXXX` is the network code, and `YYYY` the station code, and `ZZZZ` the location identifier.
 
-        Return a dictionary. The keys of the dictionary are in the format of XXXX.YYYY.ZZZZ. Each
+        Return a dictionary. The keys of the dictionary are in the format of `XXXX.YYYY.ZZZZ`. Each
         value of the dictionary is a list of objects of `SeismogramsTuner`. Each element of the list
         contains traces having the same station name `XXXX.YYYY.ZZZZ` while their channels can be
         different.
         """
         stations = ['%s.%s.%s' % (tr.stats.network, tr.stats.station, tr.stats.location)  for tr in self.traces]
-        vol = { it:Stream() for it in set(stations) }
+        vol = { it:SeismogramsTuner() for it in set(stations) }
         for st, tr in zip(stations, self.traces):
             vol[st].append(tr)
         return vol
     def group_location(self):
         """
         Group all the traces within the `self.traces` with respect to location identifier
-        ZZZZ where the ZZZZ is the location identifier.
+        `ZZZZ` where the `ZZZZ` is the location identifier.
 
-        Return a dictionary. The keys of the dictionary are in the format of ZZZZ. Each
+        Return a dictionary. The keys of the dictionary are in the format of `ZZZZ`. Each
         value of the dictionary is a list of objects of `SeismogramsTuner`. Each element
         of the list contains traces having the same location identifier `ZZZZ` while
         their network codes, station codes, and channel codes can be different.
         """
         locs = [tr.stats.location for tr in self.traces]
-        vol = { it:Stream() for it in set(locs) }
+        vol = { it:SeismogramsTuner() for it in set(locs) }
         for loc, tr in zip(locs, self.traces):
             vol[loc].append(tr)
         return vol
     def group_channel(self):
         """
-        Group all the traces within the `self.traces` with respect to channel name CCCC
-        where the CCCC is the station code.
+        Group all the traces within the `self.traces` with respect to channel name `CCC`
+        where the `CCC` is the channel code.
 
-        Return a dictionary. The keys of the dictionary are in the format of CCCC. Each
+        Return a dictionary. The keys of the dictionary are in the format of `CCC`. Each
         value of the dictionary is a list of objects of `SeismogramsTuner`. Each element
-        of the list contains traces having the same channel name `CCCC` while their
+        of the list contains traces having the same channel name `CCC` while their
         network codes, station codes, and location identifier can be different.
         """
         channels = [tr.stats.channel for tr in self.traces]
-        vol = { it:Stream() for it in set(channels) }
+        vol = { it:SeismogramsTuner() for it in set(channels) }
         for ch, tr in zip(channels, self.traces):
             vol[ch].append(tr)
+        return vol
+    def group_station_channel(self):
+        """
+        Group all the traces within the `self.traces` with respect to station-channel name
+        `XXXX.YYYY.ZZZZ.CCC` where `XXXX` is the network code, and `YYYY` the station code,
+        and `ZZZZ` the location identifier, and `CCC` the channel code.
+
+        Return a dictionary. The keys of the dictionary are in the format of `XXXX.YYYY.ZZZZ.CCC`.
+        Each value of the dictionary is a list of objects of `SeismogramsTuner`. Each element
+        of the list contains traces having the same station-channel name `XXXX.YYYY.ZZZZ.CCC`.
+        """
+        station_chns = ['%s.%s.%s.%s' % (tr.stats.network, tr.stats.station, tr.stats.location, tr.stats.channel)  for tr in self.traces]
+        vol = { it:SeismogramsTuner() for it in set(station_chns) }
+        for st, tr in zip(station_chns, self.traces):
+            vol[st].append(tr)
         return vol
     def update_stats_sac(self, lcalda=False):
         """
