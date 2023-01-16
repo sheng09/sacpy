@@ -303,12 +303,12 @@ class BreqFast:
         # 4. Download the files from BREQFAST HTTP server once they are ready
         url = 'http://ds.iris.edu/pub/userdata/Sheng_Wang'
         app.breqfast_wget(url, re_template_string='^exam-.*mseed$', output_filename_prefix='junk1034343/d_', overwrite=True)
-class SeismogramsTuner(Stream):
+class Waveforms(Stream):
     """
     """
     def __init__(self, traces=None):
         """
-        traces: a list of `Trace`, or an object of `Stream` or `SeismogramsTuner`.
+        traces: a list of `Trace`, or an object of `Stream` or `Waveforms`.
         """
         if traces:
             self.traces = Stream(traces)
@@ -373,9 +373,9 @@ class SeismogramsTuner(Stream):
     def select_time(self, min_time, max_time, method='tight'):
         """
         Select a portion of traces within `self.traces` using the time range (`min_time`, `max_time`),
-        Return the a new object of `SeismogramsTuner` that contain the selected traces. The traces
+        Return the a new object of `Waveforms` that contain the selected traces. The traces
         will not be trimmed.
-        If you want to select and also trim traces, please consider using `SeismogramsTuner.trim(...)`
+        If you want to select and also trim traces, please consider using `Waveforms.trim(...)`
         which in fact is `Stream.trim(...)`.
 
         min_time, max_time: objects of `UTCDateTime`.
@@ -384,21 +384,21 @@ class SeismogramsTuner(Stream):
                 `loose`: we select the `trace` if the [`min_time`, `max_time`] and [`trace.stats.starttime`, `trace.stats.endtime`] intersect.
         """
         if method == 'tight':
-            return SeismogramsTuner( [tr for tr in self.traces if (tr.stats.starttime<=min_time and tr.stats.endtime>=max_time) ] )
+            return Waveforms( [tr for tr in self.traces if (tr.stats.starttime<=min_time and tr.stats.endtime>=max_time) ] )
         elif method =='loose':
-            return SeismogramsTuner( [tr for tr in self.traces if (tr.stats.starttime<=max_time and min_time<=tr.stats.endtime) ] )
+            return Waveforms( [tr for tr in self.traces if (tr.stats.starttime<=max_time and min_time<=tr.stats.endtime) ] )
     def group_network(self):
         """
         Group all the traces within the `self.traces` with respect to network code XXXX
         where XXXX is the network code.
 
         Return a dictionary. The keys of the dictionary are in the format of XXXX. Each
-        value of the dictionary is a list of objects of `SeismogramsTuner`. Each element
+        value of the dictionary is a list of objects of `Waveforms`. Each element
         of the list contains traces having the same network code `XXXX` while their
         station codes, location identifier, and channels codes can be different.
         """
         nets = [tr.stats.network for tr in self.traces]
-        vol = { it:Stream() for it in set(nets) }
+        vol = { it:Waveforms() for it in set(nets) }
         for net, tr in zip(nets, self.traces):
             vol[net].append(tr)
         return vol
@@ -408,12 +408,12 @@ class SeismogramsTuner(Stream):
         where XXXX is the network code, and YYYY the station code, and ZZZZ the location identifier.
 
         Return a dictionary. The keys of the dictionary are in the format of XXXX.YYYY.ZZZZ. Each
-        value of the dictionary is a list of objects of `SeismogramsTuner`. Each element of the list
+        value of the dictionary is a list of objects of `Waveforms`. Each element of the list
         contains traces having the same station name `XXXX.YYYY.ZZZZ` while their channels can be
         different.
         """
         stations = ['%s.%s.%s' % (tr.stats.network, tr.stats.station, tr.stats.location)  for tr in self.traces]
-        vol = { it:Stream() for it in set(stations) }
+        vol = { it:Waveforms() for it in set(stations) }
         for st, tr in zip(stations, self.traces):
             vol[st].append(tr)
         return vol
@@ -423,12 +423,12 @@ class SeismogramsTuner(Stream):
         ZZZZ where the ZZZZ is the location identifier.
 
         Return a dictionary. The keys of the dictionary are in the format of ZZZZ. Each
-        value of the dictionary is a list of objects of `SeismogramsTuner`. Each element
+        value of the dictionary is a list of objects of `Waveforms`. Each element
         of the list contains traces having the same location identifier `ZZZZ` while
         their network codes, station codes, and channel codes can be different.
         """
         locs = [tr.stats.location for tr in self.traces]
-        vol = { it:Stream() for it in set(locs) }
+        vol = { it:Waveforms() for it in set(locs) }
         for loc, tr in zip(locs, self.traces):
             vol[loc].append(tr)
         return vol
@@ -438,12 +438,12 @@ class SeismogramsTuner(Stream):
         where the CCCC is the station code.
 
         Return a dictionary. The keys of the dictionary are in the format of CCCC. Each
-        value of the dictionary is a list of objects of `SeismogramsTuner`. Each element
+        value of the dictionary is a list of objects of `Waveforms`. Each element
         of the list contains traces having the same channel name `CCCC` while their
         network codes, station codes, and location identifier can be different.
         """
         channels = [tr.stats.channel for tr in self.traces]
-        vol = { it:Stream() for it in set(channels) }
+        vol = { it:Waveforms() for it in set(channels) }
         for ch, tr in zip(channels, self.traces):
             vol[ch].append(tr)
         return vol
@@ -604,12 +604,12 @@ class SeismogramsTuner(Stream):
         ### download via breqfast
         # 
         ### read
-        app = SeismogramsTuner()
+        app = Waveforms()
         filenames = sorted(glob('exam-events-data-new1.549089/*mseed') )
         app.read(filenames)
         ### get inventory
         client_iris = Client('IRIS')
-        inv_fnm = 'junk_test_SeismogramsTuner.xml'
+        inv_fnm = 'junk_test_Waveforms.xml'
         if not os.path.exists(inv_fnm):
             inv = app.get_inventory(client_iris, level='response', filename=inv_fnm)
         else:
@@ -784,7 +784,7 @@ if __name__ == '__main__':
         #               sender_email='seisdata_sss_www@163.com', sender_passwd='WSNXGQUBFUWLSSBK', sender_host='smtp.163.com', sender_port=25 )
         #app.earthquake_run('202101-202106.txt', catalog, pre_time, tail_time, ('IU.PAB', 'II.ALE', 'AU.WRKA'), channels=('BH?','SH?'), location_identifiers=('00', '10'), request_dataless=False, request_miniseed=True)
 
-        app = SeismogramsTuner()
+        app = Waveforms()
         app.test_run()
     
         #
