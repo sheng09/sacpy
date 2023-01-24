@@ -10,10 +10,14 @@ from obspy.core.inventory.inventory import Inventory
 import pickle
 from sacpy.utils import send_email, get_http_files, wget_http_files
 from h5py import File as h5_File
-from numpy import float32, int32, zeros
+from numpy import float32, int32, zeros, array
 from numpy import max as np_max
 from numpy import min as np_min
 from sacpy.geomath import haversine, azimuth
+import math
+from matplotlib import mlab
+from matplotlib.colors import Normalize
+import numpy as np
 
 class BreqFast:
     """
@@ -303,12 +307,12 @@ class BreqFast:
         # 4. Download the files from BREQFAST HTTP server once they are ready
         url = 'http://ds.iris.edu/pub/userdata/Sheng_Wang'
         app.breqfast_wget(url, re_template_string='^exam-.*mseed$', output_filename_prefix='junk1034343/d_', overwrite=True)
-class SeismogramsTuner(Stream):
+class Waveforms(Stream):
     """
     """
     def __init__(self, traces=None):
         """
-        traces: a list of `Trace`, or an object of `Stream` or `SeismogramsTuner`.
+        traces: a list of `Trace`, or an object of `Stream` or `Waveforms`.
         """
         if traces:
             self.traces = Stream(traces)
@@ -373,9 +377,9 @@ class SeismogramsTuner(Stream):
     def select_time(self, min_time, max_time, method='tight'):
         """
         Select a portion of traces within `self.traces` using the time range (`min_time`, `max_time`),
-        Return the a new object of `SeismogramsTuner` that contain the selected traces. The traces
+        Return the a new object of `Waveforms` that contain the selected traces. The traces
         will not be trimmed.
-        If you want to select and also trim traces, please consider using `SeismogramsTuner.trim(...)`
+        If you want to select and also trim traces, please consider using `Waveforms.trim(...)`
         which in fact is `Stream.trim(...)`.
 
         min_time, max_time: objects of `UTCDateTime`.
@@ -384,21 +388,21 @@ class SeismogramsTuner(Stream):
                 `loose`: we select the `trace` if the [`min_time`, `max_time`] and [`trace.stats.starttime`, `trace.stats.endtime`] intersect.
         """
         if method == 'tight':
-            return SeismogramsTuner( [tr for tr in self.traces if (tr.stats.starttime<=min_time and tr.stats.endtime>=max_time) ] )
+            return Waveforms( [tr for tr in self.traces if (tr.stats.starttime<=min_time and tr.stats.endtime>=max_time) ] )
         elif method =='loose':
-            return SeismogramsTuner( [tr for tr in self.traces if (tr.stats.starttime<=max_time and min_time<=tr.stats.endtime) ] )
+            return Waveforms( [tr for tr in self.traces if (tr.stats.starttime<=max_time and min_time<=tr.stats.endtime) ] )
     def group_network(self):
         """
         Group all the traces within the `self.traces` with respect to network code `XXXX`
         where `XXXX` is the network code.
 
         Return a dictionary. The keys of the dictionary are in the format of `XXXX`. Each
-        value of the dictionary is a list of objects of `SeismogramsTuner`. Each element
+        value of the dictionary is a list of objects of `Waveforms`. Each element
         of the list contains traces having the same network code `XXXX` while their
         station codes, location identifier, and channels codes can be different.
         """
         nets = [tr.stats.network for tr in self.traces]
-        vol = { it:SeismogramsTuner() for it in set(nets) }
+        vol = { it:Waveforms() for it in set(nets) }
         for net, tr in zip(nets, self.traces):
             vol[net].append(tr)
         return vol
@@ -408,12 +412,12 @@ class SeismogramsTuner(Stream):
         where `XXXX` is the network code, and `YYYY` the station code, and `ZZZZ` the location identifier.
 
         Return a dictionary. The keys of the dictionary are in the format of `XXXX.YYYY.ZZZZ`. Each
-        value of the dictionary is a list of objects of `SeismogramsTuner`. Each element of the list
+        value of the dictionary is a list of objects of `Waveforms`. Each element of the list
         contains traces having the same station name `XXXX.YYYY.ZZZZ` while their channels can be
         different.
         """
         stations = ['%s.%s.%s' % (tr.stats.network, tr.stats.station, tr.stats.location)  for tr in self.traces]
-        vol = { it:SeismogramsTuner() for it in set(stations) }
+        vol = { it:Waveforms() for it in set(stations) }
         for st, tr in zip(stations, self.traces):
             vol[st].append(tr)
         return vol
@@ -423,12 +427,12 @@ class SeismogramsTuner(Stream):
         `ZZZZ` where the `ZZZZ` is the location identifier.
 
         Return a dictionary. The keys of the dictionary are in the format of `ZZZZ`. Each
-        value of the dictionary is a list of objects of `SeismogramsTuner`. Each element
+        value of the dictionary is a list of objects of `Waveforms`. Each element
         of the list contains traces having the same location identifier `ZZZZ` while
         their network codes, station codes, and channel codes can be different.
         """
         locs = [tr.stats.location for tr in self.traces]
-        vol = { it:SeismogramsTuner() for it in set(locs) }
+        vol = { it:Waveforms() for it in set(locs) }
         for loc, tr in zip(locs, self.traces):
             vol[loc].append(tr)
         return vol
@@ -438,12 +442,12 @@ class SeismogramsTuner(Stream):
         where the `CCC` is the channel code.
 
         Return a dictionary. The keys of the dictionary are in the format of `CCC`. Each
-        value of the dictionary is a list of objects of `SeismogramsTuner`. Each element
+        value of the dictionary is a list of objects of `Waveforms`. Each element
         of the list contains traces having the same channel name `CCC` while their
         network codes, station codes, and location identifier can be different.
         """
         channels = [tr.stats.channel for tr in self.traces]
-        vol = { it:SeismogramsTuner() for it in set(channels) }
+        vol = { it:Waveforms() for it in set(channels) }
         for ch, tr in zip(channels, self.traces):
             vol[ch].append(tr)
         return vol
@@ -454,11 +458,11 @@ class SeismogramsTuner(Stream):
         and `ZZZZ` the location identifier, and `CCC` the channel code.
 
         Return a dictionary. The keys of the dictionary are in the format of `XXXX.YYYY.ZZZZ.CCC`.
-        Each value of the dictionary is a list of objects of `SeismogramsTuner`. Each element
+        Each value of the dictionary is a list of objects of `Waveforms`. Each element
         of the list contains traces having the same station-channel name `XXXX.YYYY.ZZZZ.CCC`.
         """
         station_chns = ['%s.%s.%s.%s' % (tr.stats.network, tr.stats.station, tr.stats.location, tr.stats.channel)  for tr in self.traces]
-        vol = { it:SeismogramsTuner() for it in set(station_chns) }
+        vol = { it:Waveforms() for it in set(station_chns) }
         for st, tr in zip(station_chns, self.traces):
             vol[st].append(tr)
         return vol
@@ -571,6 +575,118 @@ class SeismogramsTuner(Stream):
             sac_dict['mag'] = mag
             #
             sac_dict['o'] = 0.0
+    def plot_wv(self, ax, reftime=None, baselines=None, normalize=False, scale=None, color='k', fill_between=None, **kwargs):
+        """
+        Plot the waveforms into an existed `ax`. This function will not change the data.
+
+        reftime: an single `UTCDateTime` object or a list of `UTCDateTime` object.
+                 The `reftime` will be used to compute the relative time of time axies.
+                 In default, set `reftime=None` to use the `starttime` for each trace.
+        baselines: a list of floating values for the baselines to plot each of the traces.
+                   In default, set `baselines=None` to automatically adjust the waveforms to avoid overlapping.
+        normalize: `False`(default) or a float value to normalize in respect with the maximal positive amplitude.
+        scale: a single or a list of floating values to scale the waveforms.
+               In default, set `scale=None` to disable this option.
+        fill_between: 'positive' or 'negative' to fill the postive or negative amplitudes, respectively.
+               In default, set `scale=None` to disable this option.
+        """
+        ##############
+        st = self
+        if normalize:
+            st = self.copy()
+            st.detrend()
+            for tr in st:
+                tr.data *= (normalize/tr.data.max() )
+        if type(scale)!=type(None):
+            try:
+                n = len(scale)
+                if n!=len(st):
+                    errmsg = "Err: number of scale does not match the number of traces. %d!=%d " % (n, len(st))
+                    raise RuntimeError(errmsg)
+                else:
+                    for tr, s in zip(st, scale):
+                        tr.data *= s
+            except Exception:
+                for tr in st:
+                    tr.data *= scale
+        ##############
+        if type(reftime)!=type(None):
+            try:
+                n = len(reftime)
+                if n!=len(st):
+                    errmsg = "Err: number of reftime does not match the number of traces. %d!=%d " % (n, len(st))
+                    raise RuntimeError(errmsg)
+            except Exception:
+                reftime = [reftime for it in st]
+        else:
+            reftime = [it.stats.starttime for it in st]
+        ###############
+        if type(baselines)!=type(None):
+            try:
+                n = len(baselines)
+                if n!=len(st):
+                    errmsg = "Err: number of baselines does not match the number of traces. %d!=%d " % (n, len(st))
+                    raise RuntimeError(errmsg)
+            except Exception:
+                errmsg = "Err: set a list of numbers for baselines"
+                raise RuntimeError(errmsg)
+        else:
+            baselines = list()
+            _base = 0.0
+            for tr in st:
+                _base = _base - tr.data.min()
+                baselines.append(_base)
+                _base = _base + tr.data.max()
+        baselines = array(baselines)
+        ###############
+        for tr, tref, _base in zip(st, reftime, baselines):
+            ys = tr.data + _base
+            ts = tr.times(type='relative', reftime=tref)
+            ax.plot(ts, ys, color=color, **kwargs)
+            if fill_between == 'positive':
+                ax.fill_between(ts, ys, _base, where=ys>=_base, interpolate=True, color=color, alpha=0.3)
+            elif fill_between == 'negative':
+                ax.fill_between(ts, ys, _base, where=ys<=_base, interpolate=True, color=color, alpha=0.3)
+
+        return baselines
+    def plot_wavefield(self, ax, normalize=False, scale=None, cmap='gray', interpolation=None, vmin=None, vmax=None, extent=None):
+        """
+        Plot the wavefield into an existed `ax`. This function will not change the data.
+
+        normalize: `False`(default) or a float value to normalize in respect with the maximal positive amplitude.
+        scale: a single or a list of floating values to scale the waveforms.
+               In default, set `scale=None` to disable this option.
+        """
+        ##############
+        st = self
+        if normalize:
+            st = self.copy()
+            st.detrend()
+            for tr in st:
+                tr.data *= (normalize/tr.data.max() )
+        if type(scale)!=type(None):
+            try:
+                n = len(scale)
+                if n!=len(st):
+                    errmsg = "Err: number of scale does not match the number of traces. %d!=%d " % (n, len(st))
+                    raise RuntimeError(errmsg)
+                else:
+                    for tr, s in zip(st, scale):
+                        tr.data *= s
+            except Exception:
+                for tr in st:
+                    tr.data *= scale
+        ##############
+        ncol = np_max([tr.data.size for tr in st])
+        nrow = len(st)
+        mat = zeros((nrow, ncol), dtype=float32)
+        for idx, tr in enumerate(st):
+            mat[idx,:][:tr.data.size] = tr.data
+        ##############
+        if type(extent) == type(None):
+            extent = array((0.0, st[0].stats.delta*(ncol-1), 0.0, nrow) )
+        ax.imshow(mat, origin="lower", cmap=cmap, interpolation=interpolation, vmin=vmin, vmax=vmax, aspect="auto", extent=extent)
+        return extent
     def to_hdf5(self, h5_filename, info=''):
         """
         Convert the time-series and their metadata to hdf5 format file.
@@ -619,12 +735,12 @@ class SeismogramsTuner(Stream):
         ### download via breqfast
         # 
         ### read
-        app = SeismogramsTuner()
+        app = Waveforms()
         filenames = sorted(glob('exam-events-data-new1.549089/*mseed') )
         app.read(filenames)
         ### get inventory
         client_iris = Client('IRIS')
-        inv_fnm = 'junk_test_SeismogramsTuner.xml'
+        inv_fnm = 'junk_test_Waveforms.xml'
         if not os.path.exists(inv_fnm):
             inv = app.get_inventory(client_iris, level='response', filename=inv_fnm)
         else:
@@ -770,6 +886,173 @@ class Converter:
         #####################################################################################################################
         fid.close()
 
+def _nearest_pow_2(x):
+    """
+    Find power of two nearest to x
+
+    >>> _nearest_pow_2(3)
+    2.0
+    >>> _nearest_pow_2(15)
+    16.0
+
+    :type x: float
+    :param x: Number
+    :rtype: int
+    :return: Nearest power of 2 to x
+    """
+    a = math.pow(2, math.ceil(np.log2(x)))
+    b = math.pow(2, math.floor(np.log2(x)))
+    if abs(a - x) < abs(b - x):
+        return a
+    else:
+        return b
+def spectrogram_ax(axes, data, samp_rate, per_lap=0.9, wlen=None, log=False,
+                outfile=None, fmt=None, dbscale=False,
+                mult=8.0, cmap='plasma', zorder=None, title=None,
+                show=True, clip=[0.0, 1.0]):
+    """
+    Computes and plots spectrogram of the input data.
+
+    :param data: Input data
+    :type samp_rate: float
+    :param samp_rate: Samplerate in Hz
+    :type per_lap: float
+    :param per_lap: Percentage of overlap of sliding window, ranging from 0
+        to 1. High overlaps take a long time to compute.
+    :type wlen: int or float
+    :param wlen: Window length for fft in seconds. If this parameter is too
+        small, the calculation will take forever. If None, it defaults to a
+        window length matching 128 samples.
+    :type log: bool
+    :param log: Logarithmic frequency axis if True, linear frequency axis
+        otherwise.
+    :type outfile: str
+    :param outfile: String for the filename of output file, if None
+        interactive plotting is activated.
+    :type fmt: str
+    :param fmt: Format of image to save
+    :type axes: :class:`matplotlib.axes.Axes`
+    :param axes: Plot into given axes, this deactivates the fmt and
+        outfile option.
+    :type dbscale: bool
+    :param dbscale: If True 10 * log10 of color values is taken, if False the
+        sqrt is taken.
+    :type mult: float
+    :param mult: Pad zeros to length mult * wlen. This will make the
+        spectrogram smoother.
+    :type cmap: :class:`matplotlib.colors.Colormap`
+    :param cmap: Specify a custom colormap instance. If not specified, then the
+        default ObsPy sequential colormap is used.
+    :type zorder: float
+    :param zorder: Specify the zorder of the plot. Only of importance if other
+        plots in the same axes are executed.
+    :type title: str
+    :param title: Set the plot title
+    :type show: bool
+    :param show: Do not call `plt.show()` at end of routine. That way, further
+        modifications can be done to the figure before showing it.
+    :type clip: [float, float]
+    :param clip: adjust colormap to clip at lower and/or upper end. The given
+        percentages of the amplitude range (linear or logarithmic depending
+        on option `dbscale`) are clipped.
+    """
+    import matplotlib.pyplot as plt
+    # enforce float for samp_rate
+    samp_rate = float(samp_rate)
+
+    # set wlen from samp_rate if not specified otherwise
+    if not wlen:
+        wlen = 128 / samp_rate
+
+    npts = len(data)
+
+    # nfft needs to be an integer, otherwise a deprecation will be raised
+    # XXX add condition for too many windows => calculation takes for ever
+    nfft = int(_nearest_pow_2(wlen * samp_rate))
+
+    if npts < nfft:
+        msg = (f'Input signal too short ({npts} samples, window length '
+               f'{wlen} seconds, nfft {nfft} samples, sampling rate '
+               f'{samp_rate} Hz)')
+        raise ValueError(msg)
+
+    if mult is not None:
+        mult = int(_nearest_pow_2(mult))
+        mult = mult * nfft
+    nlap = int(nfft * float(per_lap))
+
+    data = data - data.mean()
+    end = npts / samp_rate
+
+    # Here we call not plt.specgram as this already produces a plot
+    # matplotlib.mlab.specgram should be faster as it computes only the
+    # arrays
+    # XXX mlab.specgram uses fft, would be better and faster use rfft
+    specgram, freq, time = mlab.specgram(data, Fs=samp_rate, NFFT=nfft,
+                                         pad_to=mult, noverlap=nlap)
+
+    if len(time) < 2:
+        msg = (f'Input signal too short ({npts} samples, window length '
+               f'{wlen} seconds, nfft {nfft} samples, {nlap} samples window '
+               f'overlap, sampling rate {samp_rate} Hz)')
+        raise ValueError(msg)
+
+    # db scale and remove zero/offset for amplitude
+    if dbscale:
+        specgram = 10 * np.log10(specgram[1:, :])
+    else:
+        specgram = np.sqrt(specgram[1:, :])
+    freq = freq[1:]
+
+    vmin, vmax = clip
+    if vmin < 0 or vmax > 1 or vmin >= vmax:
+        msg = "Invalid parameters for clip option."
+        raise ValueError(msg)
+    _range = float(specgram.max() - specgram.min())
+    vmin = specgram.min() + vmin * _range
+    vmax = specgram.min() + vmax * _range
+    norm = Normalize(vmin, vmax, clip=True)
+
+    ax = axes
+
+    # calculate half bin width
+    halfbin_time = (time[1] - time[0]) / 2.0
+    halfbin_freq = (freq[1] - freq[0]) / 2.0
+
+    # argument None is not allowed for kwargs on matplotlib python 3.3
+    kwargs = {k: v for k, v in (('cmap', cmap), ('zorder', zorder))
+              if v is not None}
+
+    if log:
+        # pcolor expects one bin more at the right end
+        freq = np.concatenate((freq, [freq[-1] + 2 * halfbin_freq]))
+        time = np.concatenate((time, [time[-1] + 2 * halfbin_time]))
+        # center bin
+        time -= halfbin_time
+        freq -= halfbin_freq
+        # Log scaling for frequency values (y-axis)
+        ax.set_yscale('log')
+        # Plot times
+        im = ax.pcolormesh(time, freq, specgram, norm=norm, **kwargs)
+    else:
+        # this method is much much faster!
+        specgram = np.flipud(specgram)
+        # center bin
+        extent = (time[0] - halfbin_time, time[-1] + halfbin_time,
+                  freq[0] - halfbin_freq, freq[-1] + halfbin_freq)
+        im = ax.imshow(specgram, interpolation="nearest", extent=extent, **kwargs)
+
+    # set correct way of axis, whitespace before and after with window
+    # length
+    ax.axis('tight')
+    ax.set_xlim(0, end)
+    ax.grid(False)
+    ####    
+    ax.set_xlabel('Time [s]')
+    ax.set_ylabel('Frequency [Hz]')
+
+    return im
+
 if __name__ == '__main__':
     if True:
         BreqFast.test_run()
@@ -799,7 +1082,7 @@ if __name__ == '__main__':
         #               sender_email='seisdata_sss_www@163.com', sender_passwd='WSNXGQUBFUWLSSBK', sender_host='smtp.163.com', sender_port=25 )
         #app.earthquake_run('202101-202106.txt', catalog, pre_time, tail_time, ('IU.PAB', 'II.ALE', 'AU.WRKA'), channels=('BH?','SH?'), location_identifiers=('00', '10'), request_dataless=False, request_miniseed=True)
 
-        app = SeismogramsTuner()
+        app = Waveforms()
         app.test_run()
     
         #
