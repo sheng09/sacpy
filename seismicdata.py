@@ -18,6 +18,7 @@ import math
 from matplotlib import mlab
 from matplotlib.colors import Normalize
 import numpy as np
+import matplotlib.colors as colors
 
 class BreqFast:
     """
@@ -1011,8 +1012,8 @@ def spectrogram_ax(axes, data, samp_rate, per_lap=0.9, wlen=None, log=False,
     _range = float(specgram.max() - specgram.min())
     vmin = specgram.min() + vmin * _range
     vmax = specgram.min() + vmax * _range
-    norm = Normalize(vmin, vmax, clip=True)
-
+    #norm = Normalize(vmin, vmax, clip=True)
+    norm, junk_bin_edges, junk_density, junk_v_range = get_adaptive_colormap_norm(time, freq, specgram, logx=False, logy=log, v_range=(vmin, vmax) )
     ax = axes
 
     # calculate half bin width
@@ -1052,6 +1053,68 @@ def spectrogram_ax(axes, data, samp_rate, per_lap=0.9, wlen=None, log=False,
     ax.set_ylabel('Frequency [Hz]')
 
     return im
+def get_adaptive_colormap_norm(xs, ys, mat, logx=False, logy=True, v_range=None):
+    """
+    Get an object of `matplotlib.colors.FuncNorm(...)` that
+    can be used for `imshow(...)`, `pcolormesh(...)`, etc.
+
+    xs, ys, mat: the objects that will be used to plot.
+    logx: the x axis is in log scale.
+    logy: the y axis is in log scale.
+    vmin, vmax: `None` in default, and min and max values in the `mat` will be used.
+
+    Return: norm_func, bin_edges, density, v_range
+        norm_func: the targeted `matplotlib.colors.FuncNorm(...)`.
+        bin_edges, density: the histogram of the pixal values for plotting the `mat`.
+        v_range
+    """
+    try:
+        vmin, vmax = v_range
+    except Exception:
+        vmin, vmax = mat.min(), mat.max()
+    bin_edges = np.linspace(vmin, vmax, 200)
+    ######################
+    if logx or logy:
+        weight = np.ones(mat.shape)
+        for axis, log_flag, tmp in zip('xy', (logx, logy), (xs, ys) ):
+            if not log_flag:
+                continue
+            scale = np.zeros(tmp.size)
+            logs = np.log(tmp+0.0001)*(1.0/np.log(10))
+            lmin, lmax = np.floor(logs.min()), np.ceil(logs.max())+1
+            count, junk = np.histogram(logs, np.arange(lmin, lmax))
+            istart = 0
+            for c in count:
+                if c>0:
+                    iend = istart+c
+                    scale[istart:iend] = 1.0/c
+                    istart = iend
+            scale *= (np.ceil(logs)-logs)
+            if axis == 'y':
+                for irow, scale in enumerate(scale):
+                    weight[irow] *= scale
+            elif axis == 'x':
+                junk = np.transpose(weight)
+                for irow, scale in enumerate(scale):
+                    junk[irow] *= scale
+                weight = np.transpose(junk)
+        density, junk = np.histogram(mat, bins=bin_edges, density=True, weights=weight )
+    else:
+        density, junk = np.histogram(mat, bins=bin_edges, density=True )
+    cum_density = np.cumsum(density)
+
+    bin_centers = 0.5*(bin_edges[:-1]+bin_edges[1:])
+    xs = np.concatenate( [[bin_centers[0]], bin_centers,  [bin_centers[-1]]] )
+    ys = np.concatenate( [[cum_density[0]], cum_density, [cum_density[-1]]] )
+    smooth = 0
+    if smooth:
+        ys = np.correlate(ys, np.ones(smooth), mode='same' ) *(1.0/smooth)
+    def _forward(x):
+        return np.interp(x, xs, ys)
+    def _inverse(y):
+        return np.interp(y, ys, xs)
+    norm = colors.FuncNorm((_forward, _inverse), vmin=vmin, vmax=vmax )
+    return norm, bin_edges, density, v_range
 
 if __name__ == '__main__':
     if True:
