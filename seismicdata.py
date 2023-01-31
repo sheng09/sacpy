@@ -16,7 +16,8 @@ from numpy import min as np_min
 from sacpy.geomath import haversine, azimuth
 import math
 from matplotlib import mlab
-from matplotlib.colors import Normalize
+import matplotlib.pyplot as plt
+from matplotlib.colors import ListedColormap
 import numpy as np
 import matplotlib.colors as colors
 
@@ -595,9 +596,11 @@ class Waveforms(Stream):
         st = self
         if normalize:
             st = self.copy()
-            st.detrend()
+            #st.detrend()
             for tr in st:
-                tr.data *= (normalize/tr.data.max() )
+                v = tr.data.max()
+                if v>0.0:
+                    tr.data *= (normalize/tr.data.max() )
         if type(scale)!=type(None):
             try:
                 n = len(scale)
@@ -907,10 +910,11 @@ def _nearest_pow_2(x):
         return a
     else:
         return b
-def spectrogram_ax(axes, data, samp_rate, per_lap=0.9, wlen=None, log=False,
+def spectrogram_ax(axes, data, tstart, samp_rate, per_lap=0.9, wlen=None, log=False,
+                cax=None, cmap_hist_ax=None,
                 outfile=None, fmt=None, dbscale=False,
                 mult=8.0, cmap='plasma', zorder=None, title=None,
-                show=True, clip=[0.0, 1.0]):
+                show=True, clip=None):
     """
     Computes and plots spectrogram of the input data.
 
@@ -953,9 +957,7 @@ def spectrogram_ax(axes, data, samp_rate, per_lap=0.9, wlen=None, log=False,
     :param show: Do not call `plt.show()` at end of routine. That way, further
         modifications can be done to the figure before showing it.
     :type clip: [float, float]
-    :param clip: adjust colormap to clip at lower and/or upper end. The given
-        percentages of the amplitude range (linear or logarithmic depending
-        on option `dbscale`) are clipped.
+    :param clip: absolute values to adjust colormap to clip at lower and/or upper end.
     """
     import matplotlib.pyplot as plt
     # enforce float for samp_rate
@@ -991,6 +993,7 @@ def spectrogram_ax(axes, data, samp_rate, per_lap=0.9, wlen=None, log=False,
     # XXX mlab.specgram uses fft, would be better and faster use rfft
     specgram, freq, time = mlab.specgram(data, Fs=samp_rate, NFFT=nfft,
                                          pad_to=mult, noverlap=nlap)
+    time += tstart
 
     if len(time) < 2:
         msg = (f'Input signal too short ({npts} samples, window length '
@@ -1005,15 +1008,17 @@ def spectrogram_ax(axes, data, samp_rate, per_lap=0.9, wlen=None, log=False,
         specgram = np.sqrt(specgram[1:, :])
     freq = freq[1:]
 
-    vmin, vmax = clip
-    if vmin < 0 or vmax > 1 or vmin >= vmax:
-        msg = "Invalid parameters for clip option."
-        raise ValueError(msg)
-    _range = float(specgram.max() - specgram.min())
-    vmin = specgram.min() + vmin * _range
-    vmax = specgram.min() + vmax * _range
-    #norm = Normalize(vmin, vmax, clip=True)
-    norm, junk_bin_edges, junk_density, junk_v_range = get_adaptive_colormap_norm(time, freq, specgram, logx=False, logy=log, v_range=(vmin, vmax) )
+    vmin, vmax = specgram.min(), specgram.max()
+    if clip:
+        _vmin, _vmax = clip
+        if _vmin>vmax or _vmax<vmin or _vmin>=_vmax:
+            print('Warning: invalid clip range:', clip)
+            print('Change to data value range:', (vmin, vmax) )
+        else:
+            vmin, vmax = _vmin, _vmax
+    adaptive_cmap_things = get_adaptive_colormap_norm(time, freq, specgram, logx=False, logy=log, v_range=(vmin, vmax) )
+    norm = adaptive_cmap_things[0]
+    cmap = get_adaptive_colormap(cmap, norm)
     ax = axes
 
     # calculate half bin width
@@ -1034,25 +1039,48 @@ def spectrogram_ax(axes, data, samp_rate, per_lap=0.9, wlen=None, log=False,
         # Log scaling for frequency values (y-axis)
         ax.set_yscale('log')
         # Plot times
-        im = ax.pcolormesh(time, freq, specgram, norm=norm, **kwargs)
+        im = ax.pcolormesh(time, freq, specgram, vmin=vmin, vmax=vmax, **kwargs)
     else:
         # this method is much much faster!
         specgram = np.flipud(specgram)
         # center bin
         extent = (time[0] - halfbin_time, time[-1] + halfbin_time,
                   freq[0] - halfbin_freq, freq[-1] + halfbin_freq)
-        im = ax.imshow(specgram, interpolation="nearest", extent=extent, **kwargs)
+        im = ax.imshow(specgram, interpolation="nearest", extent=extent, vmin=vmin, vmax=vmax, **kwargs)
+
+    if cax:
+        plt.colorbar(im, cax=cax)
+    if cmap_hist_ax:
+        norm_func, bin_edges, density, v_range = adaptive_cmap_things
+        bin_centers = 0.5*(bin_edges[:-1]+bin_edges[1:] )
+        height = bin_edges[1]-bin_edges[0]
+        clrs = [cmap( (it-vmin)/(vmax-vmin) ) for it in bin_centers]
+        cmap_hist_ax.barh(bin_centers, density, height=height, color=clrs)
+        cmap_hist_ax.set_ylim(v_range)
 
     # set correct way of axis, whitespace before and after with window
     # length
     ax.axis('tight')
     ax.set_xlim(0, end)
     ax.grid(False)
-    ####    
+    ####
     ax.set_xlabel('Time [s]')
     ax.set_ylabel('Frequency [Hz]')
 
-    return im
+    return im, adaptive_cmap_things
+def get_adaptive_colormap(cmap, norm):
+    """
+    """
+    cmap = plt.cm.get_cmap(cmap)
+    vs = norm.inverse(np.linspace(0.0, 1.0, 200) )
+    dv = np.abs(np.diff(vs)).min()
+    n = int((vs[-1]-vs[0])/dv)+1
+    vs = np.linspace(vs[0],vs[-1], n+2)
+    #print(vs)
+    #print(n)
+    clrs = cmap(norm(vs))
+    newcmap = ListedColormap(clrs)
+    return newcmap
 def get_adaptive_colormap_norm(xs, ys, mat, logx=False, logy=True, v_range=None):
     """
     Get an object of `matplotlib.colors.FuncNorm(...)` that
@@ -1079,8 +1107,11 @@ def get_adaptive_colormap_norm(xs, ys, mat, logx=False, logy=True, v_range=None)
         for axis, log_flag, tmp in zip('xy', (logx, logy), (xs, ys) ):
             if not log_flag:
                 continue
+            if tmp[0] <= 1e-7: # if this is zero
+                tmp = tmp[:]
+                tmp[0] += 0.5*(tmp[-1]-tmp[-2])
             scale = np.zeros(tmp.size)
-            logs = np.log(tmp+0.0001)*(1.0/np.log(10))
+            logs = np.log(tmp)*(1.0/np.log(10))
             lmin, lmax = np.floor(logs.min()), np.ceil(logs.max())+1
             count, junk = np.histogram(logs, np.arange(lmin, lmax))
             istart = 0
