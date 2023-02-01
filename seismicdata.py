@@ -910,7 +910,7 @@ def _nearest_pow_2(x):
         return a
     else:
         return b
-def spectrogram_ax(axes, data, tstart, samp_rate, per_lap=0.9, wlen=None, log=False,
+def old_spectrogram_ax(axes, data, tstart, samp_rate, per_lap=0.9, wlen=None, log=False,
                 cax=None, cmap_hist_ax=None,
                 outfile=None, fmt=None, dbscale=False,
                 mult=8.0, cmap='plasma', zorder=None, title=None,
@@ -1016,8 +1016,7 @@ def spectrogram_ax(axes, data, tstart, samp_rate, per_lap=0.9, wlen=None, log=Fa
             print('Change to data value range:', (vmin, vmax) )
         else:
             vmin, vmax = _vmin, _vmax
-    adaptive_cmap_things = get_adaptive_colormap_norm(time, freq, specgram, logx=False, logy=log, v_range=(vmin, vmax) )
-    norm = adaptive_cmap_things[0]
+    norm, bin_edges, density, (vmin, vmax) = get_adaptive_colormap_norm(time, freq, specgram, logx=False, logy=log, v_range=(vmin, vmax) )
     cmap = get_adaptive_colormap(cmap, norm)
     ax = axes
 
@@ -1051,12 +1050,12 @@ def spectrogram_ax(axes, data, tstart, samp_rate, per_lap=0.9, wlen=None, log=Fa
     if cax:
         plt.colorbar(im, cax=cax)
     if cmap_hist_ax:
-        norm_func, bin_edges, density, v_range = adaptive_cmap_things
+        #norm_func, bin_edges, density, v_range = adaptive_cmap_things
         bin_centers = 0.5*(bin_edges[:-1]+bin_edges[1:] )
         height = bin_edges[1]-bin_edges[0]
         clrs = [cmap( (it-vmin)/(vmax-vmin) ) for it in bin_centers]
         cmap_hist_ax.barh(bin_centers, density, height=height, color=clrs)
-        cmap_hist_ax.set_ylim(v_range)
+        cmap_hist_ax.set_ylim((vmin, vmax) )
 
     # set correct way of axis, whitespace before and after with window
     # length
@@ -1067,13 +1066,15 @@ def spectrogram_ax(axes, data, tstart, samp_rate, per_lap=0.9, wlen=None, log=Fa
     ax.set_xlabel('Time [s]')
     ax.set_ylabel('Frequency [Hz]')
 
-    return im, adaptive_cmap_things
-def get_adaptive_colormap(cmap, norm):
+    return im, (norm, bin_edges, density, (vmin, vmax))
+def old_get_adaptive_colormap(cmap, norm):
     """
+    #Return new `colormap` and `norm` with evenly distributed colors.
     """
     cmap = plt.cm.get_cmap(cmap)
-    vs = norm.inverse(np.linspace(0.0, 1.0, 200) )
+    vs = norm.inverse(np.linspace(0.0, 1.0, 500) )
     dv = np.abs(np.diff(vs)).min()
+    print('vs:', vs[0], vs[-1], vs.min(), vs.max(), dv )
     n = int((vs[-1]-vs[0])/dv)+1
     vs = np.linspace(vs[0],vs[-1], n+2)
     #print(vs)
@@ -1081,7 +1082,7 @@ def get_adaptive_colormap(cmap, norm):
     clrs = cmap(norm(vs))
     newcmap = ListedColormap(clrs)
     return newcmap
-def get_adaptive_colormap_norm(xs, ys, mat, logx=False, logy=True, v_range=None):
+def old_get_adaptive_colormap_norm(xs, ys, mat, logx=False, logy=True, v_range=None):
     """
     Get an object of `matplotlib.colors.FuncNorm(...)` that
     can be used for `imshow(...)`, `pcolormesh(...)`, etc.
@@ -1132,6 +1133,7 @@ def get_adaptive_colormap_norm(xs, ys, mat, logx=False, logy=True, v_range=None)
         density, junk = np.histogram(mat, bins=bin_edges, density=True, weights=weight )
     else:
         density, junk = np.histogram(mat, bins=bin_edges, density=True )
+    density *= (1.0/density.sum() )
     cum_density = np.cumsum(density)
 
     bin_centers = 0.5*(bin_edges[:-1]+bin_edges[1:])
@@ -1144,8 +1146,327 @@ def get_adaptive_colormap_norm(xs, ys, mat, logx=False, logy=True, v_range=None)
         return np.interp(x, xs, ys)
     def _inverse(y):
         return np.interp(y, ys, xs)
+    vmin = _inverse(0.0)
+    vmax = _inverse(1.0)
     norm = colors.FuncNorm((_forward, _inverse), vmin=vmin, vmax=vmax )
-    return norm, bin_edges, density, v_range
+    return norm, bin_edges, density, (vmin, vmax)
+
+def spectrogram_ax(ax, data, tstart, samp_rate, per_lap=0.9, wlen=None, mult=8.0, 
+                log=False, dbscale=False, clip=None, xlim=None, ylim=None,
+                cmap='plasma', zorder=None, enable_adaptive_cmap=True,
+                cax=None, cmap_hist_ax=None):
+    """
+    Computes and plots spectrogram of the input data.
+
+    ax:        an object of `axes` for where to plot.
+    data:      Input 1D data.
+    tstart:    the start time of the first data point.
+    samp_rate: Samplerate in Hz
+    per_lap:   Percentage of overlap of sliding window, ranging from 0
+               to 1. High overlaps take a long time to compute.
+    wlen:      Window length for fft in seconds. If this parameter is too small,
+               the calculation will take forever. If None, it defaults to a
+               window length matching 128 samples.
+    mult:      Pad zeros to length mult * wlen. This will make the
+               spectrogram smoother.
+    log:       Logarithmic frequency axis if `True`, linear frequency axis if `False`.
+    dbscale:   If `True` 10 * log10 of color values is taken,
+               if `False` the SQRT is taken.
+    clip:      absolute values to adjust colormap to clip at lower and upper end.
+    xlim, ylim:to adjust the xlim and ylim of the `ax`.
+    cmap:      an object of `matplotlib.colors.Colormap` or a string that
+               specify a colormap instance.
+    zorder:    zorder of the plot.
+    enable_adaptive_cmap: True or False to enable adaptive colormap adjustment.
+    cax:       an object of `axes` for where to plot colorbar.
+               `None` in default to disable this plotting.
+    cmap_hist_ax: an object of `axes` for where to plot histogram when
+                  adaptive colorbar is enabled.
+                  `None` in default to disable this plotting.
+    """
+    # enforce float for samp_rate
+    samp_rate = float(samp_rate)
+
+    # set wlen from samp_rate if not specified otherwise
+    if not wlen:
+        wlen = 128 / samp_rate
+
+    npts = len(data)
+
+    # nfft needs to be an integer, otherwise a deprecation will be raised
+    # XXX add condition for too many windows => calculation takes for ever
+    nfft = int(_nearest_pow_2(wlen * samp_rate))
+
+    if npts < nfft:
+        msg = (f'Input signal too short ({npts} samples, window length '
+               f'{wlen} seconds, nfft {nfft} samples, sampling rate '
+               f'{samp_rate} Hz)')
+        raise ValueError(msg)
+
+    if mult is not None:
+        mult = int(_nearest_pow_2(mult))
+        mult = mult * nfft
+    nlap = int(nfft * float(per_lap))
+
+    data = data - data.mean()
+    end = npts / samp_rate
+
+    # Here we call not plt.specgram as this already produces a plot
+    # matplotlib.mlab.specgram should be faster as it computes only the
+    # arrays
+    # XXX mlab.specgram uses fft, would be better and faster use rfft
+    # Note: while the `mlab.specgram` can plots db (10log10(values)), it returns the raw values.
+    specgram, freq, time = mlab.specgram(data, Fs=samp_rate, NFFT=nfft, pad_to=mult, noverlap=nlap)
+
+    time += tstart
+
+    if len(time) < 2:
+        msg = (f'Input signal too short ({npts} samples, window length '
+               f'{wlen} seconds, nfft {nfft} samples, {nlap} samples window '
+               f'overlap, sampling rate {samp_rate} Hz)')
+        raise ValueError(msg)
+
+    # db scale and remove zero/offset for amplitude
+    if dbscale:
+        specgram = 10 * np.log10(specgram[1:, :])
+    else:
+        specgram = np.sqrt(specgram[1:, :])
+    freq = freq[1:]
+
+    vmin, vmax = specgram.min(), specgram.max()
+    if clip:
+        try:
+            _vmin, _vmax = clip
+            if _vmin>vmax or _vmax<vmin or _vmin>=_vmax:
+                print('Warning: invalid clip range:', clip)
+                print('Change to data value range:', (vmin, vmax) )
+            else:
+                vmin, vmax = _vmin, _vmax
+        except Exception:
+            msg = 'Wrong clip: {}'.formate(clip)
+            raise ValueError(msg)
+    # run adaptive cmap
+    if enable_adaptive_cmap:
+        tmp = get_adaptive_cmap(specgram, xs=time, ys=freq, 
+                                logx=False, logy=log, xlim=xlim, ylim=ylim, 
+                                vmin=vmin, vmax=vmax, cmap=cmap, ax_hist=cmap_hist_ax )
+        cmap, cmap_norm, (bin_edges, density) = tmp
+    else:
+        vmax_minus_vmin = vmax-vmin
+        inverted_vmax_minus_vmin = 1.0/vmax_minus_vmin
+        def _forward(x):
+            return (x-vmin)*inverted_vmax_minus_vmin
+        def _inverse(y):
+            return y*vmax_minus_vmin+vmin
+        cmap_norm = colors.FuncNorm((_forward, _inverse), vmin=vmin, vmax=vmax )
+        bin_edges, density = None, None
+    # calculate half bin width
+    halfbin_time = (time[1] - time[0]) / 2.0
+    halfbin_freq = (freq[1] - freq[0]) / 2.0
+
+    # argument None is not allowed for kwargs on matplotlib python 3.3
+    kwargs = {k: v for k, v in (    ('cmap', cmap),
+                                    ('zorder', zorder),
+                                    ('norm', cmap_norm) )
+                                if v is not None }
+
+    if log:
+        # pcolor expects one bin more at the right end
+        freq = np.concatenate((freq, [freq[-1] + 2 * halfbin_freq]))
+        time = np.concatenate((time, [time[-1] + 2 * halfbin_time]))
+        # center bin
+        time -= halfbin_time
+        freq -= halfbin_freq
+        # Log scaling for frequency values (y-axis)
+        ax.set_yscale('log')
+        # Plot times
+        im = ax.pcolormesh(time, freq, specgram, **kwargs)
+    else:
+        # this method is much much faster!
+        # specgram = np.flipud(specgram)
+        # center bin
+        extent = (time[0] - halfbin_time, time[-1] + halfbin_time,
+                  freq[0] - halfbin_freq, freq[-1] + halfbin_freq)
+        im = ax.imshow(specgram, interpolation="nearest", extent=extent, **kwargs, origin='lower')
+
+    if cax:
+        plt.colorbar(im, cax=cax)
+
+    # set correct way of axis, whitespace before and after with window length
+    ax.axis('tight')
+    if xlim:
+        ax.set_xlim(xlim)
+    else:
+        ax.set_xlim(0, end)
+    if ylim:
+        ax.set_ylim(ylim)
+    ax.grid(False)
+    ####
+    ax.set_xlabel('Time (s)')
+    ax.set_ylabel('Frequency (Hz)')
+
+    return im, (cmap, cmap_norm, (bin_edges, density) )
+
+def get_adaptive_cmap(data, xs=None, ys=None, 
+                        logx=False, logy=False, 
+                        xlim=None, ylim=None,
+                        vmin=None, vmax=None, cmap='Spectral_r',
+                        ax_hist=None):
+    """
+    Form an object of `matplotlib.colors.Colormap` and an objec of `matplotlib.colors.Norlize` 
+    that can be used when calling contour-like plotting functions, such as `imshow(... cmap=..., norm=...)`
+    based on the statistics of the input `data`.
+
+    data: array-like input data. We will use the flattened array. The input data will not be modified.
+    xs, ys: x and y coordinates along the row and colume directions of the `data` if it is a 2D matrix.
+            The `xs` and `ys` are only useful when `logx` or `logy` are `True` or `xlim` and `ylim` are set.
+            In default `xs` and `ys` are None.
+            Please note: `data.shape = (xs.size, ys.size)`.
+            o--+---+---+---+-------o
+            | d00 d01 d02 d03 ...  +   y0
+            |                      |
+            | d10 d11 d12 d13 ...  +   y1
+            |                      |
+            | d20 d21 d22 d23 ...  +   y2
+            | ...                  |   ...
+            |                      |
+            o--+---+---+---+-------o
+               x0  x1  x2  x3 ...
+    logx, logy: True or False (default) to declare it will be log10 style for the X or Y axis.
+    xlim, ylim: the (xmin, xmax) and (ymin, ymax) that will be used for plotting.
+    vmin, vmax: min and max values that will be used when calling contour-like plotting functions.
+    cmap: the input basic colormap to adjust. This input cmap will not be modified.
+          Can be an object of `matplotlib.colors.Colormap` or a string (e.g., `Spectral_r`)
+    ax_hist: where to plot the histogram statistics of the input `data` with colors from the adjusted
+             cmap. `None` in default to disable the plotting. 
+
+    Return: cmap, norm, (bin_edges, density)
+            the `(bin_edges, density)` describe the histogram statistics of the input `data`.
+    """
+    ####
+    def check_lim(lim, values, search=True):
+        lim_min, lim_max = lim
+        val_min, val_max = np.min(values), np.max(values)
+        if lim_min>=lim_max or lim_min>val_max or lim_max<val_min:
+            msg = 'Wrong range setting ({}, {}) vs. data ragnge ({}, {})'.format(lim_min, lim_max, val_min, val_max)
+            raise Exception(msg)
+        #print('set', lim, 'data', (_min, _max))
+        if lim_min < val_min:
+            lim_min = val_min
+        if lim_max > val_max:
+            lim_max = val_max
+        if search:
+            imin = np.searchsorted(values, lim_min)
+            imax = np.searchsorted(values, lim_max, side='right')
+            return lim_min, lim_max, imin, imax
+        else:
+            return lim_min, lim_max
+    #####
+    if xlim and type(xs)!=type(None):
+        xmin, xmax, icol0, icol1 = check_lim(xlim, xs)
+        data = data[:, icol0:icol1]
+        xs = xs[icol0:icol1]
+    if ylim and type(ys)!=type(None):
+        ymin, ymax, irow0, irow1 = check_lim(ylim, ys)
+        data = data[irow0:irow1, :]
+        ys = ys[irow0:irow1]
+    #####
+    if type(vmin) == type(None):
+        vmin = np.min(data)
+    if type(vmax) == type(None):
+        vmax = np.max(data)
+    check_lim( (vmin, vmax), data, False ) # after here, vmin and vmax should not be modified
+    #####
+    # now start to statisticize the values within the `data`
+    def old_compute_log_scale(tmp, safe_value): # the tmp should be an evenly increasing array
+        if tmp[0]<=1.0e-7: # if this is zero
+            tmp = tmp.copy()
+            tmp[0] = safe_value
+        scale = np.zeros(tmp.size)
+        logs = np.log(tmp)*(1.0/np.log(10))
+        lmin, lmax = np.floor(logs.min()), np.ceil(logs.max())+1
+        count, junk = np.histogram(logs, np.arange(lmin, lmax))
+        istart = 0
+        for c in count:
+            if c>0:
+                iend = istart+c
+                scale[istart:iend] = 1.0/c
+                istart = iend
+        scale *= (np.ceil(logs)-logs)
+        return scale
+    def compute_log_scale(tmp, safe_value): # the tmp should be an evenly increasing array
+        scale = np.ones(tmp.size)
+        #scale *= 1/tmp
+        step = tmp[1]-tmp[0]
+        half_step = 0.5*step
+        tmp = np.concatenate( (tmp, (tmp[-1]+step, )) )
+        tmp -= half_step
+        if tmp[0] < 1.0e-6: # if zeros
+            tmp[0] += 1.0e-6
+        log_edges = np.log(tmp)*(1.0/np.log(10))
+        width = np.diff(log_edges)
+        width *= (1.0/width.max() )
+        #width = np.ones(width.size)
+        scale *= width
+        return scale
+        #
+    nbins = 200
+    bin_edges = np.linspace(vmin, vmax, nbins+1)
+    bin_width = bin_edges[1]-bin_edges[0]
+    bin_centers = bin_edges[:-1]+bin_width*0.5
+    if logx or logy:
+        weight = np.ones(data.shape)
+        for axis, log_flag, tmp in zip('xy', (logx, logy), (xs, ys) ):
+            if not log_flag:
+                continue
+            scale = compute_log_scale(tmp, 0.5*(tmp[-1]-tmp[-2]))
+            if axis == 'x':
+                weight *= scale
+            elif axis == 'y':
+                weight = weight.transpose()
+                weight *= scale
+                weight = weight.transpose()
+        weight *= (1.0/np.sum(weight) )
+        density, junk = np.histogram(data, bins=bin_edges, density=True, weights=weight )
+    else:
+        density, junk = np.histogram(data, bins=bin_edges, density=True)
+    density *= (1.0/density.sum() )  # this will not be modified in later operations
+    cum_density = np.cumsum(density) # this can be modified in later operations
+    ####
+    # now get the first version norm function
+    smooth = 0
+    if smooth:
+        cum_density = np.correlate(cum_density, np.ones(smooth), mode='same' ) *(1.0/smooth)
+    def _forward(x):
+        return np.interp(x, bin_centers, cum_density)
+    def _inverse(y):
+        return np.interp(y, cum_density, bin_centers)
+    first_norm = colors.FuncNorm((_forward, _inverse), vmin=vmin, vmax=vmax )
+    ####
+    # now adjust the cmap and get the second version norm function
+    cmap = plt.cm.get_cmap(cmap)
+    nl = 100
+    levels = first_norm.inverse( np.linspace(0.0, 1.0, nl) )
+    dls = np.abs( np.diff(levels) )
+    dlmin = np.extract(dls>0, dls).min()
+    levels = np.linspace(vmin, vmax, int((vmax-vmin)/dlmin)+1 )
+    clrs = cmap( first_norm(levels) )
+    newcmap = ListedColormap(clrs)
+    vmax_minus_vmin = vmax-vmin
+    inverted_vmax_minus_vmin = 1.0/vmax_minus_vmin
+    def _forward(x):
+        return (x-vmin)*inverted_vmax_minus_vmin
+    def _inverse(y):
+        return y*vmax_minus_vmin+vmin
+    second_norm = colors.FuncNorm((_forward, _inverse), vmin=vmin, vmax=vmax )
+    ####
+    # now plot the histogram with colors
+    if ax_hist:
+        bar_clrs = [newcmap( second_norm(it) ) for it in bin_centers]
+        ax_hist.barh(bin_centers, density, height=bin_width, color=bar_clrs)
+        ax_hist.set_ylim((vmin, vmax) )
+    ####
+    return newcmap, second_norm, (bin_edges, density)
 
 if __name__ == '__main__':
     if True:
