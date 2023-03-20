@@ -419,6 +419,7 @@ class Waveforms(Stream):
         different.
         """
         stations = ['%s.%s.%s' % (tr.stats.network, tr.stats.station, tr.stats.location)  for tr in self.traces]
+        stations = [it[:-1] if it[-1]=='.' else it for it in stations]
         vol = { it:Waveforms() for it in set(stations) }
         for st, tr in zip(stations, self.traces):
             vol[st].append(tr)
@@ -1047,6 +1048,9 @@ def old_spectrogram_ax(axes, data, tstart, samp_rate, per_lap=0.9, wlen=None, lo
                   freq[0] - halfbin_freq, freq[-1] + halfbin_freq)
         im = ax.imshow(specgram, interpolation="nearest", extent=extent, vmin=vmin, vmax=vmax, **kwargs)
 
+
+    print(time[0], time[-1])
+
     if cax:
         plt.colorbar(im, cax=cax)
     if cmap_hist_ax:
@@ -1060,7 +1064,7 @@ def old_spectrogram_ax(axes, data, tstart, samp_rate, per_lap=0.9, wlen=None, lo
     # set correct way of axis, whitespace before and after with window
     # length
     ax.axis('tight')
-    ax.set_xlim(0, end)
+    #ax.set_xlim(0+tstart, end+tstart)
     ax.grid(False)
     ####
     ax.set_xlabel('Time [s]')
@@ -1297,7 +1301,7 @@ def spectrogram_ax(ax, data, tstart, samp_rate, per_lap=0.9, wlen=None, mult=8.0
     if xlim:
         ax.set_xlim(xlim)
     else:
-        ax.set_xlim(0, end)
+        ax.set_xlim(0+tstart, end+tstart)
     if ylim:
         ax.set_ylim(ylim)
     ax.grid(False)
