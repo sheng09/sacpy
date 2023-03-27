@@ -3,7 +3,7 @@
 # sphinx_gallery_thumbnail_number = 1
 from glob import glob
 from PIL.Image import radial_gradient
-from matplotlib.colors import LightSource
+from matplotlib.colors import LightSource,  ListedColormap
 from numpy.core.numeric import ones
 import pyvista as pv
 from pyvista import examples as pv_examples
@@ -301,7 +301,274 @@ def plot_line(p, globe, xs, ys, zs, color, show_edges=True, opacity=0.5, lightin
     p.add_mesh(poly, show_edges=show_edges, opacity=opacity, color=color, lighting=lighting, line_width=line_width)
 
 
+###########################################################################################
+# Plot 3D beachball
+###########################################################################################
+class beachball_3d:
+    """
+    Class to plot 3d beachball given focal mechanism.
+
+    Example:
+    >>> import pyvista as pv
+    >>>
+    >>> p = pv.Plotter(notebook=0, shape=(1, 1), border=False, window_size=(1700, 1000) )
+    >>> p.set_background('white')
+    >>> ######################################################
+    >>> # plot surface
+    >>> mesh = pv.Plane(center=(0, 0, 0), direction=(0, 0, 1), i_size=30, j_size=30, i_resolution=10, j_resolution=10)
+    >>> mesh.point_arrays.clear()
+    >>> p.add_mesh(mesh, show_edges=True, opacity=0.6, smooth_shading=True, lighting=False, culling=False)
+    >>> ######################################################
+    >>> # plot East, South, Down vectors
+    >>> start = (-15, -15, 0)
+    >>> for v in ( (1, 0, 0), (0, 1, 0), (0, 0, -1) ):
+    >>>     mesh = pv.Arrow(start=start, direction=v, tip_length=0.3, shaft_resolution=30, shaft_radius=0.01, scale=3)
+    >>>     p.add_mesh(mesh, show_edges=True,  opacity=1.0, color='k', smooth_shading=True, lighting=True, culling=False)
+    >>> ######################################################
+    >>> # plot beachball
+    >>> mt = [0.91, -0.89, -0.02, 1.78, -1.55, 0.47]
+    >>> bb = beachball_3d(mt)
+    >>> cmap = ListedColormap(('#444444', '#eeeeee'))
+    >>> bb.plot_3d(p,     center=(0,0,0), radius=10.0, hemisphere='None', cmap='RdBu_r', plot_nodal=True, show_scalar_bar=True)
+    >>> bb.plot_3d_vec(p, center=(0,0,0), radius=10.0, hemisphere=None, alpha=1.0, lighting=False, culling=False, scale=3)
+    >>> bb.plot_3d_vcone(p, apex=(0,0,0), cones=[(3.0, 15, '#CA3C33', 0.3), (3.1, 15, '#407AA2', 0.3)])
+    >>> p.camera_position=( (0, -55, -30), (0, 0, 0), (0, 0, 1) )
+    >>> p.show()
+    """
+    def __init__(self, mt):
+        """
+        mt: (M11, M22, M33, M12, M13, M23) - the six independent components of the moment tensor,
+            where the coordinate system is 1,2,3 = Up,South,East which equals r,theta,phi.
+            - Harvard/Global CMT convention, or (Mrr=M11, Mtt=M22, Mpp=M33, Mrt=M12, Mrp=M13, Mtp=M23).
+
+            The relation to Aki and Richards x,y,z equals North,East,Down convention is as follows:
+            (Mzz=M11, Mxx=M22, Myy=M33, Mxz=M12, Myz=-M13, Mxy=-M23).
+
+            Here we use x,y,z equals East,North,Up, hence:
+            (Mzz=M11, Myy=M22, Mxx=M33, Myz=-M12, Mxz=M13, Mxy=-M23)
+
+            Input  GCMT     Aki      Here
+            1(U)   r(U)=1   x(N)=-2  x(E)= 3
+            2(S)   t(S)=2   y(E)= 3  y(N)=-2
+            3(E)   p(E)=3   z(D)=-1  z(U)= 1
+        """
+        M11, M22, M33, M12, M13, M23 = mt
+        mat = np.zeros((3, 3))
+        mat[2,2], mat[1,1], mat[0,0] = M11, M22, M33
+        mat[1,2], mat[2,1] = -M12, -M12
+        mat[0,2], mat[2,0] = M13, M13
+        mat[0,1], mat[1,0] = -M23, -M23
+        self.d_mt = mt
+        self.d_mat = mat
+    def __radiation_p(self, thetas, phis, binarization=False):
+        """
+        Compute the P-wave radiations given a list of directions.
+
+        thetas, phis: a list of theta and phi. theta is angle between
+                      the direction and x axis, and phi the angle
+                      between the direction and z axis. Angles should
+                      be in radian other than in degree.
+        binarization: Modify the radiation amplitude to -1, 0, 1 for
+                      negative, zero, and positive amplitudes, respectively.
+
+        Return: vecs, radiations
+                vecs: a matrix each row of which is a unit direction vector.
+                radiations: a list of radiation amplitudes for the directions.
+        """
+        sin, cos = np.sin, np.cos
+        sp, cp = sin(phis), cos(phis)
+        vecs = np.zeros((len(thetas), 3 ) )
+        vecs[:,0] = sp*cos(thetas)
+        vecs[:,1] = sp*sin(thetas)
+        vecs[:,2] = cp
+        radiations = np.zeros(len(thetas) )
+        for idx, vt in enumerate(vecs):
+            radiations[idx] = np.matmul(np.matmul(vt, self.d_mat), vt.T)
+        if binarization:
+            radiations = np.sign(radiations)
+        return vecs, radiations
+    def plot_3d_vcone(self, p, apex=(0,0,0), cones=[(2.8, 18, 'r', 0.3), (3.1, 18, 'b', 0.3)], 
+                      culling=False, lighting=False):
+        """
+        Plot 3d vertical cones.
+
+        p:     an instance of pyvista.Plotter
+        apex:  location of cones' apex
+        cones: a list of `(phi, height, color, alpha)` for each of the
+               cones to plot. The `phi` is the angle between the cone's
+               slope and Up direction. It takes the range between 0 and pi,
+               where 0 means Up direction and pi Down direction.
+               The `height` is the height of the cone.
+        culling:  pyvista parameters.
+        lighting: pyvista parameters.
+        """
+        tan, pi = np.tan, np.pi
+        for phi, height, clr, alpha in cones:
+            if phi>0.5*pi:
+                cone_center = apex[0], apex[1], apex[2]-height*0.5
+                disc_center = apex[0], apex[1], apex[2]-height
+                direction = (0, 0, 1)
+                radius = height*tan(pi-phi)
+            else:
+                cone_center = apex[0], apex[1], apex[2]+height*0.5
+                disc_center = apex[0], apex[1], apex[2]+height
+                direction = (0, 0, -1)
+                radius = height*tan(phi)
+            mesh = pv.Cone(center=cone_center, direction=direction, height=height, radius=radius, capping=True,
+                    resolution=90)
+            p.add_mesh(mesh, show_edges=False,  opacity=alpha, color=clr,
+                        smooth_shading=True, lighting=lighting, culling=culling)
+            mesh = pv.Disc(center=disc_center, inner=radius, outer=radius, normal=(0, 0, 1), c_res=90)
+            p.add_mesh(mesh, show_edges=True,  opacity=alpha, color='k',
+                        smooth_shading=True, lighting=lighting, culling=culling)
+
+        pass
+    def plot_3d_vec(self, p, center=(0,0,0), radius=10.0, hemisphere=None,
+                    neg_color='#0f0396', pos_color='#db620c',
+                    alpha=1.0, scale=3.0,
+                    lighting=False, culling=False, ):
+        """
+        Plot 3d P-wave radiation vectors at the surface of the beachball.
+
+        p:          an instance of pyvista.Plotter
+        center:     the center of the beachball.
+        radius:     the radius of the beachball.
+        hemisphere: `lower` or `upper` to plot the lower or upper hemisphere.
+                    Default is `None` to plot the whole sphere.
+        neg_color, pos_color: color for the negative and positive amplitudes, respectively.
+        alpha:      transparency.
+        scale:      scale all the vectors. (Default is 1.0)
+        culling:    pyvista parameters.
+        lighting:   pyvista parameters.
+        """
+        sin, cos, pi = np.sin, np.cos, np.pi
+        theta_min, theta_max = 0.0, 2.0*pi
+        phi_min, phi_max = 0.0, pi
+        nphi = 11
+        if hemisphere=='upper':
+            phi_max = 0.5*pi
+            nphi = 5
+        elif hemisphere=='lower':
+            phi_min = 0.5*pi
+            nphi = 5
+        ntheta_max = 30
+        thetas, phis = list(), list()
+        for phi in np.linspace(phi_min, phi_max, nphi):
+            ntheta = int(sin(phi)* ntheta_max)
+            if ntheta <=2:
+                ntheta = 2
+            for theta in np.linspace(theta_min, theta_max, ntheta)[:-1]:
+                thetas.append(theta)
+                phis.append(phi)
+        vecs, radiations = self.__radiation_p(thetas, phis)
+        bb_center = np.array(center)
+        for v, r in zip(vecs, radiations):
+            amp = abs(r)*scale
+            start = v*radius+bb_center
+            direction = v
+            clr = pos_color
+            if r<0:
+                start = v*(radius+amp)+bb_center
+                direction=-v
+                clr=neg_color
+            #start = start + bb_center
+            mesh = pv.Arrow(start=start, direction=direction, tip_length=0.3, shaft_radius=0.02, scale=amp )
+            p.add_mesh(mesh, show_edges=False, opacity=alpha, color=clr,
+                    smooth_shading=True, lighting=lighting, culling=culling)
+    def plot_3d(self, p, center=(0,0,0), radius=10.0, hemisphere=None, plot_nodal=False,
+                binarization=False, cmap='bwr', show_scalar_bar=True,
+                alpha=1.0, culling=False, lighting=False):
+        """
+        Plot 3d beachball with varied P-wave radiation amplitudes at different directions.
+        p:              an instance of pyvista.Plotter
+        center:         the center of the beachball.
+        radius:         the radius of the beachball.
+        hemisphere:     `lower` or `upper` to plot the lower or upper hemisphere.
+                        Default is `None` to plot the whole sphere.
+        plot_nodal:     `True` or `False` (default) to plot nodal planes on the beachball surface.
+        binarization:   Modify the P-wave radiation amplitude to -1, 0, 1 for
+                        negative, zero, and positive amplitudes, respectively.
+                        Default is `False`, and will plot absolute amplitudes.
+        cmap:           colormap to plot the P-wave radiation amplitudes.
+        show_scalar_bar:`True` or `False` to plot the colorbar.
+        alpha:      transparency.
+        culling:    pyvista parameters.
+        lighting:   pyvista parameters.
+        """
+        # Create mesh data
+        x = np.arange(0, 360.001, 1)
+        if hemisphere=='upper':
+            y = np.arange(0, 90.001, 1)
+        elif hemisphere=='lower':
+            y = np.arange(90, 180.001, 1)
+        else:
+            y = np.arange(0, 180.001, 1)
+        xx, yy = np.meshgrid(x, y)
+
+        #
+        vecs, scalar = self.__radiation_p( np.deg2rad(xx.flatten()), np.deg2rad(yy.flatten()), binarization=binarization )
+        scalar *= (1.0/scalar.max() )
+        scalar = scalar.reshape(xx.shape)
+
+        # Vertical levels
+        levels = [radius * 1.]
+
+        #Create a structured grid
+        grid_scalar = pv.grid_from_sph_coords(x, y, levels)
+        grid_scalar.translate(center) #
+
+        # And fill its cell arrays with the scalar data
+        grid_scalar.point_arrays["Normalized P-wave radiation amplitudes"] = np.array(scalar).swapaxes(-2, -1).ravel("C")
+
+        # Make a plot
+        vmax = scalar.max()
+        sargs = dict(color='k', vertical=True, interactive=False, n_colors=128, title='', outline=False, 
+                     position_x=0.88, position_y=0.05, width=0.05, height=0.8, n_labels=5,
+                     label_font_size=39, fmt='%.2f' )
+        p.add_mesh(grid_scalar, show_edges=False, clim=[-vmax, vmax], opacity=alpha, cmap=cmap,
+                   smooth_shading=True, lighting=lighting, culling=culling,
+                   scalar_bar_args=sargs, show_scalar_bar=show_scalar_bar)
+        if plot_nodal:
+            if scalar.min() < 0.0 < scalar.max():
+                contours = grid_scalar.contour([0.0] )
+                p.add_mesh(contours, show_edges=True, opacity=1.0, color='k')
 if __name__ == '__main__':
+    p = pv.Plotter(notebook=0, shape=(1, 1), border=False, window_size=(1700, 1000) )
+    p.set_background('white')
+    ######
+    # plot surface
+    mesh = pv.Plane(center=(0, 0, 0), direction=(0, 0, 1), i_size=30, j_size=30, i_resolution=10, j_resolution=10)
+    mesh.point_arrays.clear()
+    p.add_mesh(mesh, show_edges=True, opacity=0.6,
+               smooth_shading=True, lighting=False, culling=False)
+    ######
+    # plot East, South, Down
+    start = (-15, -15, 0)
+    for v in ( (1, 0, 0), (0, 1, 0), (0, 0, -1) ):
+        mesh = pv.Arrow(start=start, direction=v, tip_length=0.3, shaft_resolution=30, shaft_radius=0.01, scale=3)
+        p.add_mesh(mesh, show_edges=True,  opacity=1.0, color='k',
+                        smooth_shading=True, lighting=True, culling=False)
+    ######
+    # plot beachball
+    #mt = [1, 0, -1, 0, 0, 0] # reverse
+    #mt = [-1, 0, 1, 0, 0, 0] # normal
+    #mt = [0, -1, 1, 0, 0, 0] # strike-slip
+    mt = [0, 0, 0, 0, -1, 0] # dip-slip
+
+    #mt = [1, -1, 0, 0, 0, 0] # normal
+    #mt = [-1, 0, 1, 0, 0, 0] # strike-slip
+    #mt = [0, 0, 0, 0, -1, 0] # dip-slip
+    #mt = [0.91, -0.89, -0.02, 1.78, -1.55, 0.47]
+    bb = beachball_3d(mt)
+    cmap = ListedColormap(('#444444', '#eeeeee'))
+    bb.plot_3d(p,     center=(0,0,0), radius=10.0, hemisphere='None', cmap='RdBu_r', plot_nodal=True, show_scalar_bar=True)
+    bb.plot_3d_vec(p, center=(0,0,0), radius=10.0, hemisphere=None, alpha=1.0, lighting=False, culling=False, scale=3)
+    bb.plot_3d_vcone(p, apex=(0,0,0), cones=[(3.0, 15, '#CA3C33', 0.3), (3.1, 15, '#407AA2', 0.3)])
+    p.camera_position=( (0, -55, -30), (0, 0, 0), (0, 0, 1) )
+    p.show()
+    print(p.camera_position)
+    sys.exit(0)
+    #
     p = pv.Plotter(notebook=0, shape=(1, 1), border=False, window_size=(1700, 1200) )
     p.set_background('white')
     globe = globe3d(radius=6371, center=(0, 0, 0) )
