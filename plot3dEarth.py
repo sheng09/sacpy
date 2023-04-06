@@ -21,7 +21,7 @@ import matplotlib.pyplot as plt
 import cartopy.crs as ccrs
 import cartopy.feature as cfeature
 import sys
-
+import stripy
 
 class globe3d:
     """
@@ -425,7 +425,7 @@ class beachball_3d:
         pass
     def plot_3d_vec(self, p, center=(0,0,0), radius=10.0, hemisphere=None,
                     neg_color='#0f0396', pos_color='#db620c',
-                    alpha=1.0, scale=3.0,
+                    alpha=1.0, scale=3.0, density_level=3,
                     lighting=False, culling=False, ):
         """
         Plot 3d P-wave radiation vectors at the surface of the beachball.
@@ -438,28 +438,25 @@ class beachball_3d:
         neg_color, pos_color: color for the negative and positive amplitudes, respectively.
         alpha:      transparency.
         scale:      scale all the vectors. (Default is 1.0)
+        density_level: the bigger, the more vector arrows.
         culling:    pyvista parameters.
         lighting:   pyvista parameters.
         """
         sin, cos, pi = np.sin, np.cos, np.pi
-        theta_min, theta_max = 0.0, 2.0*pi
         phi_min, phi_max = 0.0, pi
-        nphi = 11
+        mesh = stripy.spherical_meshes.triangulated_cube_mesh(refinement_levels=density_level)
+        thetas = mesh.lons
+        phis   = pi*0.5 - mesh.lats
         if hemisphere=='upper':
             phi_max = 0.5*pi
-            nphi = 5
         elif hemisphere=='lower':
             phi_min = 0.5*pi
-            nphi = 5
-        ntheta_max = 30
-        thetas, phis = list(), list()
-        for phi in np.linspace(phi_min, phi_max, nphi):
-            ntheta = int(sin(phi)* ntheta_max)
-            if ntheta <=2:
-                ntheta = 2
-            for theta in np.linspace(theta_min, theta_max, ntheta)[:-1]:
-                thetas.append(theta)
-                phis.append(phi)
+
+        idxs = np.where(phi_min<=phis)
+        thetas, phis = thetas[idxs], phis[idxs]
+        idxs = np.where(phis<=phi_max)
+        thetas, phis = thetas[idxs], phis[idxs]
+
         vecs, radiations = self.__radiation_p(thetas, phis)
         bb_center = np.array(center)
         for v, r in zip(vecs, radiations):
@@ -562,7 +559,7 @@ if __name__ == '__main__':
     bb = beachball_3d(mt)
     cmap = ListedColormap(('#444444', '#eeeeee'))
     bb.plot_3d(p,     center=(0,0,0), radius=10.0, hemisphere='None', cmap='RdBu_r', plot_nodal=True, show_scalar_bar=True)
-    bb.plot_3d_vec(p, center=(0,0,0), radius=10.0, hemisphere=None, alpha=1.0, lighting=False, culling=False, scale=3)
+    bb.plot_3d_vec(p, center=(0,0,0), radius=10.0, hemisphere=None, alpha=1.0, lighting=True, culling=False, scale=3)
     bb.plot_3d_vcone(p, apex=(0,0,0), cones=[(3.0, 15, '#CA3C33', 0.3), (3.1, 15, '#407AA2', 0.3)])
     p.camera_position=( (0, -55, -30), (0, 0, 0), (0, 0, 1) )
     p.show()
