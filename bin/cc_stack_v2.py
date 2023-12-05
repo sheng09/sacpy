@@ -73,8 +73,8 @@ def init_parameter(mode,
     mpi_print_log(mpi_log_fid, 1, False, 'pre_detrend:    ', pre_detrend)
     mpi_print_log(mpi_log_fid, 1, False, 'pre_taper_halfratio:', pre_taper_ratio, pre_taper_halfsize)
     mpi_print_log(mpi_log_fid, 1, False, 'pre_filter:     ', pre_filter)
-    mpi_print_log(mpi_log_fid, 1, False, 'speedup:        (%f, %f, %f) (%d %d) (%f %f)' % (speedup_fs[0], speedup_fs[1], speedup_level, speedup[0], speedup[1], speedup_fs_valid[0], speedup_fs_valid[1]) )
-    mpi_print_log(mpi_log_fid, 1, False, 'cc_speedup:     (%f, %f, %f) (%d %d) (%f %f)\n' % (speedup_fs[0], speedup_fs[1], speedup_level, cc_speedup[0], cc_speedup[1], cc_speedup_fs_valid[0], cc_speedup_fs_valid[1]) )
+    mpi_print_log(mpi_log_fid, 1, False, 'speedup:        (%f, %f, %s) (%d %d) (%f %f)' % (speedup_fs[0], speedup_fs[1], speedup_level, speedup[0], speedup[1], speedup_fs_valid[0], speedup_fs_valid[1]) )
+    mpi_print_log(mpi_log_fid, 1, False, 'cc_speedup:     (%f, %f, %s) (%d %d) (%f %f)\n' % (speedup_fs[0], speedup_fs[1], speedup_level, cc_speedup[0], cc_speedup[1], cc_speedup_fs_valid[0], cc_speedup_fs_valid[1]) )
 
     # dependent parameters
     mpi_print_log(mpi_log_fid, 0, False, 'Dependent parameters:')
@@ -172,19 +172,21 @@ def init_whitening(tnorm, swht, mpi_log_fid):
     mpi_print_log(mpi_log_fid, 1, False, 'Temporal normalization: ', tnorm)
     mpi_print_log(mpi_log_fid, 1, True,  'Spectral whitening: ', swht)
     return (wtlen, wt_f1, wt_f2), wflen
-def init_speedup(fftsize, delta, fs, critical_level=0.01):
+def init_speedup(fftsize, delta, fs, critical_level=None):
     """
     Return the acceleration bound (i1, i2) for spetral computation.
     Data outside the [i1, i2) can be useless given specific frequency band fs=(f1, f2).
     """
+    if critical_level==None: # disable acceleration
+        return 0, fftsize//2+1
     if fs == None:
-        return 0, fftsize
+        return 0, fftsize//2+1
 
     df = 1.0/(fftsize*delta)
     fmin, fmax = df, 0.5/delta-df # safe value
     f1, f2 = fs
     if f1 >= f2 or (f1<=fmin and f2>=fmax) or f1>=fmax or f2 <=fmin:
-        return 0, fftsize
+        return 0, fftsize//2+1
 
     i1, i2 = 0, fftsize
     x = zeros(fftsize, dtype=float32)
@@ -914,7 +916,7 @@ HMSG = """%s --mode r2r -I "in*/*.sac" -T -5/10800/32400 -D 0.1 --input_format s
     [--w_temporal 128.0/0.02/0.06667] [--w_spec 0.02]
     [--post_fold] [--post_taper 0.05] [--post_filter bandpass/0.02/0.0666] [--post_norm] [--post_cut]
      --log cc_log  [--log_mode 0] [--acc=0.01] [--random_sample 0.6]
-    [--rnd_dev_loc 5.0/5.0] [--rnd_dev_ot 50.0]
+    [--rnd_dev_loc 5.0/5.0] [--rnd_dev_ot 50.0] [--acc 0.01]
 
 Args:
     #0. Mode:
@@ -969,7 +971,7 @@ Args:
                 E.g.: `--log_mode=all`, `--log_mode=0`, `--log_mode=0,1,2,3,10`.
 
     #6. Other options:
-    --acc : acceleration threshold. (default is 0.01)
+    --acc : acceleration threshold. (default is off)
     --random_sample : random resample the cross-correlation functions in the stacking.  (a value between 0 and 1)
 
     #7. Add artificial inaccuracy into the input data.
@@ -1032,7 +1034,7 @@ if __name__ == "__main__":
     log_prefnm= 'cc_mpi_log'
     log_mode  = None
 
-    spec_acc_threshold = 0.01
+    spec_acc_threshold = None #0.01
     random_sample = -1.0
 
     rnd_dev_loc = None
