@@ -376,6 +376,12 @@ class Waveforms(Stream):
         if filename:
             inv.write(filename, format=format)
         return inv
+    def get_time_coverage(self):
+        """
+        Return a list of [tstart, tend] for the coverage of all the traces within.
+        """
+        segs = [(tr.stats.starttime, tr.stats.endtime) for tr in self]
+        return union_time_segments(segs)
     def select_time(self, min_time, max_time, method='tight'):
         """
         Select a portion of traces within `self.traces` using the time range (`min_time`, `max_time`),
@@ -1472,6 +1478,68 @@ def get_adaptive_cmap(data, xs=None, ys=None,
     ####
     return newcmap, second_norm, (bin_edges, density)
 
+def union_time_segments(segments):
+    """
+    Union a list of time segments.
+
+    segments: a list of (tstart, tend)
+    """
+    if len(segments) < 1:
+        return list()
+    ######
+    segs = sorted(segments)
+    result = [segs[0] ]
+    for t2, t3 in segs:
+        t0, t1 = result[-1]
+        if t1<t2:
+            result.append( (t2, t3) )
+        else:
+            tend = t1 if t1>t3 else t3
+            result[-1] = (t0, tend)
+    return result
+def join_two_time_segments(s1, s2):
+    """
+    Return a list of time segments derived from the intersection of two lists of time segments.
+    Each of the time segment within the returned should be coverged by both the s1 and s2.
+
+    s1: a list of (tstart, tend).
+    s2: a list if (tstart, tend).
+    """
+    def __intersect(t0, t1, t2, t3): # check if (t0, t1) and (t2, t3) intersect
+        if t1<t2 or t3<t0:
+            return False
+        return True
+    def __join(t0, t1, t2, t3): # intersect the (t0, t1) and (t2, t3) if they intersect
+        tstart = t0 if t0>t2 else t2
+        tend = t1 if t1<t3 else t3
+        return (tstart, tend)
+    seg1 = union_time_segments(s1)
+    seg2 = union_time_segments(s2)
+    result = list()
+    for (t0, t1) in seg1:
+        for t2, t3 in (seg2):
+            if __intersect(t0, t1, t2, t3):
+                result.append( __join(t0, t1, t2, t3) )
+    return union_time_segments(result)
+def join_time_segments(list_of_segments):
+    if len(list_of_segments) < 2:
+        return list_of_segments[0]
+    result = join_two_time_segments( list_of_segments[0], list_of_segments[1] )
+    for it in list_of_segments[2:]:
+        result = join_two_time_segments(result, it)
+    return result
+def plot_time_segments(semgents, ax, y=None, **kwargs):
+    """
+    Plot time segments.
+
+    segments: a list of (tstart, tend)
+    ax: where to plot
+    y: None to set step-like time segments.
+       a number (1,2,3,4,...) to specify the y coordinate to plot the time segments.
+    """
+    for idx,(t0, t1) in enumerate(semgents):
+        v = y if type(y)!=type(None) else idx
+        ax.plot((t0, t1), (v, v), **kwargs)
 if __name__ == '__main__':
     if True:
         BreqFast.test_run()
