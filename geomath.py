@@ -8,46 +8,97 @@ import numpy as np
 from math import radians #, cos, sin, asin, sqrt
 from numba import jit, float64, types
 
-
-### coordinates transformation
-@jit(types.UniTuple(float64, 2)(float64, float64), nopython=True, nogil=True)
+np_deg2rad = np.deg2rad
+PI = np.pi
+twoPI = np.pi * 2
+##################################################################################################################
+# coordinates transformation
+##################################################################################################################
+@jit(nopython=True, nogil=True)
 def antipode(lon, lat):
     """
-    Calculate antipode of a point.
+    Calculate antipode of a point or a list of points.
     Return (lon, lat) of the new point in degree.
+    The (lon, lat) could two single values or two np.ndarray objects of the same size.
+    #
+    NOTE: it is users' responsibility to make sure the input are not list/tuple/etc but np.ndarray when necessary.
     """
     new_lon = (lon + 180) % 360
     new_lat = -lat
     return new_lon, new_lat
+@jit(nopython=True, nogil=True)
+def antipode_rad(lon, lat):
+    """
+    The same as antiode, but input and output are in radian.
+    """
+    new_lon = (lon + PI) % twoPI
+    new_lat = -lat
+    return new_lon, new_lat
 
-@jit(types.UniTuple(float64, 3)(float64, float64, float64), nopython=True, nogil=True)
+@jit(nopython=True, nogil=True)
 def xyz_to_rlola(x, y, z):
     """
-    Given (x, y, z), return (r, lo, la)
+    Given (x, y, z), return (r, lo, la) in degree.
+    The (x, y, z) could be three single values or three np.ndarray objects of the same size.
+    #
+    NOTE: it is users' responsibility to make sure the input are not list/tuple/etc but np.ndarray when necessary.
     """
     r  = np.sqrt( x*x+y*y+z*z )
     lo = np.rad2deg( np.arctan2(y, x) )
     la = np.rad2deg( np.arctan2(z, np.sqrt(x*x+y*y) ) )
     return r, lo, la
+@jit(nopython=True, nogil=True)
+def xyz_to_rlola_rad(x, y, z):
+    """
+    The same as xyz_to_rlola, but return in radian.
+    """
+    r  = np.sqrt( x*x+y*y+z*z )
+    lo = np.arctan2(y, x)
+    la = np.arctan2(z, np.sqrt(x*x+y*y) )
+    return r, lo, la
 
-@jit(types.UniTuple(float64, 3)(float64, float64, float64), nopython=True, nogil=True)
+@jit(nopython=True, nogil=True)
 def rlola_to_xyz(radius, lo, la):
     """
-    Given (radius, lo, la), return (x,y,z) coordinates.
+    Given (radius, lo, la), return (x,y,z) coordinates. The lo and la are in degree.
+    The (radius, lo, la) could be three single values or three np.ndarray objects of the same size.
+    #
+    NOTE: it is users' responsibility to make sure the input are not list/tuple/etc but np.ndarray when necessary.
     """
-    lam, phi = radians(lo), radians(la)
+    lam, phi = np.deg2rad(lo), np.deg2rad(la)
+    x = np.cos(phi)*np.cos(lam)*radius
+    y = np.cos(phi)*np.sin(lam)*radius
+    z = np.sin(phi)*radius
+    return x,y,z
+@jit(nopython=True, nogil=True)
+def rlola_to_xyz_rad(radius, lo, la):
+    """
+    The same as rlola_to_xyz, but input and output are in radian.
+    """
+    lam, phi = lo, la
     x = np.cos(phi)*np.cos(lam)*radius
     y = np.cos(phi)*np.sin(lam)*radius
     z = np.sin(phi)*radius
     return x,y,z
 
-@jit(float64(float64, float64, float64, float64), nopython=True, nogil=True)
+##################################################################################################################
+# spherical geometry
+##################################################################################################################
+@jit(nopython=True, nogil=True)
 def haversine(lon1, lat1, lon2, lat2):
     """
     Return the great circle distance (degree) between two points.
+    #
+    The input could be single values(v) or np.ndarray objects(a). They could be:
+    1. haversine(v1, v2, v3, v4)
+    2. haversine(v1, v2, a1, a2) where a1 and a2 have the same size.
+    2. haversine(a1, a2, v1, v2) where a1 and a2 have the same size.
+    3. haversine(a1, a2, a3, a4) where all a1, a2, a3, a4 have the same size.
+    #
+    NOTE: it is users' responsibility to make sure the input are not list/tuple/etc but np.ndarray when necessary.
     """
     # convert decimal degrees to radians
-    lon1, lat1, lon2, lat2 = radians(lon1), radians(lat1), radians(lon2), radians(lat2)
+    lon1, lat1, lon2, lat2 = np_deg2rad(lon1), np_deg2rad(lat1), np_deg2rad(lon2), np_deg2rad(lat2)
     # haversine formula
     dlon = lon2 - lon1
     dlat = lat2 - lat1
@@ -56,22 +107,69 @@ def haversine(lon1, lat1, lon2, lat2):
     a =  s1*s1 + np.cos(lat1) * np.cos(lat2) * s2 * s2
     c = np.rad2deg( 2.0 * np.arcsin(np.sqrt(a))  )
     return c # degree
+@jit(nopython=True, nogil=True)
+def haversine_rad(lon1, lat1, lon2, lat2):
+    """
+    The same as haversine, but input and output are in radian.
+    """
+    # haversine formula
+    dlon = lon2 - lon1
+    dlat = lat2 - lat1
+    s1 = np.sin(dlat*0.5)
+    s2 = np.sin(dlon*0.5)
+    a =  s1*s1 + np.cos(lat1) * np.cos(lat2) * s2 * s2
+    c = 2.0 * np.arcsin(np.sqrt(a))
+    return c # rad
 
-@jit(float64(float64, float64, float64, float64), nopython=True, nogil=True)
+@jit(nopython=True, nogil=True)
 def azimuth(evlo, evla, stlo, stla):
     """
-    Return the azimuth angle (degree) from (evlo, evla) to (stlo, stla)
+    Return the azimuth angle (degree) from (evlo, evla) to (stlo, stla).
+    #
+    The input could be single values(v) or np.ndarray objects(a). They could be:
+    1. azimuth(v1, v2, v3, v4)
+    2. azimuth(v1, v2, a1, a2) where a1 and a2 have the same size.
+    2. azimuth(a1, a2, v1, v2) where a1 and a2 have the same size.
+    3. azimuth(a1, a2, a3, a4) where all a1, a2, a3, a4 have the same size.
+    #
+    NOTE: it is users' responsibility to make sure the input are not list/tuple/etc but np.ndarray when necessary.
     """
-    phi1, phi2 = radians(evla), radians(stla)
-    dlamda     = radians(stlo - evlo)
+    phi1, phi2 = np.deg2rad(evla), np.deg2rad(stla)
+    dlamda     = np.deg2rad(stlo - evlo)
     a = np.arctan2(np.cos(phi2) * np.sin(dlamda),  np.cos(phi1)*np.sin(phi2) - np.sin(phi1)*np.cos(phi2)*np.cos(dlamda) )
     return np.rad2deg(a) % 360.0
+@jit(nopython=True, nogil=True)
+def azimuth_rad(evlo, evla, stlo, stla):
+    """
+    The same as azimuth, but input and output are in radian.
+    """
+    phi1, phi2 = evla, stla
+    dlamda     = stlo - evlo
+    a = np.arctan2(np.cos(phi2) * np.sin(dlamda),  np.cos(phi1)*np.sin(phi2) - np.sin(phi1)*np.cos(phi2)*np.cos(dlamda) )
+    a = a % twoPI
+    return a
 
-@jit(float64(float64, float64, float64, float64, float64, float64), nopython=True, nogil=True)
+##################################################################################################################
+# Complex geometry
+##################################################################################################################
+@jit(nopython=True, nogil=True)
 def point_distance_to_great_circle_plane(ptlon, ptlat, lon1, lat1, lon2, lat2):
     """
     Return the distance (can be positive or negative) from a point (ptlon, ptlat) to the great circle plane formed by two points
-    of (lon1, lat1) and (lon2, lat2).
+    of (lon1, lat1) and (lon2, lat2). Input and output are in degree.
+
+    The input could be single values(v) or np.ndarray objects(a). They could be:
+    1. point_distance_to_great_circle_plane(v1, v2, v3, v4, v5, v6)
+
+    2. point_distance_to_great_circle_plane(v1, v2, v3, v4, a1, a2) where a1 and a2 have the same size.
+    3. point_distance_to_great_circle_plane(v1, v2, a1, a2, v3, v4) where a1 and a2 have the same size.
+    4. point_distance_to_great_circle_plane(a1, a2, v1, v2, v3, v4) where a1 and a2 have the same size.
+
+    5. point_distance_to_great_circle_plane(v1, v2, a1, a2, a3, a4) where all a1, a2, a3, a4 have the same size.
+    6. point_distance_to_great_circle_plane(a1, a2, a3, a4, a5, a6) where all a1, a2, a3, a4, a5, a6 have the same size.
+    No other input format options are allowed.
+    #
+    NOTE: it is users' responsibility to make sure the input are not list/tuple/etc but np.ndarray when necessary.
     #
     dxt = asin( sin(d13) ⋅ sin(a13−a12) )
     where
@@ -79,58 +177,94 @@ def point_distance_to_great_circle_plane(ptlon, ptlat, lon1, lat1, lon2, lat2):
         a13 is (initial) bearing from start point to third point
         a12 is (initial) bearing from start point to end point
     """
-    if np.abs(lon1-lon2) < 1.0e-4 and np.abs(lat1-lat2) < 1.0e-4:
-        # pt1 and pt2 are the same point.
-        return 0.0
-    d13 = radians( haversine(lon1, lat1, ptlon, ptlat) )
-    a13 = radians( azimuth(lon1, lat1, ptlon, ptlat) )
-    a12 = radians( azimuth(lon1, lat1, lon2, lat2) )
+    d13 = np.deg2rad( haversine(lon1, lat1, ptlon, ptlat) )
+    a13 = np.deg2rad( azimuth(lon1, lat1, ptlon, ptlat) )
+    a12 = np.deg2rad( azimuth(lon1, lat1, lon2, lat2) )
     dis = np.arcsin(np.sin(d13) * np.sin(a13-a12) )
+    ###
+    loladif = np.abs(lon1-lon2) + np.abs(lat1-lat2)
+    dis = np.where(loladif<1.0e-4, 0.0, dis)
     return np.rad2deg(dis)
+@jit(nopython=True, nogil=True)
+def point_distance_to_great_circle_plane_rad(ptlon, ptlat, lon1, lat1, lon2, lat2):
+    """
+    The same as point_distance_to_great_circle_plane, but input and output are in radian.
+    """
+    d13 = haversine_rad(lon1, lat1, ptlon, ptlat)
+    a13 = azimuth_rad(lon1, lat1, ptlon, ptlat)
+    a12 = azimuth_rad(lon1, lat1, lon2, lat2)
+    dis = np.arcsin(np.sin(d13) * np.sin(a13-a12) )
+    ###
+    loladif = np.abs(lon1-lon2) + np.abs(lat1-lat2)
+    dis = np.where(loladif<1.0e-6, 0.0, dis)
+    return dis
 
-@jit(types.UniTuple(types.UniTuple(float64, 2), 2)(float64, float64, float64, float64), nopython=True, nogil=True)
+@jit(nopython=True, nogil=True)
 def great_circle_plane_center(lon1, lat1, lon2, lat2):
     """
     Return two center points coordinate (clon1, clat1), (clon2, clat2) for the great circle plane formed by
-    the two input points (lon1, lat1) and (lon2, lat2).
-    """
-    #lon1, lat1, lon2, lat2 = radians(lon1), radians(lat1), radians(lon2), radians(lat2)
-    x1, y1, z1 = rlola_to_xyz(1.0, lon1, lat1) #np.cos(lat1)*np.cos(lon1), np.cos(lat1)*np.sin(lon1), np.sin(lat1)
-    x2, y2, z2 = rlola_to_xyz(1.0, lon2, lat2) #np.cos(lat2)*np.cos(lon2), np.cos(lat2)*np.sin(lon2), np.sin(lat2)
-    x3, y3, z3 = y1*z2-y2*z1, z1*x2-z2*x1, x1*y2-x2*y1
-    lat = np.arctan2(z3, np.sqrt(x3*x3+y3*y3))
-    lon = np.arctan2(y3, x3)
-    #print(x3, y3, z3)
-    lon, lat = np.rad2deg(lon) % 360.0, np.rad2deg(lat)
-    if lat > 0.0:
-        return (lon, lat), antipode(lon, lat)
-    else:
-        return antipode(lon, lat), (lon, lat)
-
-@jit(types.UniTuple(types.UniTuple(float64, 2), 2)(float64, float64, float64, float64, float64, float64, float64), nopython=True, nogil=True)
-def great_circle_plane_center_triple(lon1, lat1, lon2, lat2, ptlo, ptla, critical_distance):
-    """
-    Return two center points coordinate (clon1, clat1), (clon2, clat2) for the great circle plane formed by
-    the two input points (lon1, lat1) and (lon2, lat2).
-    If the two points are too close (distance below `critical_distance`), then the great circle plane
-    is the one passing through the two points and the third point (ptlo, ptla)
+    the two input points (lon1, lat1) and (lon2, lat2). Input and output are in degree.
+    #
+    The input could be single values(v) or np.ndarray objects(a). They could be:
+    1. great_circle_plane_center(v1, v2, v3, v4)
+    2. great_circle_plane_center(v1, v2, a1, a2) where a1 and a2 have the same size.
+    2. great_circle_plane_center(a1, a2, v1, v2) where a1 and a2 have the same size.
+    3. great_circle_plane_center(a1, a2, a3, a4) where all a1, a2, a3, a4 have the same size.
+    #
+    NOTE: it is users' responsibility to make sure the input are not list/tuple/etc but np.ndarray when necessary.
     """
     x1, y1, z1 = rlola_to_xyz(1.0, lon1, lat1)
-    x2, y2, z2 = 0.0, 0.0, 0.0
-    if abs(lon1-lon2)>critical_distance or abs(lat1-lat2)>critical_distance:
-        x2, y2, z2 = rlola_to_xyz(1.0, lon2, lat2)
-    else:
-        x2, y2, z2 = rlola_to_xyz(1.0, ptlo, ptla)
+    x2, y2, z2 = rlola_to_xyz(1.0, lon2, lat2)
     x3, y3, z3 = y1*z2-y2*z1, z1*x2-z2*x1, x1*y2-x2*y1
     lat = np.arctan2(z3, np.sqrt(x3*x3+y3*y3))
     lon = np.arctan2(y3, x3)
     #print(x3, y3, z3)
     lon, lat = np.rad2deg(lon) % 360.0, np.rad2deg(lat)
-    if lat > 0.0:
-        return (lon, lat), antipode(lon, lat)
-    else:
-        return antipode(lon, lat), (lon, lat)
+    #### now make sure the center points are in the northern hemisphere
+    alon, alat = antipode(lon, lat)
+    lon = np.where(lat>0.0, lon, alon)
+    lat = np.where(lat>0.0, lat, alat)
+    ####
+    alon, alat = antipode(lon, lat)
+    return (lon, lat), (alon, alat)
+@jit(nopython=True, nogil=True)
+def great_circle_plane_center_rad(lon1, lat1, lon2, lat2):
+    """
+    The same as great_circle_plane_center, but input and output are in radian.
+    """
+    x1, y1, z1 = rlola_to_xyz_rad(1.0, lon1, lat1)
+    x2, y2, z2 = rlola_to_xyz_rad(1.0, lon2, lat2)
+    x3, y3, z3 = y1*z2-y2*z1, z1*x2-z2*x1, x1*y2-x2*y1
+    lat = np.arctan2(z3, np.sqrt(x3*x3+y3*y3))
+    lon = np.arctan2(y3, x3) % twoPI
+    #print(x3, y3, z3)
+    #### now make sure the center points are in the northern hemisphere
+    alon, alat = antipode_rad(lon, lat)
+    lon = np.where(lat>0.0, lon, alon)
+    lat = np.where(lat>0.0, lat, alat)
+    ####
+    alon, alat = antipode_rad(lon, lat)
+    return (lon, lat), (alon, alat)
 
+@jit(nopython=True, nogil=True)
+def great_circle_plane_center_triple(lon1, lat1, lon2, lat2, ptlo, ptla, critical_distance):
+    """
+    Return great_circle_plane_center_triple(lon1, lat1, lon2, lat2) is the two points #1 and #2 are far away (distance above `critical_distance`)
+    or great_circle_plane_center_triple(lon1, lat1, ptlo, ptla) if the two points #1 and #2 are too close (distance below `critical_distance`).
+    """
+    dist = haversine(lon1, lat1, lon2, lat2)
+    lon1 = np.where(dist>critical_distance, lon1, ptlo)
+    lat1 = np.where(dist>critical_distance, lat1, ptla)
+    return great_circle_plane_center(lon1, lat1, lon2, lat2)
+@jit(nopython=True, nogil=True)
+def great_circle_plane_center_triple_rad(lon1, lat1, lon2, lat2, ptlo, ptla, critical_distance):
+    """
+    The same as great_circle_plane_center_triple, but input and output are in radian.
+    """
+    dist = haversine_rad(lon1, lat1, lon2, lat2)
+    lon1 = np.where(dist>critical_distance, lon1, ptlo)
+    lat1 = np.where(dist>critical_distance, lat1, ptla)
+    return great_circle_plane_center_rad(lon1, lat1, lon2, lat2)
 
 ##################################################################################################################
 # Functions/methods below are for special purpose
@@ -176,9 +310,10 @@ def sphere_rotate(lo, la, axis_lo, axis_la, axis_angle_deg):
     junk, new_lo, new_la= xyz_to_rlola(x, y, z)    
     return new_lo, new_la
 
-###
+
+##################################################################################################################
 #  geometry for tranformating spherical points into equator
-###
+##################################################################################################################
 @jit(nopython=True, nogil=True)
 def trans2equator(d1, d2, az1, az2, inter_station_dist, daz):
     """
@@ -312,7 +447,49 @@ def internel_line_same_daz_sphere(lo1, la1, lo2, la2, angle_deg):
     return np.array(lo_lst), np.array(la_lst)
 
 if __name__ == "__main__":
-    print( azimuth(0.0, 0.0, 10.0, 30.0) )
-    print( haversine(0.0, 0.0, 10.0, 30.0) )
-    print( great_circle_plane_center(0.0, 0.0, 10.0, 30.0) )
-    print( point_distance_to_great_circle_plane(2.0, 3.0, 0.0, 0.0, 3.0, 0.0) )
+    lo0, la0 = -1, -10
+    lo1, la1 = 10, 60
+    lo2, la2 = 30, 20
+    lo3, la3 = np.array([0, 10, 20]), np.array([0, 0, 0])
+    lo4, la4 = lo3 + 10, la3 + 10
+    rlo0, rla0 = np.deg2rad(lo0), np.deg2rad(la0)
+    rlo1, rla1 = np.deg2rad(lo1), np.deg2rad(la1)
+    rlo2, rla2 = np.deg2rad(lo2), np.deg2rad(la2)
+    rlo3, rla3 = np.deg2rad(lo3), np.deg2rad(la3)
+    rlo4, rla4 = np.deg2rad(lo4), np.deg2rad(la4)
+
+    x1, y1, z1 = 1, 1, 1
+    x2, y2, z2 = np.array([1, 2]), np.array([1, 3]), np.array([1, 4])
+
+    #print(antipode(lo1, la1) ); print( np.rad2deg(antipode_rad(rlo1, rla1)) )
+    #print(antipode(lo3, la3) ); print( np.rad2deg(antipode_rad(rlo3, rla3)) )
+    #
+    #print( xyz_to_rlola(x1, y1, z1) ); print( np.rad2deg(xyz_to_rlola_rad(x1, y1, z1)) )
+    #print( xyz_to_rlola(x2, y2, z2) ); print( np.rad2deg(xyz_to_rlola_rad(x2, y2, z2)) )
+    #
+    #print( rlola_to_xyz(10, lo1, la1) ); print( rlola_to_xyz_rad(10, rlo1, rla1))
+    #print( rlola_to_xyz(10, lo3, la3) ); print( rlola_to_xyz_rad(10, rlo3, rla3))
+    #print( rlola_to_xyz(10, lo1, la1) ); print( rlola_to_xyz_rad(10, rlo1, rla1))
+    #
+    #print(haversine(lo1, la1, lo2, la2) ); print( np.rad2deg(haversine_rad(rlo1, rla1, rlo2, rla2)) )
+    #print(haversine(lo3, la3, lo4, la4) ); print( np.rad2deg(haversine_rad(rlo3, rla3, rlo4, rla4)) )
+    #print(haversine(lo1, la1, lo4, la4) ); print( np.rad2deg(haversine_rad(rlo1, rla1, rlo4, rla4)) )
+    #print(haversine(lo3, la3, lo2, la2) ); print( np.rad2deg(haversine_rad(rlo3, rla3, rlo2, rla2)) )
+    #
+    #print(azimuth(lo1, la1, lo2, la2) ); print( np.rad2deg(azimuth_rad(rlo1, rla1, rlo2, rla2)) )
+    #print(azimuth(lo3, la3, lo4, la4) ); print( np.rad2deg(azimuth_rad(rlo3, rla3, rlo4, rla4)) )
+    #print(azimuth(lo1, la1, lo4, la4) ); print( np.rad2deg(azimuth_rad(rlo1, rla1, rlo4, rla4)) )
+    #print(azimuth(lo3, la3, lo2, la2) ); print( np.rad2deg(azimuth_rad(rlo3, rla3, rlo2, rla2)) )
+    #
+    #print(point_distance_to_great_circle_plane(lo0, la0, lo1, la1, lo2, la2) ); print(np.rad2deg(point_distance_to_great_circle_plane_rad(rlo0, rla0, rlo1, rla1, rlo2, rla2) ) )
+    #print(point_distance_to_great_circle_plane(lo0, la0, lo1, la1, lo1, la1) ); print(np.rad2deg(point_distance_to_great_circle_plane_rad(rlo0, rla0, rlo1, rla1, rlo1, rla1) ) )
+    #
+    #print(point_distance_to_great_circle_plane(lo0, la0, lo1, la1, lo3, la3) ); print(np.rad2deg(point_distance_to_great_circle_plane_rad(rlo0, rla0, rlo1, rla1, rlo3, rla3) ) )
+    #print(point_distance_to_great_circle_plane(lo0, la0, lo3, la3, lo3, la3) ); print(np.rad2deg(point_distance_to_great_circle_plane_rad(rlo0, rla0, rlo3, rla3, rlo3, rla3) ) )
+    #print(point_distance_to_great_circle_plane(lo0, la0, lo3, la3, lo1, la1) ); print(np.rad2deg(point_distance_to_great_circle_plane_rad(rlo0, rla0, rlo3, rla3, rlo1, rla1) ) )
+    #print(point_distance_to_great_circle_plane(lo0, la0, lo3, la3, lo4, la4) ); print(np.rad2deg(point_distance_to_great_circle_plane_rad(rlo0, rla0, rlo3, rla3, rlo4, rla4) ) )
+    #
+    #print(great_circle_plane_center(lo1, la1, lo2, la2) ); print( np.rad2deg(great_circle_plane_center_rad(rlo1, rla1, rlo2, rla2)) )
+    #print(great_circle_plane_center(lo3, la3, lo4, la4) ); print( np.rad2deg(great_circle_plane_center_rad(rlo3, rla3, rlo4, rla4)) )
+    #print(great_circle_plane_center(lo1, la1, lo4, la4) ); print( np.rad2deg(great_circle_plane_center_rad(rlo1, rla1, rlo4, rla4)) )
+    print(great_circle_plane_center(lo3, la3, lo2, la2) ); print( np.rad2deg(great_circle_plane_center_rad(rlo3, rla3, rlo2, rla2)) )
