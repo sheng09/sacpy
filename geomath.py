@@ -10,7 +10,8 @@ from numba import jit, float64, types
 
 
 ### coordinates transformation
-@jit(types.UniTuple(float64, 2)(float64, float64), nopython=True, nogil=True)
+#@jit(types.UniTuple(float64, 2)(float64, float64), nopython=True, nogil=True)
+@jit(nopython=True, nogil=True)
 def antipode(lon, lat):
     """
     Calculate antipode of a point.
@@ -20,7 +21,8 @@ def antipode(lon, lat):
     new_lat = -lat
     return new_lon, new_lat
 
-@jit(types.UniTuple(float64, 3)(float64, float64, float64), nopython=True, nogil=True)
+#@jit(types.UniTuple(float64, 3)(float64, float64, float64), nopython=True, nogil=True)
+@jit(nopython=True, nogil=True)
 def xyz_to_rlola(x, y, z):
     """
     Given (x, y, z), return (r, lo, la)
@@ -30,7 +32,8 @@ def xyz_to_rlola(x, y, z):
     la = np.rad2deg( np.arctan2(z, np.sqrt(x*x+y*y) ) )
     return r, lo, la
 
-@jit(types.UniTuple(float64, 3)(float64, float64, float64), nopython=True, nogil=True)
+#@jit(types.UniTuple(float64, 3)(float64, float64, float64), nopython=True, nogil=True)
+@jit(nopython=True, nogil=True)
 def rlola_to_xyz(radius, lo, la):
     """
     Given (radius, lo, la), return (x,y,z) coordinates.
@@ -41,7 +44,8 @@ def rlola_to_xyz(radius, lo, la):
     z = np.sin(phi)*radius
     return x,y,z
 
-@jit(float64(float64, float64, float64, float64), nopython=True, nogil=True)
+#@jit(float64(float64, float64, float64, float64), nopython=True, nogil=True)
+@jit(nopython=True, nogil=True)
 def haversine(lon1, lat1, lon2, lat2):
     """
     Return the great circle distance (degree) between two points.
@@ -57,7 +61,8 @@ def haversine(lon1, lat1, lon2, lat2):
     c = np.rad2deg( 2.0 * np.arcsin(np.sqrt(a))  )
     return c # degree
 
-@jit(float64(float64, float64, float64, float64), nopython=True, nogil=True)
+#@jit(float64(float64, float64, float64, float64), nopython=True, nogil=True)
+@jit(nopython=True, nogil=True)
 def azimuth(evlo, evla, stlo, stla):
     """
     Return the azimuth angle (degree) from (evlo, evla) to (stlo, stla)
@@ -67,7 +72,8 @@ def azimuth(evlo, evla, stlo, stla):
     a = np.arctan2(np.cos(phi2) * np.sin(dlamda),  np.cos(phi1)*np.sin(phi2) - np.sin(phi1)*np.cos(phi2)*np.cos(dlamda) )
     return np.rad2deg(a) % 360.0
 
-@jit(float64(float64, float64, float64, float64, float64, float64), nopython=True, nogil=True)
+#@jit(float64(float64, float64, float64, float64, float64, float64), nopython=True, nogil=True)
+@jit(nopython=True, nogil=True)
 def point_distance_to_great_circle_plane(ptlon, ptlat, lon1, lat1, lon2, lat2):
     """
     Return the distance (can be positive or negative) from a point (ptlon, ptlat) to the great circle plane formed by two points
@@ -88,7 +94,8 @@ def point_distance_to_great_circle_plane(ptlon, ptlat, lon1, lat1, lon2, lat2):
     dis = np.arcsin(np.sin(d13) * np.sin(a13-a12) )
     return np.rad2deg(dis)
 
-@jit(types.UniTuple(types.UniTuple(float64, 2), 2)(float64, float64, float64, float64), nopython=True, nogil=True)
+#@jit(types.UniTuple(types.UniTuple(float64, 2), 2)(float64, float64, float64, float64), nopython=True, nogil=True)
+@jit(nopython=True, nogil=True)
 def great_circle_plane_center(lon1, lat1, lon2, lat2):
     """
     Return two center points coordinate (clon1, clat1), (clon2, clat2) for the great circle plane formed by
@@ -107,7 +114,8 @@ def great_circle_plane_center(lon1, lat1, lon2, lat2):
     else:
         return antipode(lon, lat), (lon, lat)
 
-@jit(types.UniTuple(types.UniTuple(float64, 2), 2)(float64, float64, float64, float64, float64, float64, float64), nopython=True, nogil=True)
+#@jit(types.UniTuple(types.UniTuple(float64, 2), 2)(float64, float64, float64, float64, float64, float64, float64), nopython=True, nogil=True)
+@jit(nopython=True, nogil=True)
 def great_circle_plane_center_triple(lon1, lat1, lon2, lat2, ptlo, ptla, critical_distance):
     """
     Return two center points coordinate (clon1, clat1), (clon2, clat2) for the great circle plane formed by
@@ -295,6 +303,7 @@ def __internel_line_same_daz_sphere(lo1, lo2, angle_deg):
                 la_lst.append( np.rad2deg(phi) )
     return lo_lst, la_lst
 #@jit( types.UniTuple(float64[:],2)(float64, float64, float64, float64, float64), nopython=True, nogil=True)
+@jit(nopython=True, nogil=True)
 def internel_line_same_daz_sphere(lo1, la1, lo2, la2, angle_deg):
     """
     Get list of points for which the difference of azimuth to two fixed points (lo1, la1), (lo2, la2) is a  constant angle.
