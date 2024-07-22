@@ -271,17 +271,12 @@ def wget_http_files(urls, filename_prefix='testtest/s_', overwrite=True):
     for url in urls:
         ofnm = '%s%s'% (filename_prefix, url.split('/')[-1])
         print('wget %s ...' % (url)  )
-        download_flag = True
         if os.path.exists(ofnm):
             if overwrite:
                 print('Will overwrite the file %s' % (ofnm) )
                 os.remove(ofnm)
-            else:
-                print('Jump over the file %s' % (ofnm) )
-                download_flag = False
-        if download_flag:
-            real_ofnm = wget.download(url, ofnm)
-            print('\nSaved to %s\nDone!' % (real_ofnm) )
+        real_ofnm = wget.download(url, ofnm)
+        print('\nSaved to %s\nDone!' % (real_ofnm) )
     pass
 
 if __name__ == '__main__':
