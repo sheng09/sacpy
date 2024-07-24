@@ -210,13 +210,20 @@ class CacheRun:
             return func(*args, **kwargs)
         return __wrapper
 
-def get_folder(filename, makedir=True):
+def get_folder(filename, makedir=True, mpi_comm=None):
     """
     Get the folder for hosting a filename, and make the folder if it does not exist and `makedir=True`.
 
     filename:
     makedir:  True or False
+    mpi_comm: MPI communicator, which is only useful in mpi run and `makedir=True`.
     """
+    if makedir and mpi_comm:
+        mpi_rank = mpi_comm.Get_rank()
+        if mpi_rank == 0:
+            get_folder(filename=filename, makedir=makedir, mpi_comm=None)
+        mpi_comm.Barrier()
+    ########################################################
     folder = '/'.join(filename.split('/')[:-1])
     if makedir and (not os.path.exists(folder)):
         os.makedirs(folder)
