@@ -221,7 +221,7 @@ def get_folder(filename, makedir=True):
     if makedir and (not os.path.exists(folder)):
         os.makedirs(folder)
     return folder
-def send_email(content, subject, recipient, sender, passwd, host="smtp.163.com", port=25):
+def send_email(content, subject, recipient, sender, passwd, host="smtp.163.com", port=465, use_ssl=True):
     """
     Send an email.
 
@@ -232,17 +232,23 @@ def send_email(content, subject, recipient, sender, passwd, host="smtp.163.com",
     host:      host of the sender server.
     port:      port of the sender server.
 
+    use_ssl:   True or False to use SMTP or SMTP_SSL.
     """
     msg = MIMEText(content)
     msg['From'] = sender
     msg['To']   = recipient
     msg['Subject'] = subject
-    with SMTP(host=host, port=port) as smtp:
-        smtp.set_debuglevel(0)
-        smtp.ehlo()
-        smtp.starttls()
-        smtp.login(sender, passwd)
-        smtp.sendmail(sender, [recipient], msg.as_string() )
+    if use_ssl:
+        with SMTP_SSL(host=host, port=port) as smtp_ssl:
+            smtp_ssl.login(sender, passwd)
+            smtp_ssl.sendmail(sender, [recipient], msg.as_string() )
+    else:
+        with SMTP(host=host, port=port) as smtp:
+            smtp.set_debuglevel(0)
+            smtp.ehlo()
+            smtp.starttls()
+            smtp.login(sender, passwd)
+            smtp.sendmail(sender, [recipient], msg.as_string() )
     time.sleep(randint(3, 9) )
 def get_http_files(url, re_template_string):
     """
