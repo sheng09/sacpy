@@ -225,7 +225,7 @@ def get_folder(filename, makedir=True, mpi_comm=None):
         mpi_comm.Barrier()
     ########################################################
     folder = '/'.join(filename.split('/')[:-1])
-    if makedir and (not os.path.exists(folder)):
+    if folder and makedir and (not os.path.exists(folder)):
         os.makedirs(folder)
     return folder
 def send_email(content, subject, recipient, sender, passwd, host="smtp.163.com", port=465, use_ssl=True):
@@ -272,17 +272,22 @@ def get_http_files(url, re_template_string):
     soup = BeautifulSoup(page, 'html.parser')
     fnms = [node.get('href') for node in soup.find_all('a') ]
     return ['%s/%s' % (url, it)  for it in fnms if template.match(it)]
-def wget_http_files(urls, filename_prefix='testtest/s_', overwrite=True):
+def wget_http_files(urls, filename_prefix='testtest/s_', overwrite=True, content_disposition=False):
     """
     Use wget to download files from a list of urls.
 
     urls:
     filename_prefix: filename prefix to save the files.
     overwrite: True or False to overwrite the existing files.
+    content_disposition: True or False(default) to use the content disposition to save the files (comparable to wget --content-disposition).
     """
     get_folder(filename_prefix, True)
     for url in urls:
         ofnm = '%s%s'% (filename_prefix, url.split('/')[-1])
+        if content_disposition:
+            tmp = get_filename_from_url_content_disposition(url)
+            if tmp is not None:
+                ofnm = '%s%s'% (filename_prefix, tmp)
         print('wget %s ...' % (url)  )
         download_flag = True
         if os.path.exists(ofnm):
@@ -293,9 +298,23 @@ def wget_http_files(urls, filename_prefix='testtest/s_', overwrite=True):
                 print('Jump over the file %s' % (ofnm) )
                 download_flag = False
         if download_flag:
-            real_ofnm = wget.download(url, ofnm)
+            with Timer(message='Downloaded', color='red', summary=None):
+                real_ofnm = wget.download(url, ofnm)
             print('\nSaved to %s\nDone!' % (real_ofnm) )
     pass
+def get_filename_from_url_content_disposition(url):
+    """
+    Get filename from an url for content-disposition
+    """
+    print(url)
+    response = requests.head(url, allow_redirects=True)
+    cd = response.headers.get('content-disposition')
+    if not cd:
+        return None
+    fname = cd.split('filename=')[-1]
+    if fname[0] == '"' or fname[0] == "'":
+        fname = fname[1:-1]
+    return fname
 
 if __name__ == '__main__':
     if True:
