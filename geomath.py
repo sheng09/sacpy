@@ -149,6 +149,19 @@ def azimuth_rad(evlo, evla, stlo, stla):
     a = a % twoPI
     return a
 
+@jit(nopython=True, nogil=True)
+def inter_point_distance_mat(los, las):
+    """
+    Return an N by N matrix for inter spherical point distance.
+    The matrix is symmetric.
+    #
+    NOTE: it is users' responsibility to make sure the input are not list/tuple/etc but np.ndarray when necessary.
+    """
+    n = len(los)
+    dist_mat = np.zeros((n, n), dtype=np.float64)
+    for i in range(n):
+        dist_mat[i] = haversine( los[i], las[i], los, las )
+    return dist_mat
 ##################################################################################################################
 # Complex geometry
 ##################################################################################################################
@@ -265,6 +278,81 @@ def great_circle_plane_center_triple_rad(lon1, lat1, lon2, lat2, ptlo, ptla, cri
     lon1 = np.where(dist>critical_distance, lon1, ptlo)
     lat1 = np.where(dist>critical_distance, lat1, ptla)
     return great_circle_plane_center_rad(lon1, lat1, lon2, lat2)
+
+##################################################################################################################
+# Spherical declustering
+##################################################################################################################
+def decluster_spherical_pts(los_deg, las_deg, approximate_lo_dif=2, approximate_la_dif=2):
+    """
+    Decluster a list of spherical points
+    Return a dictionary
+    (lo, la) -> a list of indexes
+    where the (lo, la) is the grid center for a cluster of points.
+
+    The algorithm is like this:
+    Lets say given a point lo, la, and step dlo, dla.
+    First, we round the latitude, and obtain the int key for latitude.
+        la2 = np.round(la / dla) * dla
+        int_la = (la2 * 1000).astype(np.int64)
+    Second, we adjust the longitude step, so that the 0->360 range can be evened dividied by dlo.
+        dlo2 = dlo / np.cos( la2_in_rad )
+        n = np.round(360 / dlo2)
+        dlo3 = 360 / n
+        lo2 = np.floor(lo / dlo3) # here we use the floor to make every longitude starts from 0 degree
+        int_lo = (lo2 * 1000).astype(np.int64)
+    Third, we have obtained the key (int_lo, int_la) for the point (lo, la), and we can use
+    the key to cluster the points.
+    """
+    def lalo2intkey(los_deg, las_deg, approximate_lo_dif=2, approximate_la_dif=2):
+        los = np.array(los_deg, dtype=np.float64) % 360
+        las = np.array(las_deg, dtype=np.float64)
+        ######
+        dlo, dla = approximate_lo_dif, approximate_la_dif
+        la2 = np.round(las / dla) * dla
+        int_la = (la2 * 1000).astype(np.int64)
+        #
+        dlo2 = dlo / np.cos(np.deg2rad(la2))
+        n = np.round(360 / dlo2)
+        n = np.where(n == 0, 1, n) # replace the zeros within an array, n, to 1
+        dlo3 = 360 / n
+        lo2 = np.floor(los / dlo3)
+        int_lo = (lo2 * 1000).astype(np.int64)
+        ######
+        intkey = [it for it in zip(int_la, int_lo)]
+        return intkey
+    def intkey2lalo(intkeys, approximate_lo_dif=2, approximate_la_dif=2):
+        try:
+            int_la = np.array([it[0] for it in intkeys] )
+            int_lo = np.array([it[1] for it in intkeys] )
+        except Exception as e:
+            int_la, int_lo = intkeys
+        ######
+        dlo, dla = approximate_lo_dif, approximate_la_dif
+        ######
+        la2 = int_la * 0.001
+        las = la2
+        ######
+        dlo2 = dlo / np.cos(np.deg2rad(la2))
+        n = np.round(360 / dlo2)
+        n = np.where(n == 0, 1, n) # replace the zeros within an array, n, to 1
+        dlo3 = 360 / n
+        #
+        lo2 = int_lo * 0.001
+        los = (lo2+0.5) * dlo3
+        return las, los%360
+    idxs    = np.arange( len(los_deg) )
+    intkeys = lalo2intkey(los_deg, las_deg, approximate_lo_dif, approximate_la_dif)
+    ####
+    tmp_dict = {it: set() for it in intkeys}
+    for intkey, idx in zip(intkeys, idxs):
+        tmp_dict[intkey].add(idx)
+    ####
+    declustered_points = dict()
+    for intkey, set_idxs in tmp_dict.items():
+        this_idxs = sorted(set_idxs)
+        key = intkey2lalo(intkey, approximate_lo_dif, approximate_la_dif)
+        declustered_points[key] = this_idxs
+    return declustered_points
 
 ##################################################################################################################
 # Functions/methods below are for special purpose
@@ -447,6 +535,29 @@ def internel_line_same_daz_sphere(lo1, la1, lo2, la2, angle_deg):
     return np.array(lo_lst), np.array(la_lst)
 
 if __name__ == "__main__":
+    import sys
+    import matplotlib.pyplot as plt
+    import cartopy.crs as ccrs
+    import cartopy.feature as cfeature
+    los = np.arange(0, 360.01, 0.5)
+    las = np.arange(-90, 90.01, 0.5)
+    mat = np.meshgrid(los, las)
+    los = mat[0].flatten()
+    las = mat[1].flatten()
+    print(los.shape)
+    clusters = decluster_spherical_points(los, las, approximate_lo_dif=20, approximate_la_dif=20)
+    ax = plt.subplot(111, projection=ccrs.PlateCarree(central_longitude=0))
+    ax.set_global()
+    ax.add_feature(cfeature.LAND, color='#cccccc')
+    for (la, lo), idxs in sorted(clusters.items()):
+        xs = los[idxs]
+        ys = las[idxs]
+        ls, = ax.plot(xs, ys, '.', markersize=0.6, transform=ccrs.PlateCarree() )
+        ###
+        ax.plot(lo, la, 's', markersize=10, color='k', transform=ccrs.PlateCarree() )
+    plt.show()
+    sys.exit()
+
     lo0, la0 = -1, -10
     lo1, la1 = 10, 60
     lo2, la2 = 30, 20

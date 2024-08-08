@@ -13,7 +13,7 @@ from h5py import File as h5_File
 from numpy import float32, int32, zeros, array
 from numpy import max as np_max
 from numpy import min as np_min
-from sacpy.geomath import haversine, azimuth
+from sacpy.geomath import haversine, azimuth, decluster_spherical_pts
 import math
 from matplotlib import mlab
 import matplotlib.pyplot as plt
@@ -1540,6 +1540,62 @@ def plot_time_segments(semgents, ax, y=None, **kwargs):
     for idx,(t0, t1) in enumerate(semgents):
         v = y if type(y)!=type(None) else idx
         ax.plot((t0, t1), (v, v), **kwargs)
+
+def select_inv_given_channels(inv, lst_channels_string=['Z12', 'ZNE']):
+    """
+    Return a new inventory to make sure each station within the inventory has all the specific channels
+    """
+    ##################################################################################################
+    # e.g., has_all_channels(a_station, 'ZNE')
+    def has_all_channels(station, channels_string):
+        channels_string = channels_string.upper()
+        cs = set( [it.code[-1].upper() for it in station.channels] )
+        not_included = [it for it in channels_string if (it not in cs)]
+        if len(not_included) > 0:
+            return False
+        return True
+    def has_all_channels2(station, lst_channels_string):
+        flag = False
+        for channels_string in lst_channels_string:
+            if has_all_channels(station, channels_string):
+                flag = True
+                break
+        return flag
+    ##################################################################################################
+    new_inv = inv.copy()
+    for net, new_net in zip(inv.networks, new_inv.networks):
+        new_net.stations = [it for it in net if has_all_channels2(it, lst_channels_string) ]
+    return new_inv
+def flatten_inv_to_stations(inventory, client_name=None):
+    """
+    Flatten the inventory to a list of station information.
+    For each station, the net_code and client_name is added to the station information.
+    """
+    stas = list()
+    for net in inventory.networks:
+        net_code = net.code
+        stations = net.stations
+        for sta in stations:
+            sta.net_code = net_code
+            sta.client_name = client_name
+        stas.extend( stations )
+    return stas
+def decluster_stations(lst_stations, approximate_lo_dif=2, approximate_la_dif=2):
+    """
+    Decluster a list of stations.
+    lst_stations: a list of obspy.Station objects.
+    approximate_lo_dif, approximate_la_dif: the approximate longitude and latitude grid step to decluster the stations.
+    """
+    stlos = np.array([it.longitude for it in lst_stations] )
+    stlas = np.array([it.latitude  for it in lst_stations] )
+    idx_clusters = decluster_spherical_pts(stlos, stlas, approximate_lo_dif, approximate_la_dif)
+    ####
+    clusters = dict()
+    for key, idxs in idx_clusters.items():
+        idxs = sorted(idxs)
+        clusters[key] = [lst_stations[idx] for idx in idxs]
+    return clusters
+
 if __name__ == '__main__':
     if True:
         BreqFast.test_run()
