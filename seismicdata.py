@@ -8,7 +8,7 @@ from obspy.core.stream import Stream
 from obspy.core.util.attribdict import AttribDict
 from obspy.core.inventory.inventory import Inventory
 import pickle
-from sacpy.utils import send_email, get_http_files, wget_http_files
+from sacpy.utils import send_email, get_http_files, wget_http_files, deprecated_run
 from h5py import File as h5_File
 from numpy import float32, int32, zeros, array
 from numpy import max as np_max
@@ -21,6 +21,9 @@ from matplotlib.colors import ListedColormap
 import numpy as np
 import matplotlib.colors as colors
 
+#####################################################################################################################
+# Using the IRIS's BREQ_FAST service to request and download seismic data
+#####################################################################################################################
 class BreqFast:
     """
     e.g.,
@@ -35,7 +38,7 @@ class BreqFast:
         >>> app.do_not_send_emails = True # set to False to send emails
         >>> app.continuous_run('cont', starttime, endtime, interval_sec=3600, stations=('IU.PAB', 'II.ALE', 'AU.MCQ'), channels=('BH?', 'SH?'), location_identifiers=('00', '10'), label_prefix='cont', request_dataless=True, request_miniseed=True )
         >>> #
-        >>> # 2。 Request records for catalog events
+        >>> # 2. Request records for catalog events
         >>> client = Client('USGS')
         >>> starttime = UTCDateTime(2021, 1, 1, 0, 0, 0)
         >>> endtime   = UTCDateTime(2021, 3, 1, 0, 0, 0)
@@ -44,7 +47,7 @@ class BreqFast:
         >>> app.do_not_send_emails = True # set to False to send emails
         >>> app.earthquake_run('cat.txt', catalog, -10, 100, stations=('IU.PAB', 'II.ALE', 'AU.WRKA'), channels=('BH?','SH?'), label='cat', location_identifiers=('00', '10'), request_dataless=True, request_miniseed=True )
         >>> #
-        >>> # 3。 Customize run
+        >>> # 3. Customize run
         >>> app.do_not_send_emails = True # set to False to send emails
         >>> time_windows = [(UTCDateTime(2000,1,1,0), UTCDateTime(2000,1,1,1)), (UTCDateTime(2002,2,3,12), UTCDateTime(2002,2,3,14)) ]
         >>> app.custom_time_run('tw.txt', time_windows, stations=('IU.PAB', 'II.ALE', 'AU.WRKA'), channels=('BH?','SH?'), label='tw', location_identifiers=('00', '10'), request_dataless=True, request_miniseed=True )
@@ -309,6 +312,10 @@ class BreqFast:
         # 4. Download the files from BREQFAST HTTP server once they are ready
         url = 'http://ds.iris.edu/pub/userdata/Sheng_Wang'
         app.breqfast_wget(url, re_template_string='^exam-.*mseed$', output_filename_prefix='junk1034343/d_', overwrite=True)
+
+#####################################################################################################################
+# This seems useless now because we no longer hanleing SAC data format.
+#####################################################################################################################
 class Waveforms(Stream):
     """
     """
@@ -784,6 +791,9 @@ class Waveforms(Stream):
                 if True: # write to h5
                     app2.to_hdf5('%s.h5' % event_folder)
 
+#####################################################################################################################
+# This seems useless now because we no longer hanleing SAC data format.
+#####################################################################################################################
 class Converter:
     sachdr_float32_keys={   'delta',     'depmin',    'depmax',    'scale',     'odelta',
                             'b',         'e',         'o',         'a',         'internal1',
@@ -897,6 +907,10 @@ class Converter:
         #####################################################################################################################
         fid.close()
 
+
+#####################################################################################################################
+# For getting adaptive colormap, and plotting spectrogram considering adaptive colormap
+#####################################################################################################################
 def _nearest_pow_2(x):
     """
     Find power of two nearest to x
@@ -917,6 +931,7 @@ def _nearest_pow_2(x):
         return a
     else:
         return b
+@deprecated_run(message='This function will be deprecated since 26/08/2024. Use `spectrogram_ax` instead.')
 def old_spectrogram_ax(axes, data, tstart, samp_rate, per_lap=0.9, wlen=None, log=False,
                 cax=None, cmap_hist_ax=None,
                 outfile=None, fmt=None, dbscale=False,
@@ -1077,6 +1092,7 @@ def old_spectrogram_ax(axes, data, tstart, samp_rate, per_lap=0.9, wlen=None, lo
     ax.set_ylabel('Frequency [Hz]')
 
     return im, (norm, bin_edges, density, (vmin, vmax))
+@deprecated_run(message='This function will be deprecated since 26/08/2024. Use `get_adaptive_cmap` instead.')
 def old_get_adaptive_colormap(cmap, norm):
     """
     #Return new `colormap` and `norm` with evenly distributed colors.
@@ -1092,6 +1108,7 @@ def old_get_adaptive_colormap(cmap, norm):
     clrs = cmap(norm(vs))
     newcmap = ListedColormap(clrs)
     return newcmap
+@deprecated_run(message='This function will be deprecated since 26/08/2024.')
 def old_get_adaptive_colormap_norm(xs, ys, mat, logx=False, logy=True, v_range=None):
     """
     Get an object of `matplotlib.colors.FuncNorm(...)` that
@@ -1478,6 +1495,9 @@ def get_adaptive_cmap(data, xs=None, ys=None,
     ####
     return newcmap, second_norm, (bin_edges, density)
 
+#####################################################################################################################
+#
+#####################################################################################################################
 def union_time_segments(segments):
     """
     Union a list of time segments.
@@ -1541,6 +1561,9 @@ def plot_time_segments(semgents, ax, y=None, **kwargs):
         v = y if type(y)!=type(None) else idx
         ax.plot((t0, t1), (v, v), **kwargs)
 
+#####################################################################################################################
+# For processing station metadata based on obspy.Inventory or obspy.Station objects
+#####################################################################################################################
 def select_inv_given_channels(inv, lst_channels_string=['Z12', 'ZNE']):
     """
     Return a new inventory to make sure each station within the inventory has all the specific channels
@@ -1595,6 +1618,48 @@ def decluster_stations(lst_stations, approximate_lo_dif=2, approximate_la_dif=2)
         idxs = sorted(idxs)
         clusters[key] = [lst_stations[idx] for idx in idxs]
     return clusters
+def sort_stations(lst_stations, preferred_client_names=None, preferred_nets='II,IU,AU', removed_duplicated_station=True):
+    """
+    Sort a list of stations given the preferred client names and networks.
+    lst_stations: a list of obspy.Station objects, and each of them should have the attributes of `client_name` and `net_code`.
+    preferred_client_names: a list of client names seperated by comma. `None` in default.
+    preferred_nets: a list of network codes seperated by comma. `II,IU,AU` in default.
+    removed_duplicated_station: a boolean, if True, then remove the duplicated station objects which have the same net and station code
+    """
+    def func(stations, prefered_single_client=None, preferred_single_net=None):
+        """
+        Return a list of indexes of stations that match the prefered_single_client and preferred_single_net.
+        """
+        preferred_idxs = list(range(len(stations)) )
+        if prefered_single_client:
+            preferred_idxs = [idx for idx in preferred_idxs if stations[idx].client_name == prefered_single_client]
+        if preferred_single_net:
+            preferred_idxs = [idx for idx in preferred_idxs if stations[idx].net_code == preferred_single_net]
+        return preferred_idxs
+    ####
+    preferred_client_names = preferred_client_names.split(',') if preferred_client_names else [None, ]
+    preferred_nets = preferred_nets.split(',') if preferred_nets else [None, ]
+    ####
+    preferred_idxs = list()
+    for single_client in preferred_client_names:
+        for single_net in preferred_nets:
+            preferred_idxs.extend( func(lst_stations, single_client, single_net) )
+    ####
+    preferred_stations = [lst_stations[idx] for idx in preferred_idxs]
+    other_stations = [it for idx, it in enumerate(lst_stations) if idx not in preferred_idxs]
+    sorted_stations = preferred_stations
+    sorted_stations.extend(other_stations)
+    ####
+    if removed_duplicated_station:
+        tmp = list()
+        net_sta_set = set()
+        for sta in sorted_stations:
+            v = sta.net_code, sta.code
+            if v not in net_sta_set:
+                net_sta_set.add(v)
+                tmp.append(sta)
+        sorted_stations = tmp
+    return sorted_stations
 
 if __name__ == '__main__':
     if True:

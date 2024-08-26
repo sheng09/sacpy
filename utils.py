@@ -117,13 +117,13 @@ class Timer:
         >>> time_summary = TimeSummary()
         >>> #
         >>> # Use the Timer to mark the time consumption
-        >>> with Timer(message='test1', color='red', summary=time_summary):
+        >>> with Timer(message='test1', summary=time_summary):
         >>>     a = 1
         >>>     b = 2
         >>>     c = a + b
         >>> #
         >>> # Use the Timer as a decorator
-        >>> @Timer(color='blue', summary=time_summary)
+        >>> @Timer(summary=time_summary)
         >>> def sub(a, b):
         >>>     return a-b
         >>> sub(1, 2)
@@ -132,7 +132,9 @@ class Timer:
         >>> time_summary.plot_rough() # Plot a rough histogram in terminal
         >>> time_summary.plot(show=False, figname='time_summary.png') # Plot time consumption summary and save it to a file
     """
-    def __init__(self, message=None, color='red', verbose=True, file=sys.stdout, summary=None):
+    color_index = 0
+    colors = ['C0', 'C1', 'C2', 'C3', 'C4', 'C5', 'C6']
+    def __init__(self, message=None, color=None, verbose=True, file=sys.stdout, summary=None):
         """
         message:
         color:
@@ -140,6 +142,9 @@ class Timer:
         file:
         summary: an object of OrderedDict
         """
+        if color == None:
+            color = Timer.colors[Timer.color_index]
+            Timer.color_index = (Timer.color_index+1) % len(Timer.colors)
         self.message = message
         self.color = color
         self.verbose = verbose
@@ -411,7 +416,7 @@ def get_filename_from_url_content_disposition(url):
     return fname
 
 if __name__ == '__main__':
-    if True:
+    if False:
         from obspy.taup import TauPyModel
         import numpy as np
         @CacheRun('junkjunkjunk.h5', clear=True)
@@ -458,14 +463,24 @@ if __name__ == '__main__':
     if False:
         content = 'Test content %d' % randint(0, 99999999)
         subject = 'Test Subject %d' % randint(0, 99999999)
-    if False:
+    if True:
         time_summary = TimeSummary()
-        with Timer(message='test1', color='red', summary=time_summary):
+        with Timer(message='part1', summary=time_summary):
             a = 1
             b = 2
             c = a + b
 
-        @Timer(color='blue', summary=time_summary)
+        with Timer(message='part2', summary=time_summary):
+            a = 1
+            b = 2
+            c = a + b
+
+        with Timer(message='part3', summary=time_summary):
+            a = 1
+            b = 2
+            c = a + b
+
+        @Timer(summary=time_summary)
         def sub(a, b):
             return a-b
         sub(1, 2)
