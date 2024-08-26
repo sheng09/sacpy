@@ -20,6 +20,7 @@ import matplotlib.pyplot as plt
 from matplotlib.colors import ListedColormap
 import numpy as np
 import matplotlib.colors as colors
+import warnings
 
 #####################################################################################################################
 # Using the IRIS's BREQ_FAST service to request and download seismic data
@@ -1496,7 +1497,7 @@ def get_adaptive_cmap(data, xs=None, ys=None,
     return newcmap, second_norm, (bin_edges, density)
 
 #####################################################################################################################
-#
+# Historial methods for processing time windows/segments
 #####################################################################################################################
 def union_time_segments(segments):
     """
@@ -1561,6 +1562,153 @@ def plot_time_segments(semgents, ax, y=None, **kwargs):
         v = y if type(y)!=type(None) else idx
         ax.plot((t0, t1), (v, v), **kwargs)
 
+#####################################################################################################################
+# Newer Processing time windows
+#####################################################################################################################
+class TimeWindow:
+    """
+    """
+    __time_zero = UTCDateTime("1970-01-01T00:00:00")
+    def __init__(self, starttime, endtime):
+        """
+        starttime, endtime: the start and end time of the time window. In objects of `obspy.UTCDateTime`.
+        """
+        if starttime >= endtime:
+            #warnings.warn('An empty time window is created due to invalid: %s---%s' % (str(starttime), str(endtime)) )
+            self.starttime = TimeWindow.__time_zero
+            self.endtime   = TimeWindow.__time_zero
+            return
+        self.starttime = starttime
+        self.endtime = endtime
+    def duration(self):
+        return self.endtime - self.starttime # in seconds
+    def intersect(self, another_time_window):
+        """
+        Return the intersection of the current time window and another time window.
+        """
+        t0, t1 = self.starttime, self.endtime
+        t2, t3 = another_time_window.starttime, another_time_window.endtime
+        #                t0------------t1
+        #      t2----t3                                   x
+        #      t2----------======t3                       t0-t3
+        #      t2----------============-------t3          t0-t1
+        #                   t2===t3                       t2-t3
+        #                   t2=========-------t3          t2-t1
+        #                                t2---t3          x
+        t0 = max(t0, t2)
+        t1 = min(t1, t3)
+        if t0 >= t1:
+            t0 = TimeWindow.__time_zero
+            t1 = TimeWindow.__time_zero
+        return TimeWindow(t0, t1)
+    def union(self, another_time_window):
+        """
+        Return the union of the current time window and another time window if them intersect!
+        #
+        Empty time window does not intersect with any other time windows.
+        """
+        t0, t1 = self.starttime, self.endtime
+        t2, t3 = another_time_window.starttime, another_time_window.endtime
+        #                t0------------t1
+        #      t2----t3                                   x
+        #      t2================t3====                   t0-t3
+        #      t2=============================t3          t0-t1
+        #                  ==t2===t3                      t2-t3
+        #                  ==t2===============t3          t2-t1
+        #                                t2---t3          x
+        if t3<t0 or t1<t2:
+            return TimeWindow( TimeWindow.__time_zero, TimeWindow.__time_zero )
+        return TimeWindow( min(t0, t2), max(t1, t3) )
+    def plot(self, ax, y=0, **kwargs):
+        """
+        Plot the time window on the ax.
+        """
+        ax.plot( (self.starttime.datetime, self.endtime.datetime), (y, y), **kwargs)
+    def __eq__(self, other):
+        if isinstance(other, TimeWindow):
+            return (self.starttime == other.starttime) and (self.endtime == other.endtime)
+        raise ValueError('Invalid comparison between a TimeWindow and %s' % str(type(other)) )
+    def __ne__(self, other):
+        return not self.__eq__(other)
+    def __lt__(self, other):
+        if isinstance(other, TimeWindow):
+            return (self.starttime, self.endtime) < (other.starttime, other.endtime)
+        raise ValueError('Invalid comparison between a TimeWindow and %s' % str(type(other)) )
+    def __le__(self, other):
+        if isinstance(other, TimeWindow):
+            return (self.starttime, self.endtime) <= (other.starttime, other.endtime)
+        raise ValueError('Invalid comparison between a TimeWindow and %s' % str(type(other)) )
+    def __gt__(self, other):
+        if isinstance(other, TimeWindow):
+            return (self.starttime, self.endtime) > (other.starttime, other.endtime)
+        raise ValueError('Invalid comparison between a TimeWindow and %s' % str(type(other)) )
+    def __ge__(self, other):
+        if isinstance(other, TimeWindow):
+            return (self.starttime, self.endtime) >= (other.starttime, other.endtime)
+        raise ValueError('Invalid comparison between a TimeWindow and %s' % str(type(other)) )
+    def __add__(self, seconds):
+        return TimeWindow(self.starttime+seconds, self.endtime+seconds)
+    def __sub__(self, seconds):
+        return TimeWindow(self.starttime-seconds, self.endtime-seconds)
+    def __iadd__(self, seconds):
+        self.starttime += seconds
+        self.endtime   += seconds
+        return self
+    def __isub__(self, seconds):
+        self.starttime -= seconds
+        self.endtime   -= seconds
+        return self
+    def __str__(self) -> str:
+        return '%s---%s' % (str(self.starttime), str(self.endtime) )
+    def __repr__(self) -> str:
+        return self.__str__()
+class TimeWindows(list):
+    """
+    A list of TimeWindow objects.
+    """
+    def __init__(self, time_windows=None):
+        """
+        This init function takes care of sorting and merging if any time windows overlap.
+        """
+        self.clear()
+        if time_windows:
+            time_windows = [(it.starttime, it.endtime) for it in time_windows]
+            time_windows = sorted(time_windows)
+            fixed = [time_windows[0]]
+            for (t2, t3) in time_windows[1:]:
+                t0, t1 = fixed[-1]
+                #   t0--------------t1
+                #   t2---------t3                    t0 = t2 < t3 < t1   x
+                #       t2-----t3                    t0 < t2 < t3 < t1   x
+                #   t2--------------t3               t0 = t2 < t1 = t3   x
+                #       t2----------t3               t0 < t2 < t3 = t1   x
+                #   t2-----------------------t3      t0 = t2 < t1 < t3   merge  --> (t0, t3)
+                #       t2-------------------t3      t0 < t2 < t1 < t3   merge  --> (t0, t3)
+                #                   t2-------t3      t0 < t2 = t1 < t3   merge  --> (t0, t3)
+                #                        t2--t3      t0 < t1 < t2 < t3   append --> (t0, t1), (t2, t3)
+                if t0 < t1 < t2 < t3:
+                    fixed.append( (t2, t3) )
+                elif t0 <= t2 <= t1 < t3:
+                    fixed[-1] = (t0, t3)
+            self.extend( [TimeWindow(t0, t1) for (t0, t1) in fixed] )
+    def __str__(self):
+        return ', '.join( [str(it) for it in self] )
+    def intersect(self, other_wnds):
+        """
+        Return a list of time windows are the intersection of two list of time windows.
+        That means the returned time windows are the time windows that are common in both ws1 and ws2.
+        """
+        result = list()
+        for w1 in self:
+            result.extend( [w1.intersect(w2) for w2 in other_wnds] )
+        result = [it for it in result if it.duration()>0 ]
+        return TimeWindows(result) # this will take care of sorting and merging if necessary
+    def plot(self, ax, y=0, **kwargs):
+        """
+        Plot the time windows on the ax.
+        """
+        for idx, wnd in enumerate(self):
+            wnd.plot(ax, y=y, **kwargs)
 #####################################################################################################################
 # For processing station metadata based on obspy.Inventory or obspy.Station objects
 #####################################################################################################################
@@ -1663,6 +1811,33 @@ def sort_stations(lst_stations, preferred_client_names=None, preferred_nets='II,
 
 if __name__ == '__main__':
     if True:
+        wnd1 = TimeWindow(UTCDateTime("2021-01-01T00:00:00"), UTCDateTime("2021-01-01T01:00:00") )
+        print(wnd1)
+        wnd1 += 100
+        print(wnd1)
+        wnd1 -= 100
+        print(wnd1)
+        wnd2 = wnd1 + 3600
+        wnd3 = wnd1 - 3600
+        print(wnd1)
+        print(wnd2)
+        print(wnd3)
+        print(wnd1 <= wnd1 )
+        print(wnd1 <= wnd2 )
+        print(wnd1 <= wnd3 )
+        ###
+        wnds1 = TimeWindows([wnd1, wnd2, wnd2+5000])
+        wnds2 = TimeWindows([wnd3, wnd2, wnd2+6000] ) #, wnd3+7200])
+        wnds3 = wnds1.intersect(wnds2)
+        print(wnds1)
+        print(wnds2)
+        print(wnds3)
+        ax = plt.subplot(111)
+        wnds1.plot(ax, y=0, color='r', linewidth=15, alpha=0.6)
+        wnds2.plot(ax, y=1, color='b', linewidth=15, alpha=0.6)
+        wnds3.plot(ax, y=2, color='g', linewidth=15, alpha=0.6)
+        plt.show()
+    if False:
         BreqFast.test_run()
     if False:
         starttime, endtime = UTCDateTime(2021, 8, 20, 0, 0, 0), UTCDateTime(2021, 8, 22, 0, 0, 0)
