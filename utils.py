@@ -18,7 +18,25 @@ import requests
 import re
 import wget
 
+def deprecated_run(message='will be deprecated soon!'):
+    def decorator(func):
+        def wrapper(*args, **kwargs):
+            # Do something with arg1 and arg2 before calling the function
+            print('%s() %s' % (func.__name__, message ))
+            # Call the original function
+            result = func(*args, **kwargs)
+            # Do something with the result or after calling the function
+            return result
+        return wrapper
+    return decorator
+
 class TimeSummary(OrderedDict):
+    """
+    This is used for as an argument for `Timer`, which is for
+    summarizing the time consumption of selected operations.
+    Also, it contains methods for plotting the time consumption.
+    Check the Timer for usage.
+    """
     def __init__(self):
         pass
     def id(self):
@@ -60,7 +78,7 @@ class TimeSummary(OrderedDict):
         total_t = np.sum(ts)
         percentages = ts/total_t*100.0
         ys = percentages if plot_percentage else ts
-        locs = np.arange(ts.size, dtype=np.int)
+        locs = np.arange(ts.size, dtype=np.int64)
         if plot_percentage:
             texts = ['%.1ems\n%.2f%%' % (t, perc) for t, perc in zip(ts, percentages)]
         else:
@@ -70,7 +88,7 @@ class TimeSummary(OrderedDict):
             ax.text(y*1.01, loc, text, horizontalalignment='left', verticalalignment='center' )
         ax.set_yticks(locs)
         ax.set_yticklabels(labels)
-        ax.set_xlim((0, ys.max()*1.25 ))
+        #ax.set_xlim((0, ys.max()*1.25 ))
         ax.set_xlabel('Time Consumption (ms)')
         ax.set_title('Time Consumption Summary')
 
@@ -91,6 +109,29 @@ class TimeSummary(OrderedDict):
         result += """#################################################################"""
         return result
 class Timer:
+    """
+    This is for marking the time consumption of selected operations.
+    #
+    Example:
+        >>> # Initialize a TimeSummary object
+        >>> time_summary = TimeSummary()
+        >>> #
+        >>> # Use the Timer to mark the time consumption
+        >>> with Timer(message='test1', color='red', summary=time_summary):
+        >>>     a = 1
+        >>>     b = 2
+        >>>     c = a + b
+        >>> #
+        >>> # Use the Timer as a decorator
+        >>> @Timer(color='blue', summary=time_summary)
+        >>> def sub(a, b):
+        >>>     return a-b
+        >>> sub(1, 2)
+        >>> #
+        >>> print(time_summary) # Print the summary
+        >>> time_summary.plot_rough() # Plot a rough histogram in terminal
+        >>> time_summary.plot(show=False, figname='time_summary.png') # Plot time consumption summary and save it to a file
+    """
     def __init__(self, message=None, color='red', verbose=True, file=sys.stdout, summary=None):
         """
         message:
@@ -115,7 +156,7 @@ class Timer:
         if self.verbose:
             line = '%s: %f ms' % (self.message, t_ms)
             print(line, file=self.file)
-        if self.summary:
+        if self.summary != None:
             try:
                 self.summary.push(message=self.message, time_ms=t_ms, color=self.color)
             except Exception as err:
@@ -134,6 +175,59 @@ class Timer:
 
 class CacheRun:
     """
+    This is used for caching runtime data in order to accelerating multiple calls.
+    For example, if calling a functions requires a heavy computation of a dataset and the dataset
+    can be used for next calling of a function, then we can cache the dataset in the first calling
+    and use the cached dataset in the next calling. This will avoid multiple heavy computations of
+    the same dataset.
+    In seismology, a example could be the computations of travel-time curves for seismic phases, which
+    can be cached for the next calling of the same phase.
+    #
+    Example:
+        >>> from obspy.taup import TauPyModel
+        >>> import numpy as np
+        >>> #
+        >>> # Define a function that will be cached
+        >>> @CacheRun('local_travel_times.h5', clear=True)
+        >>> def get_travel_time_curves(model_name, phase_name, evdp_km):
+        >>>     # the `get_travel_time_curves(...)` after decoration will have two additional methods:
+        >>>     #     `get_travel_time_curves.load_from_cache(key_name)`
+        >>>     #     and
+        >>>     #     `get_travel_time_curves.dump_to_cache(key_name, data_dict, attrs_dict)`
+        >>>     #
+        >>>     # We first try to load the data from cache. It will return None if the data is not in cache.
+        >>>     key_name = '%s_%s_%d' % (model_name, phase_name, int(evdp_km*1000) )
+        >>>     tmp = get_travel_time_curves.load_from_cache(key_name)
+        >>>     if tmp != None:
+        >>>         xs = tmp['xs']
+        >>>         ts = tmp['ts']
+        >>>         ps = tmp['ps']
+        >>>         return xs, ts, ps
+        >>>     else: # Else, we compute the data and cache it.
+        >>>         mod = TauPyModel(model_name)
+        >>>         distances = np.arange(0, 180, 2)
+        >>>         xs, ts, ps = [], [], []
+        >>>         for x in distances:
+        >>>             arrs = mod.get_travel_times(source_depth_in_km=evdp_km, distance_in_degree=x, phase_list=[phase_name] )
+        >>>             xs.extend( [x for it in arrs] )
+        >>>             ts.extend( [it.time for it in arrs] )
+        >>>             ps.extend( [it.ray_param for it in arrs] )
+        >>>         xs = np.array(xs)
+        >>>         ts = np.array(ts)
+        >>>         ps = np.array(ps)
+        >>>         idxs = np.argsort(ps)
+        >>>         xs = xs[idxs]
+        >>>         ts = ts[idxs]
+        >>>         ps = ps[idxs]
+        >>>         # Cache the data, with a unique key_name and the data_dict and attrs_dict(optional, in default is None).
+        >>>         get_travel_time_curves.dump_to_cache(key_name, data_dict={'xs': xs, 'ts': ts, 'ps': ps}, attrs_dict=None )
+        >>> #
+        >>> # Test the time function for the first and second calling.
+        >>> with Timer(message='1st run', verbose=True, summary=None):
+        >>>     get_travel_time_curves('ak135', 'P', 100)
+        >>> with Timer(message='2nd run', verbose=True, summary=None):
+        >>>     get_travel_time_curves('ak135', 'P', 100)
+    #
     Please note. This CacheRun as a decorator with be constructed for once no matter how
     many times the function that is decoratored will be called.
     """
@@ -318,6 +412,45 @@ def get_filename_from_url_content_disposition(url):
 
 if __name__ == '__main__':
     if True:
+        from obspy.taup import TauPyModel
+        import numpy as np
+        @CacheRun('junkjunkjunk.h5', clear=True)
+        def get_travel_time_curves(model_name, phase_name, evdp_km):
+            key_name = '%s_%s_%d' % (model_name, phase_name, int(evdp_km*1000) )
+            tmp = get_travel_time_curves.load_from_cache(key_name)
+            if tmp != None:
+                xs = tmp['xs']
+                ts = tmp['ts']
+                ps = tmp['ps']
+                return xs, ts, ps
+            else:
+                mod = TauPyModel(model_name)
+                distances = np.arange(0, 180, 0.5)
+                xs, ts, ps = [], [], []
+                for x in distances:
+                    arrs = mod.get_travel_times(source_depth_in_km=evdp_km, distance_in_degree=x, phase_list=[phase_name] )
+                    xs.extend( [x for it in arrs] )
+                    ts.extend( [it.time for it in arrs] )
+                    ps.extend( [it.ray_param for it in arrs] )
+                xs = np.array(xs)
+                ts = np.array(ts)
+                ps = np.array(ps)
+                idxs = np.argsort(ps)
+                xs = xs[idxs]
+                ts = ts[idxs]
+                ps = ps[idxs]
+                get_travel_time_curves.dump_to_cache(key_name, {'xs': xs, 'ts': ts, 'ps': ps})
+        with Timer(message='1st run', verbose=True, summary=None):
+            get_travel_time_curves('ak135', 'P', 100)
+        with Timer(message='2nd run', verbose=True, summary=None):
+            get_travel_time_curves('ak135', 'P', 100)
+    if False:
+        @deprecated_run(message='This will be deprecated soon since ??????!')
+        def somefunc(a, b):
+            return a+b
+        c = somefunc(1, 3)
+        print(c)
+    if False:
         urls = get_http_files('http://ds.iris.edu/pub/userdata/Sheng_Wang/', '^exam-.*')
         for it in urls:
             print(it)
@@ -327,7 +460,7 @@ if __name__ == '__main__':
         subject = 'Test Subject %d' % randint(0, 99999999)
     if False:
         time_summary = TimeSummary()
-        with Timer(message='test1', color='red', summary=None):
+        with Timer(message='test1', color='red', summary=time_summary):
             a = 1
             b = 2
             c = a + b
@@ -339,7 +472,7 @@ if __name__ == '__main__':
 
         print(time_summary)
         time_summary.plot_rough()
-        time_summary.plot(show=True)
+        time_summary.plot(show=False, figname='time_summary.png')
     if False:
         with CacheRun('junk.h5', clear=True) as cache:
             print( cache.load_from_cache('key1') )
