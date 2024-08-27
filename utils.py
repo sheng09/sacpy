@@ -17,6 +17,7 @@ from bs4 import BeautifulSoup
 import requests
 import re
 import wget
+import rangeparser, types
 
 def deprecated_run(message='will be deprecated soon!'):
     def decorator(func):
@@ -308,6 +309,54 @@ class CacheRun:
         def __wrapper(*args, **kwargs):
             return func(*args, **kwargs)
         return __wrapper
+
+class Logger:
+    """
+    Logger that supports MPI.
+    """
+    prompt_dict = {-1: '>>> ', 0: '',
+                   1: ' '*4,   2: ' '*8,   3: ' '*12,  4: ' '*16,
+                   5: ' '*20,  6: ' '*24,  7: ' '*28,  8: ' '*32,
+                   9: ' '*36, 10: ' '*40, 11: ' '*44, 12: ' '*48, }
+    def __init__(self, log_dir='./', mpi_comm=None, rank_only='all'):
+        """
+        log_dir: where to save the log files.
+        mpi_comm: MPI communicator when MPI is used (default: None)
+        rank_only: which rank to print the log. Only useful when `mpi_comm` is not None.
+                   `None` to a print at all ranks.
+                   `0,1,2,5,7` to print at specific ranks
+
+        """
+        self.log_fid       = types.new_class("DummyObject", (), {})
+        self.log_fid.close = lambda *args, **kwargs: None
+        self.log_print     = lambda *args, **kwargs: None
+        get_log_fnm = lambda direc, rank: '%s/log_%04d.txt' % (direc,rank)
+        if mpi_comm:
+            if mpi_comm.Get_rank() == 0:
+                if not os.path.exists(log_dir):
+                    os.makedirs(log_dir)
+            mpi_comm.Barrier()
+            ####
+            if rank_only == 'all':
+                self.log_fid   = open(get_log_fnm(log_dir, mpi_comm.Get_rank() ), 'w')
+                self.log_print = print
+            else:
+                p = rangeparser.RangeParser()
+                ranks = set( list( p.parse(rank_only) ) )
+                if mpi_comm.Get_rank() in ranks:
+                    self.log_fid = open(get_log_fnm(log_dir, mpi_comm.Get_rank() ), 'w')
+                    self.log_print = print
+        else:
+            if not os.path.exists(log_dir):
+                os.makedirs(log_dir)
+            self.log_fid = open(get_log_fnm(log_dir, 0), 'w')
+            self.log_print = print
+    def __call__(self, level=0, *args, **kwargs):
+        prompt = Logger.prompt_dict[level] if level in Logger.prompt_dict else ''
+        self.log_print(prompt, end='', file=self.log_fid, flush=False)
+        self.log_print(*args, **kwargs, file=self.log_fid)
+    def close(self):
+        self.log_fid.close()
 
 def get_folder(filename, makedir=True, mpi_comm=None):
     """
