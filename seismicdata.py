@@ -22,6 +22,7 @@ from matplotlib.colors import ListedColormap
 import numpy as np
 import matplotlib.colors as colors
 import warnings, traceback, sys
+import os, os.path
 
 #####################################################################################################################
 # Using the IRIS's BREQ_FAST service to request and download seismic data
@@ -2134,6 +2135,60 @@ def event_mseed2h5(input, h5_fnm, inventory,
 #####################################################################################################################
 # For processing station metadata based on obspy.Inventory or obspy.Station objects
 #####################################################################################################################
+def download_obspy_inventory(pkl_fnm, starttime, endtime, client_nms=None,
+                             network="*", station="*", channel="BH?,HH?", level='channel',
+                             log_fnm='log.txt', **kwargs):
+    """
+    Download all available inventory from all FDSN clients that come with ObsPy
+    Will return an object
+    client_name -> year-> inventory
+    #
+    clients: a list of client names seperated by comma. `None` in default to download from all clients.
+    """
+    if os.path.exists(pkl_fnm):
+        raise ValueError('The file exists! %s' % pkl_fnm)
+    ######################################################################
+    if client_nms:
+        client_nms = client_nms.split(',')
+    else:
+        from obspy.clients.fdsn.header import URL_MAPPINGS
+        client_nms = sorted( URL_MAPPINGS.keys() )
+    ######################################################################
+    # we download year by year because of the download limitation of the server
+    starttime = UTCDateTime(starttime)
+    endtime   = UTCDateTime(endtime)
+    y0 = starttime.year + 1
+    y1 = endtime.year + 1
+    ts = [starttime]
+    ts.extend( [UTCDateTime(y, 1, 1) for y in range(y0, y1, 1) ] )
+    ts.append( endtime )
+    ######################################################################
+    vol_dict = dict()
+    log_fid = open(log_fnm, 'w')
+    y0 = UTCDateTime(starttime).year
+    y1 = UTCDateTime(endtime).year + 1
+    for client_name in client_nms:
+        try:
+            client = Client(client_name)
+            vol_dict[client_name] = dict()
+            for t0, t1 in zip(ts[:-1], ts[1:]):
+                time_range_str = '%s---%s' % (str(t0), str(t1) )
+                try:
+                    inventory = client.get_stations(starttime=t0, endtime=t1,
+                                                    network=network, station=station, channel=channel, level=level, **kwargs)
+                    vol_dict[client_name][t0.year] = inventory
+                    print('Succeed', client_name, time_range_str, len(inventory), file=log_fid, flush=True)
+                except Exception as e:
+                    print('Failed', client_name, time_range_str, file=log_fid, flush=True)
+            if len(vol_dict[client_name]) == 0:
+                print('Nothing obtained', client_name, time_range_str, file=log_fid, flush=True)
+                vol_dict.pop(client_name)
+        except Exception as e:
+            print('Failed', client_name, file=log_fid, flush=True)
+    ######################################################################
+    with open(pkl_fnm, 'wb') as f:
+        pickle.dump(vol_dict, f)
+    log_fid.close()
 def select_inv_given_channels(inv, lst_channels_string=['Z12', 'ZNE']):
     """
     Return a new inventory to make sure each station within the inventory has all the specific channels
@@ -2232,7 +2287,14 @@ def sort_stations(lst_stations, preferred_client_names=None, preferred_nets='II,
     return sorted_stations
 
 if __name__ == '__main__':
-    if True:
+    if False:
+        download_obspy_inventory('junk1.pkl', starttime='2000-01-01', endtime='2004-01-01',
+                             network="*", station="A*", channel="LH?,BH?,HH?", level='station',
+                             log_fnm='log1.txt')
+        download_obspy_inventory('junk2.pkl', starttime='2000-01-01', endtime='2004-01-01',
+                             network="*", station="A*", channel="LH?,BH?,HH?", level='channel',
+                             log_fnm='log2.txt')
+    if False:
         wnd1 = TimeWindow(UTCDateTime("2021-01-01T00:00:00"), UTCDateTime("2021-01-01T01:00:00") )
         t0, t1 = wnd1
         print(t0, t1)
