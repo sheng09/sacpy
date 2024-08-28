@@ -89,7 +89,7 @@ def get_ccs(tau_model1_corrected, tau_model2_corrected, phase1_name, phase2_name
     trvt2 = [it.time for it in arrs2]
     # Step 2 Denser arrivals ###################################################
     while True:
-        with Timer(message='denser arrvials in get_interrcv_ccs(...)', color='red', verbose=__global_verbose ):
+        with Timer(tag='denser arrvials in get_interrcv_ccs(...)', color='red', verbose=__global_verbose ):
             if max_interation:
                 max_interation = max_interation-1
                 if max_interation < 0:
@@ -268,8 +268,8 @@ def get_all_interrcv_ccs(cc_feature_names=None, evdp_km=25.0, model_name='ak135'
     results = list()
     n = len(local_cc_feature_names)
     for idx, feature_name in enumerate(local_cc_feature_names):
-        message = '[%d/%d]%s' % (idx+1, n, feature_name)
-        with Timer(message=message, verbose=verbose, file=log):
+        tag = '[%d/%d]%s' % (idx+1, n, feature_name)
+        with Timer(tag=tag, verbose=verbose, file=log):
             ak = None
             if '*' in feature_name:
                 phase = feature_name[:-1]
@@ -341,7 +341,7 @@ def get_arrivals(tau_model_corrected, phase_name, rcvdp_km, ray_param_range=None
     rps = [min_ray_param, max_ray_param]
     # Step 2 Denser arrivals ###################################################
     while True:
-        with Timer(message='denser arrivals in get_arrivals(...)', color='red', verbose=__global_verbose ):
+        with Timer(tag='denser arrivals in get_arrivals(...)', color='red', verbose=__global_verbose ):
             if max_interation:
                 max_interation = max_interation-1
                 if max_interation < 0:
@@ -425,29 +425,29 @@ def valid_seismic_phases(phase_names):
 if __name__ == "__main__":
     __global_verbose= False
     if False:
-        with Timer(message='main', verbose=__global_verbose):
+        with Timer(tag='main', verbose=__global_verbose):
             evdp_km = 50
             r1dp_km, r2dp_km = 0.1, 0.2
             ph1, ph2 = 'PKIKPPKIKP', 'PKJKP'
-            with Timer(message='correct model', verbose=__global_verbose):
+            with Timer(tag='correct model', verbose=__global_verbose):
                 mod = taup.TauPyModel('ak135').model
                 modc1 = get_corrected_model(mod, evdp_km, r1dp_km)
                 modc2 = get_corrected_model(mod, evdp_km, r2dp_km)
-            with Timer(message='test1 get_ccs(...)', verbose=__global_verbose):
+            with Timer(tag='test1 get_ccs(...)', verbose=__global_verbose):
                 rps, cc_time, cc_purist_distance, cc_distance = get_ccs(modc1, modc2, ph1, ph2, r1dp_km, r2dp_km, 1.0, None)
-            with Timer(message='test2 get_ccs(...)', verbose=__global_verbose):
+            with Timer(tag='test2 get_ccs(...)', verbose=__global_verbose):
                 rps, cc_time, cc_purist_distance, cc_distance = get_ccs(modc1, modc2, ph1, ph2, r1dp_km, r2dp_km, 1.0, None)
             plt.plot(cc_distance, cc_time)
             plt.show()
     if False:
-        with Timer(message='main', verbose=__global_verbose):
+        with Timer(tag='main', verbose=__global_verbose):
             ph1 = 'P'
-            with Timer(message='test1 get_arrivals(...)', verbose=__global_verbose):
+            with Timer(tag='test1 get_arrivals(...)', verbose=__global_verbose):
                 ray_params, trvts, purist_distances, distances = get_arrivals(modc1, ph1, r1dp_km, None, 0.3, None)
                 print(sum(distances))
                 distances += 10
                 print(sum(distances))
-            with Timer(message='test2 get_arrivals(...)', verbose=__global_verbose):
+            with Timer(tag='test2 get_arrivals(...)', verbose=__global_verbose):
                 ray_params, trvts, purist_distances, distances = get_arrivals(modc1, ph1, r1dp_km, None, 0.3, max_interation=None)
                 print(sum(distances))
             #plt.plot(distances, trvts)
@@ -456,20 +456,20 @@ if __name__ == "__main__":
                 cache.dump_to_cache('test', {'a':[1,2,3,4]}, {'who': 'sw'})
                 pass
     if False:
-        with Timer(message='main', verbose=__global_verbose):
+        with Timer(tag='main', verbose=__global_verbose):
             evdp_km = 50
             r1dp_km, r2dp_km = 0.1, 0.2
             ph1, ph2 = 'PcS', 'PcP'
-            with Timer(message='correct model', verbose=__global_verbose):
+            with Timer(tag='correct model', verbose=__global_verbose):
                 mod = taup.TauPyModel('ak135').model
                 modc1 = get_corrected_model(mod, evdp_km, r1dp_km)
                 modc2 = get_corrected_model(mod, evdp_km, r2dp_km)
-            with Timer(message='test1 get_ccs(...)', verbose=__global_verbose):
+            with Timer(tag='test1 get_ccs(...)', verbose=__global_verbose):
                 rps, cc_time, trv1, trv2, cc_purist_distance, cc_distance, purist_distance1, purist_distance2 = get_ccs(modc1, modc2, ph1, ph2, r1dp_km, r2dp_km, 1.0, None)
-            with Timer(message='test2 get_ccs(...)', verbose=__global_verbose):
+            with Timer(tag='test2 get_ccs(...)', verbose=__global_verbose):
                 rps, cc_time, trv1, trv2, cc_purist_distance, cc_distance, purist_distance1, purist_distance2 = get_ccs(modc1, modc2, ph1, ph2, r1dp_km, r2dp_km, 1.0, None)
             plt.plot(cc_distance, cc_time)
-            with Timer(message='test1 get_ccs_from_cc_dist', verbose=__global_verbose):
+            with Timer(tag='test1 get_ccs_from_cc_dist', verbose=__global_verbose):
                 cc_distances = arange(5)
                 rps, cc_time, trv1, trv2, cc_purist_distance, cc_distance, purist_distance1, purist_distance2 = get_ccs_from_cc_dist(cc_distances, modc1, modc2, ph1, ph2, r1dp_km, r2dp_km, 0.01, 50)
 

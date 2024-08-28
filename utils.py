@@ -38,17 +38,26 @@ class TimeSummary(OrderedDict):
     Also, it contains methods for plotting the time consumption.
     Check the Timer for usage.
     """
-    def __init__(self):
+    def __init__(self, accumulative=False):
+        """
+        accumulative: True or False. If True, the time consumption from the same tag will be summed together.
+        """
+        self.accumulative = accumulative
         pass
     def id(self):
         return len(self)+1
-    def push(self, message=None, time_ms=0.0, color='#999999'):
+    def push(self, tag=None, time_ms=0.0, color='#999999'):
         """
-        message: a string
+        tag: a string
         time_ms: time consumption in miliseconds
         color:   string of color hex value. (default '#999999')
         """
-        self[self.id()] = { 'message': message, 'color': color, 'time_ms': time_ms}
+        if self.accumulative:
+            if tag not in self:
+                self[tag] = { 'tag': tag, 'color': color, 'time_ms': 0.0}
+            self[tag]['time_ms'] += time_ms
+        else:
+            self[ self.id() ] = { 'tag': tag, 'color': color, 'time_ms': time_ms}
     def plot_rough(self, file=sys.stdout):
         """
         Plot a rough histogram of time consumptions using pure text printing.
@@ -60,9 +69,9 @@ class TimeSummary(OrderedDict):
             total_t = total_t + vol['time_ms']
         plot_lines = ['\n%-10s :%-10.2f\n' % ('Total(ms)', total_t), ]
         for id, vol in self.items():
-            t_percentage = vol['time_ms']/total_t * 100.0
+            t_percentage = vol['time_ms']/total_t * 100.0 if total_t>0.0 else 0.0
             t_bin = '*'*int(t_percentage/5)
-            line = '%-10s :%-10.2f %5.2f%%|%-25s \n' % (vol['message'][:10], vol['time_ms'], t_percentage, t_bin)
+            line = '%-10s :%-10.2f %5.2f%%|%-25s \n' % (vol['tag'][:10], vol['time_ms'], t_percentage, t_bin)
             plot_lines.append(line)
         histogram = ''.join(plot_lines)
         print( histogram, file=file )
@@ -73,7 +82,7 @@ class TimeSummary(OrderedDict):
             fig, (ax, ax2) = plt.subplots(1, 2, figsize=(12, 8) )
         else:
             fig, ax = plt.subplots(1, 1, figsize=(6, 8) )
-        labels = [vol['message'] for id, vol in self.items()]
+        labels = [vol['tag'] for id, vol in self.items()]
         ts = np.array( [vol['time_ms'] for id, vol in self.items()] )
         colors = np.array( [vol['color'] for id, vol in self.items()] )
         total_t = np.sum(ts)
@@ -104,7 +113,7 @@ class TimeSummary(OrderedDict):
     def __str__(self):
         result  = """################ Marked Time Consumption Summary ################\n"""
         for id, vol in self.items():
-            tmp1 = '#%04d call\n' % (id)
+            tmp1 = '#%s\n' % (id)
             tmp2 = ''.join( ['#    %-7s: %s\n' % (key, value) for key, value in vol.items()] )
             result += '%s%s' % (tmp1, tmp2)
         result += """#################################################################"""
@@ -118,7 +127,7 @@ class Timer:
         >>> time_summary = TimeSummary()
         >>> #
         >>> # Use the Timer to mark the time consumption
-        >>> with Timer(message='test1', summary=time_summary):
+        >>> with Timer(tag='test1', summary=time_summary):
         >>>     a = 1
         >>>     b = 2
         >>>     c = a + b
@@ -135,9 +144,9 @@ class Timer:
     """
     color_index = 0
     colors = ['C0', 'C1', 'C2', 'C3', 'C4', 'C5', 'C6']
-    def __init__(self, message=None, color=None, verbose=True, file=sys.stdout, summary=None):
+    def __init__(self, tag=None, color=None, verbose=True, file=sys.stdout, summary=None):
         """
-        message:
+        tag:
         color:
         verbose:
         file:
@@ -146,7 +155,7 @@ class Timer:
         if color == None:
             color = Timer.colors[Timer.color_index]
             Timer.color_index = (Timer.color_index+1) % len(Timer.colors)
-        self.message = message
+        self.tag = tag
         self.color = color
         self.verbose = verbose
         self.file = file
@@ -160,17 +169,17 @@ class Timer:
     def __do_exit(self):
         t_ms = (compute_time()-self.starttime)*1000.0
         if self.verbose:
-            line = '%s: %f ms' % (self.message, t_ms)
+            line = '%s: %f ms' % (self.tag, t_ms)
             print(line, file=self.file)
         if self.summary != None:
             try:
-                self.summary.push(message=self.message, time_ms=t_ms, color=self.color)
+                self.summary.push(tag=self.tag, time_ms=t_ms, color=self.color)
             except Exception as err:
                 print('Err: Timer(...summary=...). The `summary` must be an object of `TimeSummary`', self.summary, file=sys.stderr)
                 raise
     def __call__(self, func):
-        if not self.message:
-            self.message = 'call %s(...)' % func.__name__
+        if not self.tag:
+            self.tag = 'call %s(...)' % func.__name__
         @wraps(func)
         def __wrapper(*args, **kwargs):
             self.__do_enter()
@@ -229,9 +238,9 @@ class CacheRun:
         >>>         get_travel_time_curves.dump_to_cache(key_name, data_dict={'xs': xs, 'ts': ts, 'ps': ps}, attrs_dict=None )
         >>> #
         >>> # Test the time function for the first and second calling.
-        >>> with Timer(message='1st run', verbose=True, summary=None):
+        >>> with Timer(tag='1st run', verbose=True, summary=None):
         >>>     get_travel_time_curves('ak135', 'P', 100)
-        >>> with Timer(message='2nd run', verbose=True, summary=None):
+        >>> with Timer(tag='2nd run', verbose=True, summary=None):
         >>>     get_travel_time_curves('ak135', 'P', 100)
     #
     Please note. This CacheRun as a decorator with be constructed for once no matter how
@@ -446,7 +455,7 @@ def wget_http_files(urls, filename_prefix='testtest/s_', overwrite=True, content
                 print('Jump over the file %s' % (ofnm) )
                 download_flag = False
         if download_flag:
-            with Timer(message='Downloaded', color='red', summary=None):
+            with Timer(tag='Downloaded', color='red', summary=None):
                 real_ofnm = wget.download(url, ofnm)
             print('\nSaved to %s\nDone!' % (real_ofnm) )
     pass
@@ -494,9 +503,9 @@ if __name__ == '__main__':
                 ts = ts[idxs]
                 ps = ps[idxs]
                 get_travel_time_curves.dump_to_cache(key_name, {'xs': xs, 'ts': ts, 'ps': ps})
-        with Timer(message='1st run', verbose=True, summary=None):
+        with Timer(tag='1st run', verbose=True, summary=None):
             get_travel_time_curves('ak135', 'P', 100)
-        with Timer(message='2nd run', verbose=True, summary=None):
+        with Timer(tag='2nd run', verbose=True, summary=None):
             get_travel_time_curves('ak135', 'P', 100)
     if False:
         @deprecated_run(message='This will be deprecated soon since ??????!')
@@ -513,26 +522,32 @@ if __name__ == '__main__':
         content = 'Test content %d' % randint(0, 99999999)
         subject = 'Test Subject %d' % randint(0, 99999999)
     if True:
-        time_summary = TimeSummary()
-        with Timer(message='part1', summary=time_summary):
+        time_summary = TimeSummary(accumulative=True)
+        with Timer(tag='part1', summary=time_summary):
             a = 1
             b = 2
             c = a + b
 
-        with Timer(message='part2', summary=time_summary):
+        with Timer(tag='part1', summary=time_summary):
             a = 1
             b = 2
             c = a + b
 
-        with Timer(message='part3', summary=time_summary):
+        with Timer(tag='part1', summary=time_summary):
             a = 1
             b = 2
             c = a + b
-
+        from numba import jit
         @Timer(summary=time_summary)
+        #@jit(nopython=True, nogil=True)
         def sub(a, b):
             return a-b
         sub(1, 2)
+        sub(2, 3)
+        sub(4, 5)
+        sub(1, 2)
+        sub(2, 3)
+        sub(4, 5)
 
         print(time_summary)
         time_summary.plot_rough()
