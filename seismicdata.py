@@ -9,12 +9,10 @@ from obspy.core.util.attribdict import AttribDict
 from obspy.core.inventory.inventory import Inventory
 from obspy import read as obspy_read
 import pickle
-from sacpy.utils import send_email, get_http_files, wget_http_files, deprecated_run
 from h5py import File as h5_File
 from numpy import float32, int32, zeros, array
 from numpy import max as np_max
 from numpy import min as np_min
-from sacpy.geomath import haversine, azimuth, decluster_spherical_pts
 import math
 from matplotlib import mlab
 import matplotlib.pyplot as plt
@@ -23,6 +21,9 @@ import numpy as np
 import matplotlib.colors as colors
 import warnings, traceback, sys
 import os, os.path
+
+from .geomath import haversine, azimuth, decluster_spherical_pts
+from .utils import send_email, get_http_files, wget_http_files, deprecated_run, Timer
 
 #####################################################################################################################
 # Using the IRIS's BREQ_FAST service to request and download seismic data
@@ -1813,17 +1814,30 @@ class ChannelStream(Stream): #A stream for all Traces at the same channel
         ws = [TimeWindow(tr.stats.starttime, tr.stats.endtime) for tr in self if tr.stats.starttime<tr.stats.endtime ] # we don't need window with length of zero
         return TimeWindows(ws) #  this will take care of sorting and merging if necessary
     @staticmethod
-    def intersect_time_windows_lst(lst_of_chst):
+    def intersect_time_windows_lst(lst_of_chst, time_summary=None):
         if len(lst_of_chst) > 1:
-            # obtain the intersection time windows
-            ws = lst_of_chst[0].get_time_windows()
-            for chst in lst_of_chst[1:]:
-                ws2 = chst.get_time_windows()
-                ws = ws.intersect(ws2)
-            # now trim for each channel stream
-            for chst in lst_of_chst:
-                if ws != chst.get_time_windows():
-                    chst.trim_ws(ws)
+            if time_summary == None:
+                # obtain the intersection time windows
+                ws = lst_of_chst[0].get_time_windows()
+                for chst in lst_of_chst[1:]:
+                    ws2 = chst.get_time_windows()
+                    ws = ws.intersect(ws2)
+                # now trim for each channel stream
+                for chst in lst_of_chst:
+                    if ws != chst.get_time_windows():
+                        chst.trim_ws(ws)
+            else:
+                # obtain the intersection time windows
+                with Timer(tag='get_intersection_wnd', verbose=False, summary=time_summary):
+                    ws = lst_of_chst[0].get_time_windows()
+                    for chst in lst_of_chst[1:]:
+                        ws2 = chst.get_time_windows()
+                        ws = ws.intersect(ws2)
+                # now trim for each channel stream
+                with Timer(tag='trim_intersection_wnd', verbose=False, summary=time_summary):
+                    for chst in lst_of_chst:
+                        if ws != chst.get_time_windows():
+                            chst.trim_ws(ws)
 class StationStreams(dict):  #A dict for all ChanneStream at the same channel (channel_code-->ChannelStream)
     """
     A dict for grouping all traces w.r.t. different channels. The traces should be at the same station and location.
@@ -1844,7 +1858,7 @@ class StationStreams(dict):  #A dict for all ChanneStream at the same channel (c
             for v in tmp.values():
                 v.sort(keys=['starttime', 'endtime'] )
             self.update(tmp)
-    def fix_segment_times(self, min_length_sec, min_gap_sec=0, min_single_length_sec=0, verbose_print_func=None):
+    def fix_segment_times(self, min_length_sec, min_gap_sec=0, min_single_length_sec=0, verbose_print_func=None, time_summary=None):
         """
         Fix the time windows at each channel, so that all channels have the same time windows.
         And remove traces with length less than min_length_sec and min_gap_sec.
@@ -1854,10 +1868,17 @@ class StationStreams(dict):  #A dict for all ChanneStream at the same channel (c
             msg1 = self.to_stream().__str__(extended=True)
         ####
         tmp = list( self.values() )
-        ChannelStream.intersect_time_windows_lst( tmp ) # this will modify content within tmp
-        for it in tmp:
-            it.remove_short_traces(min_length_sec, min_gap_sec, min_single_length_sec=min_single_length_sec) # this will modify content within tmp
-        self.__remove_empty_stream__()
+        ChannelStream.intersect_time_windows_lst( tmp, time_summary=time_summary ) # this will modify content within tmp
+        #####
+        if time_summary:
+            with Timer(tag='remove_short_empty', verbose=False, summary=time_summary):
+                for it in tmp:
+                    it.remove_short_traces(min_length_sec, min_gap_sec, min_single_length_sec=min_single_length_sec) # this will modify content within tmp
+                self.__remove_empty_stream__()
+        else:
+            for it in tmp:
+                it.remove_short_traces(min_length_sec, min_gap_sec, min_single_length_sec=min_single_length_sec) # this will modify content within tmp
+            self.__remove_empty_stream__()
         ####
         if verbose_print_func:
             msg2 = self.to_stream().__str__(extended=True)
@@ -1936,14 +1957,15 @@ class EventRecords(dict):    #A dict for all StationStreams for the same event (
                 tmp[k].append(tr)
             for k, v in tmp.items():
                 self[k] = StationStreams(v)
-    def fix_segment_times(self, min_length_sec, min_gap_sec=0, min_single_length_sec=0, verbose_print_func=None):
+    def fix_segment_times(self, min_length_sec, min_gap_sec=0, min_single_length_sec=0, verbose_print_func=None, time_summary=None):
         """
         Fix the time windows at each station, so that all channels at each station have the same time windows.
         That means,  at one station, the time windows at each channel are the intersection of all channels.
         """
         for v in self.values():
             v.fix_segment_times(min_length_sec, min_gap_sec, min_single_length_sec=min_single_length_sec,
-                                verbose_print_func=verbose_print_func)
+                                verbose_print_func=verbose_print_func,
+                                time_summary=time_summary)
         self.__remove_empty_station()
     def trim(self, starttime, endtime, pad=False, fill_value=None):
         """
@@ -1989,6 +2011,7 @@ class EventRecords(dict):    #A dict for all StationStreams for the same event (
 # Organize and align traces for the same event, and convert to hdf5
 def event_mseed2h5(input, h5_fnm, inventory,
                    sampling_interval, freq_band, starttime, endtime,
+                   time_summary,
                    channels='ZNE', evlo=None, evla=None,
                    min_length_sec=0, min_gap_sec=0, min_single_length_sec=0, verbose_print_func=None):
     """
@@ -2035,101 +2058,109 @@ def event_mseed2h5(input, h5_fnm, inventory,
     else:
         raise ValueError('The input should be either a string or an object of Stream! %s' % str(input) )
     #### (0) trim, rmean, taper, bandpass, and resample.
-    starttime = UTCDateTime(starttime)
-    endtime   = UTCDateTime(endtime)
-    st.trim(starttime, endtime)
-    st = Stream(traces=[tr for tr in st if len(tr.data) >= 3] )
-    st.detrend()
-    #st.taper(max_percentage=0.005, max_length=100.0)
-    st.filter('bandpass', freqmin=freq_band[0], freqmax=freq_band[1], corners=4, zerophase=True)
-    st.interpolate(1.0/sampling_interval)
+    with Timer(tag='trim_rtr_bp_resample', verbose=False, summary=time_summary):
+        starttime = UTCDateTime(starttime)
+        endtime   = UTCDateTime(endtime)
+        st = Stream(traces=[tr for tr in st if ( len(tr.data)>=3 and (tr.stats.endtime-tr.stats.starttime)>=min_single_length_sec ) ]  )
+        st.trim(starttime, endtime)
+        st = Stream(traces=[tr for tr in st if ( len(tr.data)>=3 and (tr.stats.endtime-tr.stats.starttime)>=min_single_length_sec ) ]  )
+        st.detrend()
+        #st.taper(max_percentage=0.005, max_length=100.0)
+        st.filter('bandpass', freqmin=freq_band[0], freqmax=freq_band[1], corners=4, zerophase=True)
+        st.interpolate(1.0/sampling_interval)
     #
     #### (1) fix the time windows, so that all channels at the same station have the same time windows;
     #### (2) (optional) remove short traces, gap;
     vol = EventRecords(st)
     vol.fix_segment_times(min_length_sec=min_length_sec, min_gap_sec=min_gap_sec, min_single_length_sec=min_single_length_sec,
-                          verbose_print_func=None)
+                          verbose_print_func=None,
+                          time_summary=time_summary)
     verbose_print_func('Finish fixing time segments for all stations')
     #verbose_print_func(vol)
     #
     #### (3) merge traces at the same channel to a single trace;
     #### (4) pad zeros to make sure all the traces cover starttime to endtime
-    vol.merge(fill_value=0.0)
-    vol.trim(starttime, endtime, pad=True, fill_value=0.0)
-    verbose_print_func('Finish merge and trim')
+    with Timer(tag='merge_pad_zeros', verbose=False, summary=time_summary):
+        vol.merge(fill_value=0.0)
+        vol.trim(starttime, endtime, pad=True, fill_value=0.0)
+        verbose_print_func('Finish merge and trim')
     #
     #### (5) rotate the traces to specified channels and select the specific channels.
     ####     `channels` could be `ZNE, NE, Z, N, E`.
-    lst_st = list()
-    lst_strec = [vol[k] for k in sorted(vol.keys()) ]
-    if channels in ('ZNE', 'NE', 'N', 'E'): # rotate to ZNE is necessary
-        tmp = [it.to_stream() for it in lst_strec if it.is_zne_z12()]
-        for it in tmp:
-            msg = it.__str__(extended=True)
-            try:
-                it.rotate( '->ZNE', inventory=inventory)
-                lst_st.append(it)
-            except Exception as err: # rotation could fail due to the lack of inventory
-                print('<<<<<<<<<<<<<<<<<<', file=sys.stderr)
-                print('Failed to rotate to ZNE for %s' % msg, file=sys.stderr)
-                traceback.print_exc(file=sys.stderr)
-                print(err, file=sys.stderr)
-                print('>>>>>>>>>>>>>>>>>>', file=sys.stderr)
+    with Timer(tag='rotate_ZNE', verbose=False, summary=time_summary):
+        lst_st = list()
+        lst_strec = [vol[k] for k in sorted(vol.keys()) ]
+        if channels in ('ZNE', 'NE', 'N', 'E'): # rotate to ZNE is necessary
+            tmp = [it.to_stream() for it in lst_strec if it.is_zne_z12()]
+            for it in tmp:
+                msg = it.__str__(extended=True)
+                try:
+                    it.rotate( '->ZNE', inventory=inventory)
+                    lst_st.append(it)
+                except Exception as err: # rotation could fail due to the lack of inventory
+                    print('<<<<<<<<<<<<<<<<<<', file=sys.stderr)
+                    print('Failed to rotate to ZNE for %s' % msg, file=sys.stderr)
+                    traceback.print_exc(file=sys.stderr)
+                    print(err, file=sys.stderr)
+                    print('>>>>>>>>>>>>>>>>>>', file=sys.stderr)
     #### search for stlo, stla, stel, stdp for each station
-    ids = [it[0].get_id() for it in lst_st]
-    stnms = ['.'.join( it.split('.')[:-1] ) for it in ids ]
-    st_coords = [inventory.get_coordinates(it[0].get_id(), it[0].stats.starttime) for it in lst_st]
-    stlas = np.array([it['latitude']    for it in st_coords], dtype=np.float64)
-    stlos = np.array([it['longitude']   for it in st_coords], dtype=np.float64)
-    stels = np.array([it['elevation']   for it in st_coords], dtype=np.float64)
-    stdps = np.array([it['local_depth'] for it in st_coords], dtype=np.float64)
-    dists, azs, bazs = None, None, None
-    if (evlo is not None) and (evla is not None):
-        dists = np.array([haversine(evlo, evla, stlo, stla) for stlo, stla in zip(stlos, stlas)], dtype=np.float64 )
-        azs   = np.array([azimuth(evlo, evla, stlo, stla)   for stlo, stla in zip(stlos, stlas)], dtype=np.float64 )
-        bazs  = np.array([azimuth(stlo, stla, evlo, evla)   for stlo, stla in zip(stlos, stlas)], dtype=np.float64 )
+    with Timer(tag='get_station_coords', verbose=False, summary=time_summary):
+        ids = [it[0].get_id() for it in lst_st]
+        stnms = ['.'.join( it.split('.')[:-1] ) for it in ids ]
+        st_coords = [inventory.get_coordinates(it[0].get_id(), it[0].stats.starttime) for it in lst_st]
+        stlas = np.array([it['latitude']    for it in st_coords], dtype=np.float64)
+        stlos = np.array([it['longitude']   for it in st_coords], dtype=np.float64)
+        stels = np.array([it['elevation']   for it in st_coords], dtype=np.float64)
+        stdps = np.array([it['local_depth'] for it in st_coords], dtype=np.float64)
+        dists, azs, bazs = None, None, None
+        if (evlo is not None) and (evla is not None):
+            dists = np.array([haversine(evlo, evla, stlo, stla) for stlo, stla in zip(stlos, stlas)], dtype=np.float64 )
+            azs   = np.array([azimuth(evlo, evla, stlo, stla)   for stlo, stla in zip(stlos, stlas)], dtype=np.float64 )
+            bazs  = np.array([azimuth(stlo, stla, evlo, evla)   for stlo, stla in zip(stlos, stlas)], dtype=np.float64 )
     #### convert to a matrix
-    nch = len(channels)
-    nt = int( np.ceil((endtime-starttime)/sampling_interval)+1 )
-    nrow = len(lst_st) * nch
-    mat = np.zeros( (nrow, nt), dtype=np.float32 )
-    for ista, st in enumerate(lst_st):
-        for ich, ch in enumerate(channels):
-            tr = st.select(component=ch)[0]
-            data = tr.data
-            sz = min(data.size, nt)
-            mat[ista*nch+ich][:sz] = data[:sz]
+    with Timer(tag='convert_to_mat', verbose=False, summary=time_summary):
+        nch = len(channels)
+        nt = int( np.ceil((endtime-starttime)/sampling_interval)+1 )
+        nrow = len(lst_st) * nch
+        mat = np.zeros( (nrow, nt), dtype=np.float32 )
+        for ista, st in enumerate(lst_st):
+            for ich, ch in enumerate(channels):
+                tr = st.select(component=ch)[0]
+                data = tr.data
+                sz = min(data.size, nt)
+                mat[ista*nch+ich][:sz] = data[:sz]
     #### save to h5
-    fid = h5_File(h5_fnm, 'w')
-    fid.attrs['nsta'] = len(lst_st)
-    fid.attrs['nch'] = nch
-    fid.attrs['nt'] = nt
-    fid.attrs['channels'] = channels
-    fid.attrs['sampling_interval'] = sampling_interval
-    fid.attrs['freq_band'] = freq_band
-    fid.attrs['starttime'] = str(starttime)
-    fid.attrs['endtime'] = str(endtime)
-    #
-    fid.create_dataset('dat',  data=mat,   dtype=np.float32)
-    #
-    grp = fid.create_group('hdr')
-    grp.create_dataset('stlo', data=stlos, dtype=np.float64)
-    grp.create_dataset('stla', data=stlas, dtype=np.float64)
-    grp.create_dataset('stel', data=stels, dtype=np.float64)
-    grp.create_dataset('stdp', data=stdps, dtype=np.float64)
-    #
-    #byte_list = [s.encode("utf-8") for s in stnms]
-    grp.create_dataset('stnm', data=stnms)
-    if (evlo is not None) and (evla is not None):
-        evlos = np.zeros(len(lst_st), dtype=np.float64) + evlo
-        evlas = np.zeros(len(lst_st), dtype=np.float64) + evla
-        grp.create_dataset('evlo', data=evlos, dtype=np.float64)
-        grp.create_dataset('evla', data=evlas, dtype=np.float64)
+    with Timer(tag='write_h5', verbose=False, summary=time_summary):
+        fid = h5_File(h5_fnm, 'w')
+        fid.attrs['nsta'] = len(lst_st)
+        fid.attrs['nch'] = nch
+        fid.attrs['nt'] = nt
+        fid.attrs['channels'] = channels
+        fid.attrs['sampling_interval'] = sampling_interval
+        fid.attrs['freq_band'] = freq_band
+        fid.attrs['starttime'] = str(starttime)
+        fid.attrs['endtime'] = str(endtime)
         #
-        grp.create_dataset('dist', data=dists, dtype=np.float64)
-        grp.create_dataset('az',   data=azs,   dtype=np.float64)
-        grp.create_dataset('baz',  data=bazs,  dtype=np.float64)
-    fid.close()
+        fid.create_dataset('dat',  data=mat,   dtype=np.float32)
+        #
+        grp = fid.create_group('hdr')
+        grp.create_dataset('stlo', data=stlos, dtype=np.float64)
+        grp.create_dataset('stla', data=stlas, dtype=np.float64)
+        grp.create_dataset('stel', data=stels, dtype=np.float64)
+        grp.create_dataset('stdp', data=stdps, dtype=np.float64)
+        #
+        #byte_list = [s.encode("utf-8") for s in stnms]
+        grp.create_dataset('stnm', data=stnms)
+        if (evlo is not None) and (evla is not None):
+            evlos = np.zeros(len(lst_st), dtype=np.float64) + evlo
+            evlas = np.zeros(len(lst_st), dtype=np.float64) + evla
+            grp.create_dataset('evlo', data=evlos, dtype=np.float64)
+            grp.create_dataset('evla', data=evlas, dtype=np.float64)
+            #
+            grp.create_dataset('dist', data=dists, dtype=np.float64)
+            grp.create_dataset('az',   data=azs,   dtype=np.float64)
+            grp.create_dataset('baz',  data=bazs,  dtype=np.float64)
+        fid.close()
     return len(lst_st), mat.shape[0]
 
 #####################################################################################################################

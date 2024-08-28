@@ -43,30 +43,37 @@ class TimeSummary(OrderedDict):
         accumulative: True or False. If True, the time consumption from the same tag will be summed together.
         """
         self.accumulative = accumulative
-        pass
+        self.push = self.__cum_push if accumulative else self.__noncum_push
     def id(self):
         return len(self)+1
-    def push(self, tag=None, time_ms=0.0, color='#999999'):
+    def __cum_push(self, tag, time_ms, color):
         """
         tag: a string
         time_ms: time consumption in miliseconds
         color:   string of color hex value. (default '#999999')
         """
-        if self.accumulative:
-            if tag not in self:
-                self[tag] = { 'tag': tag, 'color': color, 'time_ms': 0.0}
-            self[tag]['time_ms'] += time_ms
-        else:
-            self[ self.id() ] = { 'tag': tag, 'color': color, 'time_ms': time_ms}
+        if tag not in self:
+            self[tag] = { 'tag': tag, 'color': color, 'time_ms': 0.0}
+        self[tag]['time_ms'] += time_ms
+    def __noncum_push(self, tag, time_ms, color):
+        """
+        tag: a string
+        time_ms: time consumption in miliseconds
+        color:   string of color hex value. (default '#999999')
+        """
+        self[ self.id() ] = { 'tag': tag, 'color': color, 'time_ms': time_ms}
+    def total_t(self):
+        total_t = 0.0
+        for vol in self.values():
+            total_t = total_t + vol['time_ms']
+        return total_t
     def plot_rough(self, file=sys.stdout):
         """
         Plot a rough histogram of time consumptions using pure text printing.
 
         file: where to print. (default:sys.stdout)
         """
-        total_t = 0.0
-        for id, vol in self.items():
-            total_t = total_t + vol['time_ms']
+        total_t = self.total_t()
         plot_lines = ['\n%-10s :%-10.2f\n' % ('Total(ms)', total_t), ]
         for id, vol in self.items():
             t_percentage = vol['time_ms']/total_t * 100.0 if total_t>0.0 else 0.0
@@ -75,7 +82,7 @@ class TimeSummary(OrderedDict):
             plot_lines.append(line)
         histogram = ''.join(plot_lines)
         print( histogram, file=file )
-    def plot(self, figname=None, show=True, plot_percentage=True):
+    def plot(self, figname=None, show=False, plot_percentage=True):
         """
         """
         if plot_percentage:
