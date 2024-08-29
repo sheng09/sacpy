@@ -70,18 +70,19 @@ class TimeSummary(OrderedDict):
         for vol in self.values():
             total_t = total_t + vol['time_ms']
         return total_t
-    def plot_rough(self, file=sys.stdout):
+    def plot_rough(self, file=sys.stdout, prefix_str=''):
         """
         Plot a rough histogram of time consumptions using pure text printing.
         #
         file: where to print. (default:sys.stdout)
+        prefix_each_line: the prefix string for each line. (default: '')
         """
         total_t = self.total_t()
-        plot_lines = ['\n%-10s :%-10.2f\n' % ('Total(ms)', total_t), ]
+        plot_lines = ['\n%s%-10s :%s\n' % (prefix_each_line, 'Total', TimeSummary.pretty_time(total_t)), ]
         for id, vol in self.items():
             t_percentage = vol['time_ms']/total_t * 100.0 if total_t>0.0 else 0.0
             t_bin = '*'*int(t_percentage/5)
-            line = '%-10s :%-10s %5.2f%%|%-25s \n' % (vol['tag'][:10], TimeSummary.pretty_time(vol['time_ms']), t_percentage, t_bin)
+            line = '%s%-10s :%-10s %5.2f%%|%-25s \n' % (prefix_each_line, vol['tag'][:10], TimeSummary.pretty_time(vol['time_ms']), t_percentage, t_bin)
             plot_lines.append(line)
         histogram = ''.join(plot_lines)
         print( histogram, file=file )
