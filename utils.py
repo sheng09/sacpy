@@ -63,6 +63,9 @@ class TimeSummary(OrderedDict):
         """
         self[ self.id() ] = { 'tag': tag, 'color': color, 'time_ms': time_ms}
     def total_t(self):
+        """
+        Return the total time consumption in miliseconds.
+        """
         total_t = 0.0
         for vol in self.values():
             total_t = total_t + vol['time_ms']
@@ -70,7 +73,7 @@ class TimeSummary(OrderedDict):
     def plot_rough(self, file=sys.stdout):
         """
         Plot a rough histogram of time consumptions using pure text printing.
-
+        #
         file: where to print. (default:sys.stdout)
         """
         total_t = self.total_t()
@@ -78,12 +81,17 @@ class TimeSummary(OrderedDict):
         for id, vol in self.items():
             t_percentage = vol['time_ms']/total_t * 100.0 if total_t>0.0 else 0.0
             t_bin = '*'*int(t_percentage/5)
-            line = '%-10s :%-10.2f %5.2f%%|%-25s \n' % (vol['tag'][:10], vol['time_ms'], t_percentage, t_bin)
+            line = '%-10s :%-10s %5.2f%%|%-25s \n' % (vol['tag'][:10], TimeSummary.pretty_time(vol['time_ms']), t_percentage, t_bin)
             plot_lines.append(line)
         histogram = ''.join(plot_lines)
         print( histogram, file=file )
     def plot(self, figname=None, show=False, plot_percentage=True):
         """
+        Plot histogram of time consumptions, and pie plot (optional).
+        #
+        figname: where to save the figure. (default: None)
+        show:    True or False to show the figure. (default: False)
+        plot_percentage: True or False to plot the pie plot (percentage of time consumption). (default: True)
         """
         if plot_percentage:
             fig, (ax, ax2) = plt.subplots(1, 2, figsize=(12, 8) )
@@ -95,22 +103,23 @@ class TimeSummary(OrderedDict):
         total_t = np.sum(ts)
         percentages = ts/total_t*100.0
         ys = percentages if plot_percentage else ts
-        locs = np.arange(ts.size, dtype=np.int64)
+        locs = -1*np.arange(ts.size, dtype=np.int64)
         if plot_percentage:
-            texts = ['%.1ems\n%.2f%%' % (t, perc) for t, perc in zip(ts, percentages)]
+            texts = ['%s\n%.2f%%' % (TimeSummary.pretty_time(t), perc) for t, perc in zip(ts, percentages)]
         else:
-            texts = ['%.1ems' % t for t, perc in zip(ts, percentages)]
+            texts = ['%s' % TimeSummary.pretty_time(t) for t, perc in zip(ts, percentages)]
         for loc, text, y, clr in zip(locs, texts, ys, colors):
             ax.barh(loc, y, color=clr)
             ax.text(y*1.01, loc, text, horizontalalignment='left', verticalalignment='center' )
         ax.set_yticks(locs)
         ax.set_yticklabels(labels)
-        #ax.set_xlim((0, ys.max()*1.25 ))
+        ax.set_xlim((0, ys.max()*1.25 ))
         ax.set_xlabel('Time Consumption (ms)')
         ax.set_title('Time Consumption Summary')
 
         if plot_percentage:
             wedges, texts, autotexts =  ax2.pie(percentages, colors=colors, autopct=lambda pct: '%.2f%%' % pct)
+            ax2.set_title('Total: %s' % TimeSummary.pretty_time(total_t) )
             ax.legend(wedges, labels, ncol=2, loc=(1.1, 0.0) )
         if figname:
             plt.savefig(figname, bbox_inches = 'tight', pad_inches = 0, dpi=300, transparent=True)
@@ -125,6 +134,23 @@ class TimeSummary(OrderedDict):
             result += '%s%s' % (tmp1, tmp2)
         result += """#################################################################"""
         return result
+    @staticmethod
+    def pretty_time(t_ms):
+        """
+        Convert time in miliseconds to a pretty string in miliseconds, seconds, minutes, hours, or days when appopriate.
+        """
+        if t_ms < 100:
+            return '%.1fms' % t_ms # ms
+        elif t_ms < 60000:
+            return '%.1fs' % (t_ms/1000.0) # sec
+        elif t_ms < 3600000:
+            return '%.1fm' % (t_ms/60000.0) # minute
+        elif t_ms < 86400000:
+            return '%.1fh' % (t_ms/3600000.0) # hour
+        elif t_ms < 31536000000:
+            return '%.1fd' % (t_ms/86400000.0) # days
+        else:
+            return '~%.1fy' % (t_ms/31536000000.0) # rough year
 class Timer:
     """
     This is for marking the time consumption of selected operations.
@@ -159,6 +185,10 @@ class Timer:
         file:
         summary: an object of OrderedDict
         """
+        if summary != None:
+            if summary.accumulative:
+                if tag in summary:
+                    color = summary[tag]['color']
         if color == None:
             color = Timer.colors[Timer.color_index]
             Timer.color_index = (Timer.color_index+1) % len(Timer.colors)
@@ -481,6 +511,10 @@ def get_filename_from_url_content_disposition(url):
     return fname
 
 if __name__ == '__main__':
+    if True:
+        t_ms = [10**x+0.1 for x in range(0, 12)]
+        for t in t_ms:
+            print('%f -> %s' % (t, TimeSummary.pretty_time(t)))
     if False:
         from obspy.taup import TauPyModel
         import numpy as np
@@ -528,7 +562,7 @@ if __name__ == '__main__':
     if False:
         content = 'Test content %d' % randint(0, 99999999)
         subject = 'Test Subject %d' % randint(0, 99999999)
-    if True:
+    if False:
         time_summary = TimeSummary(accumulative=True)
         with Timer(tag='part1', summary=time_summary):
             a = 1

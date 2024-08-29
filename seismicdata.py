@@ -2130,9 +2130,10 @@ def event_mseed2h5(input, h5_fnm, inventory,
     #### (2) (optional) remove short traces, gap;
     vol = ManyStationStreams(st)
     vol.fix_segment_times(min_length_sec=min_length_sec, min_gap_sec=min_gap_sec, min_single_length_sec=min_single_length_sec,
-                          verbose_print_func=None,
+                          verbose_print_func=verbose_print_func,
                           time_summary=time_summary)
-    verbose_print_func('Finish fixing time segments for all stations')
+    if verbose_print_func:
+        verbose_print_func('Finish fixing time segments for all stations')
     #verbose_print_func(vol)
     #
     #### (3) merge traces at the same channel to a single trace;
@@ -2140,7 +2141,8 @@ def event_mseed2h5(input, h5_fnm, inventory,
     with Timer(tag='merge_pad_zeros', verbose=False, summary=time_summary):
         vol.merge(fill_value=0.0)
         vol.trim(starttime, endtime, pad=True, fill_value=0.0)
-        verbose_print_func('Finish merge and trim')
+        if verbose_print_func:
+            verbose_print_func('Finish merge and trim')
     #
     #### (5) rotate the traces to specified channels and select the specific channels.
     ####     `channels` could be `ZNE, NE, Z, N, E`.
