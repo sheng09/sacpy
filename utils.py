@@ -78,11 +78,11 @@ class TimeSummary(OrderedDict):
         prefix_each_line: the prefix string for each line. (default: '')
         """
         total_t = self.total_t()
-        plot_lines = ['\n%s%-10s :%s\n' % (prefix_each_line, 'Total', TimeSummary.pretty_time(total_t)), ]
+        plot_lines = ['\n%s%-10s :%s\n' % (prefix_str, 'Total', TimeSummary.pretty_time(total_t)), ]
         for id, vol in self.items():
             t_percentage = vol['time_ms']/total_t * 100.0 if total_t>0.0 else 0.0
             t_bin = '*'*int(t_percentage/5)
-            line = '%s%-10s :%-10s %5.2f%%|%-25s \n' % (prefix_each_line, vol['tag'][:10], TimeSummary.pretty_time(vol['time_ms']), t_percentage, t_bin)
+            line = '%s%-10s :%-10s %5.2f%%|%-25s \n' % (prefix_str, vol['tag'][:10], TimeSummary.pretty_time(vol['time_ms']), t_percentage, t_bin)
             plot_lines.append(line)
         histogram = ''.join(plot_lines)
         print( histogram, file=file )
