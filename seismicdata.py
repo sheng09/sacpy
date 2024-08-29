@@ -1575,6 +1575,8 @@ class TimeWindow:
     def __init__(self, starttime, endtime):
         """
         starttime, endtime: the start and end time of the time window. In objects of `obspy.UTCDateTime`.
+        Note: an empty time window is created if `starttime` is greater than or equal to `endtime`.
+        an empty time window is (1970-01-01T00:00:00, 1970-01-01T00:00:00).
         """
         if starttime >= endtime:
             #warnings.warn('An empty time window is created due to invalid: %s---%s' % (str(starttime), str(endtime)) )
@@ -1584,6 +1586,9 @@ class TimeWindow:
         self.starttime = starttime
         self.endtime = endtime
     def duration(self):
+        """
+        Return the duration of the time window in seconds.
+        """
         return self.endtime - self.starttime # in seconds
     def intersect(self, another_time_window):
         """
@@ -1606,9 +1611,11 @@ class TimeWindow:
         return TimeWindow(t0, t1)
     def union(self, another_time_window):
         """
-        Return the union of the current time window and another time window if them intersect!
+        Return the union of the current time window and another time window if they intersect!
+        If the two windows do not intersect, then return an empty time window.
         #
-        Empty time window does not intersect with any other time windows.
+        Empty time window does not intersect with any other time windows, hence an empty time
+        window is returned.
         """
         t0, t1 = self.starttime, self.endtime
         t2, t3 = another_time_window.starttime, another_time_window.endtime
@@ -1625,6 +1632,8 @@ class TimeWindow:
     def plot(self, ax, y=0, **kwargs):
         """
         Plot the time window on the ax.
+        y: the y coordinate to plot the time window.
+        kwargs: the keyword arguments for the `ax.plot` method.
         """
         ax.plot( (self.starttime.datetime, self.endtime.datetime), (y, y), **kwargs)
     def __eq__(self, other):
@@ -1676,10 +1685,11 @@ class TimeWindows(list):
     def __init__(self, time_windows=None):
         """
         This init function takes care of sorting and merging if any time windows overlap.
+        It will remove empty time windows, and time windows with `endtime` less than `starttime`.
         """
         self.clear()
         if time_windows:
-            time_windows = [(it.starttime, it.endtime) for it in time_windows]
+            time_windows = [(it.starttime, it.endtime) for it in time_windows if it.endtime>it.starttime]
             time_windows = sorted(time_windows)
             fixed = [time_windows[0]]
             for (t2, t3) in time_windows[1:]:
@@ -1702,17 +1712,18 @@ class TimeWindows(list):
         return ', '.join( [str(it) for it in self] )
     def intersect(self, other_wnds):
         """
-        Return a list of time windows are the intersection of two list of time windows.
+        Return an object of `TimeWindows` that is the intersection of two list of time windows.
         That means the returned time windows are the time windows that are common in both ws1 and ws2.
         """
         result = list()
         for w1 in self:
             result.extend( [w1.intersect(w2) for w2 in other_wnds] )
-        result = [it for it in result if it.duration()>0 ]
-        return TimeWindows(result) # this will take care of sorting and merging if necessary
+        return TimeWindows(result) # this will take care of removing wrong windows, sorting and merging if necessary
     def plot(self, ax, y=0, **kwargs):
         """
         Plot the time windows on the ax.
+        y: check the `TimeWindow.plot` method.
+        kwargs: check the `TimeWindow.plot` method.
         """
         for idx, wnd in enumerate(self):
             wnd.plot(ax, y=y, **kwargs)
@@ -1726,6 +1737,8 @@ class ChannelStream(Stream): #A stream for all Traces at the same channel
     """
     def __init__(self, traces=None):
         """
+        traces: a list of Trace objects that have the same id (the same network, station, location and channel code).
+                A Error will be raised if the input traces have different ids.
         """
         st = traces
         self.clear()
@@ -1734,20 +1747,26 @@ class ChannelStream(Stream): #A stream for all Traces at the same channel
                 raise ValueError('The input stream contains traces from different stations/locations/channels! %s' % (str(st) ) )
             self.extend(st)
     def get_id(self):
+        """
+        Equals to `self[0].get_id()`, as all the traces in the ChannelStream have the same id.
+        """
         return self[0].get_id()
     def get_station(self):
         """
         Return net.sta.loc
+        Example: the return could be 'IU.ANMO.10' or 'IU.ANMO.' (where the location code is empty)
         """
         stats = self[0].stats
         return '.'.join( (stats.network, stats.station, stats.location) )
     def trim_ws(self, ws):
         """
         trim using a list of time windows
+        This will modify the content of the current ChannelStream object, but it will not modify the Trace
+        objects contained in the ChannelStream object if they are originally referenced from elsewhere.
         """
         ws = TimeWindows(ws) # ws will be updated for sorting and merging regarding overlapping time windows
-        tmp = [self.copy().trim(wnd.starttime, wnd.endtime) for wnd in ws] # could be the bottleneck!
-        #tmp = [self.slice(t0, t1).copy() for (t0, t1) in ws] #?
+        #tmp = [self.copy().trim(wnd.starttime, wnd.endtime) for wnd in ws] # could be the bottleneck!
+        tmp = [self.slice(t0, t1).copy() for (t0, t1) in ws] #?
         self.clear()
         for it in tmp:
             self.extend(it)
@@ -1808,13 +1827,21 @@ class ChannelStream(Stream): #A stream for all Traces at the same channel
             verbose_print_func( msg2 )
     def get_time_windows(self):
         """
-        Return a list of time windows as the object of TimeWindows.
-        Note, overlapping and sorting are taken care of.
+        Return an object of `TimeWindows` as the object of TimeWindows.
+        Note, removal of empty, fix of overlapping and sorting are taken care of.
         """
         ws = [TimeWindow(tr.stats.starttime, tr.stats.endtime) for tr in self if tr.stats.starttime<tr.stats.endtime ] # we don't need window with length of zero
         return TimeWindows(ws) #  this will take care of sorting and merging if necessary
     @staticmethod
     def intersect_time_windows_lst(lst_of_chst, time_summary=None):
+        """
+        An static method to intersect the time windows for a list of ChannelStream objects, and
+        use the intersection time windows to trim the content of each ChannelStream object.
+
+        lst_of_chst: a list of Stream objects.
+        time_summary: a dictionary to store the timing information for the intersection and trimming.
+                      default is None, which means no timing information is stored.
+        """
         if len(lst_of_chst) > 1:
             if time_summary == None:
                 # obtain the intersection time windows
@@ -1828,17 +1855,17 @@ class ChannelStream(Stream): #A stream for all Traces at the same channel
                         chst.trim_ws(ws)
             else:
                 # obtain the intersection time windows
-                with Timer(tag='get_intersection_wnd', verbose=False, summary=time_summary):
+                with Timer(tag='get_intersect_wnd', verbose=False, summary=time_summary):
                     ws = lst_of_chst[0].get_time_windows()
                     for chst in lst_of_chst[1:]:
                         ws2 = chst.get_time_windows()
                         ws = ws.intersect(ws2)
                 # now trim for each channel stream
-                with Timer(tag='trim_intersection_wnd', verbose=False, summary=time_summary):
+                with Timer(tag='cut_intersect_wnd', verbose=False, summary=time_summary):
                     for chst in lst_of_chst:
                         if ws != chst.get_time_windows():
                             chst.trim_ws(ws)
-class StationStreams(dict):  #A dict for all ChanneStream at the same channel (channel_code-->ChannelStream)
+class StationStreams(dict):  #A dict for all ChanneStream at the same station and location (channel_code-->ChannelStream)
     """
     A dict for grouping all traces w.r.t. different channels. The traces should be at the same station and location.
     The dict key is the channel name (e.g, BHZ, BH1,...), and the value is an object of ChannelStream.
@@ -1846,6 +1873,7 @@ class StationStreams(dict):  #A dict for all ChanneStream at the same channel (c
     def __init__(self, st=None):
         """
         st: an object of obspy.Stream, or a list of obspy.Trace objects.
+        Note: an error will be raised if the input traces have different network, station or location codes.
         """
         self.clear()
         if st:
@@ -1860,8 +1888,12 @@ class StationStreams(dict):  #A dict for all ChanneStream at the same channel (c
             self.update(tmp)
     def fix_segment_times(self, min_length_sec, min_gap_sec=0, min_single_length_sec=0, verbose_print_func=None, time_summary=None):
         """
-        Fix the time windows at each channel, so that all channels have the same time windows.
-        And remove traces with length less than min_length_sec and min_gap_sec.
+        Fix the time windows at each channel, so that all channels have the same time windows coverage.
+        Also remove short traces considering min_length_sec, min_gap_sec, min_single_length_sec.
+        #
+        min_length_sec:        the minimum length in seconds for the total duration of all the traces.
+        min_gap_sec:           the minimum gap between two near traces in seconds.
+        min_single_length_sec: the minimum length in seconds for individual traces.
         """
         msg1, msg2 = '', ''
         if verbose_print_func:
@@ -1871,7 +1903,7 @@ class StationStreams(dict):  #A dict for all ChanneStream at the same channel (c
         ChannelStream.intersect_time_windows_lst( tmp, time_summary=time_summary ) # this will modify content within tmp
         #####
         if time_summary:
-            with Timer(tag='remove_short_empty', verbose=False, summary=time_summary):
+            with Timer(tag='rm_short_empty', verbose=False, summary=time_summary):
                 for it in tmp:
                     it.remove_short_traces(min_length_sec, min_gap_sec, min_single_length_sec=min_single_length_sec) # this will modify content within tmp
                 self.__remove_empty_stream__()
@@ -1882,12 +1914,13 @@ class StationStreams(dict):  #A dict for all ChanneStream at the same channel (c
         ####
         if verbose_print_func:
             msg2 = self.to_stream().__str__(extended=True)
-        if verbose_print_func and msg1 != msg2: # verbose
-            verbose_print_func("StationStreams Before fixing time segments", msg1 )
-            verbose_print_func("StationStreams After fixing time segments", msg2 )
+            if msg1 != msg2: # verbose
+                verbose_print_func("StationStreams Before fixing time segments", msg1 )
+                verbose_print_func("StationStreams After fixing time segments", msg2 )
     def trim(self, starttime, endtime, pad=False, fill_value=None):
         """
         Trim the time windows for all the channel streams.
+        This will modify the content.
         """
         for v in self.values():
             v.trim(starttime, endtime, pad=pad, fill_value=fill_value)
@@ -1895,6 +1928,7 @@ class StationStreams(dict):  #A dict for all ChanneStream at the same channel (c
     def merge(self, fill_value=None):
         """
         Merge the time windows for all the channel streams
+        This will modify the content.
         """
         for v in self.values():
             v.merge(fill_value=fill_value)
@@ -1912,15 +1946,19 @@ class StationStreams(dict):  #A dict for all ChanneStream at the same channel (c
         return st
     def is_zne_z12(self):
         """
-        Check if the channel streams are for three components ZNE, or Z12.
+        Check if the channel streams are exactly for three components ZNE, or Z12.
+        Empty channel streams are considered as not existing even though the dict key exists,
+        and False will be returned.
         """
-        chs = set( [it[-1] for it in self.keys()] )
+        chs = set( [it[-1] for (it, v)in self.items() if len(v)>0 ] )
         return (len(self) == 3 and (chs == set('ZNE') or chs == set('Z12') ) )
     def is_ne_12(self):
         """
-        Check if the channel stream are for two components NE or 12.
+        Check if the channel stream are exactly for two components NE or 12.
+        Empty channel streams are considered as not existing even though the dict key exists,
+        and False will be returned.
         """
-        chs = set( [it[-1] for it in self.keys()] )
+        chs = set( [it[-1] for (it, v)in self.items() if len(v)>0 ] )
         return (len(self) == 2 and (chs == set('NE') or chs == set('12') ) )
     def __remove_empty_stream__(self):
         """
@@ -1932,10 +1970,10 @@ class StationStreams(dict):  #A dict for all ChanneStream at the same channel (c
     def __str__(self):
         s = '\n'.join( ['%s: %s' % (k, v.__str__().replace('\n', '\n    ') ) for k, v in self.items()] )
         return s
-class EventRecords(dict):    #A dict for all StationStreams for the same event (net.sta.loc-->StationStreams)
+class ManyStationStreams(dict):    #A dict for all StationStreams that are related (net.sta.loc-->StationStreams)
     """
     A dict for grouping all traces w.r.t. different stations.
-    The dict key is the station name, and the value is an object of StRecords.
+    The dict key is the station name, and the value is an object of StationStreams.
     The station name is in the format of `net.sta.loc`.
     """
     def __init__(self, st=None):
@@ -1960,7 +1998,7 @@ class EventRecords(dict):    #A dict for all StationStreams for the same event (
     def fix_segment_times(self, min_length_sec, min_gap_sec=0, min_single_length_sec=0, verbose_print_func=None, time_summary=None):
         """
         Fix the time windows at each station, so that all channels at each station have the same time windows.
-        That means,  at one station, the time windows at each channel are the intersection of all channels.
+        That means, at one station, the time windows at each channel are the intersection of all channels.
         """
         for v in self.values():
             v.fix_segment_times(min_length_sec, min_gap_sec, min_single_length_sec=min_single_length_sec,
@@ -2016,13 +2054,32 @@ def event_mseed2h5(input, h5_fnm, inventory,
                    min_length_sec=0, min_gap_sec=0, min_single_length_sec=0, verbose_print_func=None):
     """
     Pre-process mseed file, and convert to h5 file.
+    input: filename (wildcard is supported) or an object of Stream.
+    h5_fnm: the filename of the h5 file for output.
+    inventory: the inventory object for the stations.
+    sampling_interval: the new sampling interval in seconds.
+    freq_band: the new frequency band for the data.
+    starttime: the new start time for the data.
+    endtime: the new end time for the data.
+    time_summary: an object of TimerSummary to store the timing information.
+    channels: the channels to be rotated to and also to be stored into the h5 file.
+              It could be 'ZNE', 'NE', 'Z', 'N', 'E'.
+    evlo: the longitude of the event if all the Traces are related to the same event (default is None)
+    evla: the latitude of the event if all the Traces are related to the same event. (default is None)
+          If the evlo and evla are given, then az, baz, and epicentral distance will be calculated and
+          stored in the h5 file.
+    min_length_sec:  check `StationStreams.fix_segment_times(...)` for details.
+    min_gap_sec:
+    min_single_length_sec:
+    verbose_print_func: the function to print the verbose information, such as `print` (default is None to disable verbose)
+    #
     #
     The generate h5 file will has datasets:
         /dat: the data matrix
         /hdr: the metadata group
-        /hdr/az
-        /hdr/baz
-        /hdr/dist
+        /hdr/az   (only if evlo and evla are given)
+        /hdr/baz  (only if evlo and evla are given)
+        /hdr/dist (only if evlo and evla are given)
         /hdr/evla
         /hdr/evlo
         /hdr/stdp
@@ -2071,7 +2128,7 @@ def event_mseed2h5(input, h5_fnm, inventory,
     #
     #### (1) fix the time windows, so that all channels at the same station have the same time windows;
     #### (2) (optional) remove short traces, gap;
-    vol = EventRecords(st)
+    vol = ManyStationStreams(st)
     vol.fix_segment_times(min_length_sec=min_length_sec, min_gap_sec=min_gap_sec, min_single_length_sec=min_single_length_sec,
                           verbose_print_func=None,
                           time_summary=time_summary)
@@ -2171,10 +2228,17 @@ def download_obspy_inventory(pkl_fnm, starttime, endtime, client_nms=None,
                              log_fnm='log.txt', **kwargs):
     """
     Download all available inventory from all FDSN clients that come with ObsPy
-    Will return an object
+    Will return an object of dict of dict of obspy.Inventory objects.
     client_name -> year-> inventory
     #
-    clients: a list of client names seperated by comma. `None` in default to download from all clients.
+    pkl_fnm: the filename of the pickle file to store the inventory.
+    starttime: the start time for the inventory.
+    endtime: the end time for the inventory.
+    client_nms: a list of client names seperated by comma. `None` in default to download from all clients.
+    network, station, channel: the parameters for the inventory download. Wildcard is supported.
+    level: the level of the inventory.
+    log_fnm: the filename of the log file to store the download information.
+    kwargs: other parameters that can be passed to the `Client.get_stations(...)` method.
     """
     if os.path.exists(pkl_fnm):
         raise ValueError('The file exists! %s' % pkl_fnm)
@@ -2192,7 +2256,8 @@ def download_obspy_inventory(pkl_fnm, starttime, endtime, client_nms=None,
     y1 = endtime.year + 1
     ts = [starttime]
     ts.extend( [UTCDateTime(y, 1, 1) for y in range(y0, y1, 1) ] )
-    ts.append( endtime )
+    if ts[-1] < endtime:
+        ts.append( endtime )
     ######################################################################
     vol_dict = dict()
     log_fid = open(log_fnm, 'w')
@@ -2222,7 +2287,9 @@ def download_obspy_inventory(pkl_fnm, starttime, endtime, client_nms=None,
     log_fid.close()
 def select_inv_given_channels(inv, lst_channels_string=['Z12', 'ZNE']):
     """
-    Return a new inventory to make sure each station within the inventory has all the specific channels
+    Return a new inventory to make sure each station within the inventory has all the specific channels,
+    and the station which does not meet the requirement will be removed.
+    !!!Note, this will not modify the original inventory.
     """
     ##################################################################################################
     # e.g., has_all_channels(a_station, 'ZNE')
@@ -2245,10 +2312,19 @@ def select_inv_given_channels(inv, lst_channels_string=['Z12', 'ZNE']):
     for net, new_net in zip(inv.networks, new_inv.networks):
         new_net.stations = [it for it in net if has_all_channels2(it, lst_channels_string) ]
     return new_inv
-def flatten_inv_to_stations(inventory, client_name=None):
+def flatten_inv_to_stations(inventory, client_name=None, removed_duplicated_station=False):
     """
     Flatten the inventory to a list of station information.
     For each station, the net_code and client_name is added to the station information.
+    #
+    inventory: an object of obspy.Inventory.
+    client_name: the client name to be added to the station information.
+                 for each Station object, an attribute of `client_name` will be added.
+    removed_duplicated_station: a boolean, if True, then remove the duplicated station objects
+                                which have the same net, station code, and longitude, latitude, and elevation.
+                                However, this cannot remove stations having the same information
+                                above but different channels! So, be careful is channel data
+                                or response data is needed.
     """
     stas = list()
     for net in inventory.networks:
@@ -2258,16 +2334,30 @@ def flatten_inv_to_stations(inventory, client_name=None):
             sta.net_code = net_code
             sta.client_name = client_name
         stas.extend( stations )
+    if removed_duplicated_station:
+        threefloat2int = lambda x1,x2,x3: int((x1+x2+x3)*1000)  # this could be not working for many cases of different stations
+        tmp = list()
+        net_sta_set = set()
+        for sta in sorted_stations:
+            v = sta.net_code, sta.code, threefloat2int(sta.latitude, sta.longitude, sta.elevation)
+            if v not in net_sta_set:
+                net_sta_set.add(v)
+                tmp.append(sta)
+        sorted_stations = tmp
+        pass
     return stas
-def decluster_stations(lst_stations, approximate_lo_dif=2, approximate_la_dif=2):
+def decluster_stations(lst_stations, approximate_lo_dif=2, approximate_la_dif=2, key_type='float'):
     """
-    Decluster a list of stations.
+    Decluster a list of stations. Will return a dictionary of clustered stations.
     lst_stations: a list of obspy.Station objects.
     approximate_lo_dif, approximate_la_dif: the approximate longitude and latitude grid step to decluster the stations.
+    key_type: the type of key, 'int' or 'float'. For 'float', the key will be
+              meaningful (latitude, longitude) pair. For 'int', the key will be
+              some integer values which is useful for further cluster operations.
     """
     stlos = np.array([it.longitude for it in lst_stations] )
     stlas = np.array([it.latitude  for it in lst_stations] )
-    idx_clusters = decluster_spherical_pts(stlos, stlas, approximate_lo_dif, approximate_la_dif)
+    idx_clusters = decluster_spherical_pts(stlos, stlas, approximate_lo_dif, approximate_la_dif, key_type=key_type)
     ####
     clusters = dict()
     for key, idxs in idx_clusters.items():
@@ -2280,7 +2370,11 @@ def sort_stations(lst_stations, preferred_client_names=None, preferred_nets='II,
     lst_stations: a list of obspy.Station objects, and each of them should have the attributes of `client_name` and `net_code`.
     preferred_client_names: a list of client names seperated by comma. `None` in default.
     preferred_nets: a list of network codes seperated by comma. `II,IU,AU` in default.
-    removed_duplicated_station: a boolean, if True, then remove the duplicated station objects which have the same net and station code
+    removed_duplicated_station: a boolean, if True, then remove the duplicated station objects
+                                which have the same net, station code, and longitude, latitude, and elevation.
+                                However, this cannot remove stations having the same information
+                                above but different channels! So, be careful is channel data
+                                or response data is needed.
     """
     def func(stations, prefered_single_client=None, preferred_single_net=None):
         """
@@ -2307,10 +2401,11 @@ def sort_stations(lst_stations, preferred_client_names=None, preferred_nets='II,
     sorted_stations.extend(other_stations)
     ####
     if removed_duplicated_station:
+        threefloat2int = lambda x1,x2,x3: int((x1+x2+x3)*1000) # this could be not working for many cases of different stations
         tmp = list()
         net_sta_set = set()
         for sta in sorted_stations:
-            v = sta.net_code, sta.code
+            v = sta.net_code, sta.code, threefloat2int(sta.latitude, sta.longitude, sta.elevation) 
             if v not in net_sta_set:
                 net_sta_set.add(v)
                 tmp.append(sta)

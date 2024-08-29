@@ -282,13 +282,23 @@ def great_circle_plane_center_triple_rad(lon1, lat1, lon2, lat2, ptlo, ptla, cri
 ##################################################################################################################
 # Spherical declustering
 ##################################################################################################################
-def decluster_spherical_pts(los_deg, las_deg, approximate_lo_dif=2, approximate_la_dif=2):
+def decluster_spherical_pts(los_deg, las_deg, approximate_lo_dif=2, approximate_la_dif=2, key_type='float'):
     """
     Decluster a list of spherical points
     Return a dictionary
     (lo, la) -> a list of indexes
     where the (lo, la) is the grid center for a cluster of points.
-
+    #
+    los_deg, las_deg: the longitude and latitude of the points.
+    approximate_lo_dif, approximate_la_dif: the approximate longitude and latitude step for clustering.
+    key_type: the type of key, 'int' or 'float'. For 'float', the key will be
+              meaningful (latitude, longitude) pair. For 'int', the key will be
+              some integer values which is useful for further cluster operations.
+    #
+    NOTE: the `decluster_spherical_pts` has the following two methods:
+          lalo2intkey(los_deg, las_deg, approximate_lo_dif, approximate_la_dif) --> [intkey1, intkey2, ...]
+          intkey2lalo(intkeys, approximate_lo_dif, approximate_la_dif) --> las, los
+    #
     The algorithm is like this:
     Lets say given a point lo, la, and step dlo, dla.
     First, we round the latitude, and obtain the int key for latitude.
@@ -340,6 +350,10 @@ def decluster_spherical_pts(los_deg, las_deg, approximate_lo_dif=2, approximate_
         lo2 = int_lo * 0.001
         los = (lo2+0.5) * dlo3
         return las, los%360
+    ####
+    decluster_spherical_pts.lalo2intkey = lalo2intkey
+    decluster_spherical_pts.intkey2lalo = intkey2lalo
+    ####
     idxs    = np.arange( len(los_deg) )
     intkeys = lalo2intkey(los_deg, las_deg, approximate_lo_dif, approximate_la_dif)
     ####
@@ -348,10 +362,17 @@ def decluster_spherical_pts(los_deg, las_deg, approximate_lo_dif=2, approximate_
         tmp_dict[intkey].add(idx)
     ####
     declustered_points = dict()
-    for intkey, set_idxs in tmp_dict.items():
-        this_idxs = sorted(set_idxs)
-        key = intkey2lalo(intkey, approximate_lo_dif, approximate_la_dif)
-        declustered_points[key] = this_idxs
+    if key_type == 'float':
+        for intkey, set_idxs in tmp_dict.items():
+            this_idxs = sorted(set_idxs)
+            key = intkey2lalo(intkey, approximate_lo_dif, approximate_la_dif)
+            declustered_points[key] = this_idxs
+    elif key_type == 'int':
+        for intkey, set_idxs in tmp_dict.items():
+            this_idxs = sorted(set_idxs)
+            declustered_points[intkey] = this_idxs
+    else:
+        raise ValueError(f"Unknown key_type: {key_type}")
     return declustered_points
 
 ##################################################################################################################
