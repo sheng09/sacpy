@@ -1690,6 +1690,8 @@ class TimeWindows(list):
         self.clear()
         if time_windows:
             time_windows = [(it.starttime, it.endtime) for it in time_windows if it.endtime>it.starttime]
+            if len(time_windows) <= 0:
+                return
             time_windows = sorted(time_windows)
             fixed = [time_windows[0]]
             for (t2, t3) in time_windows[1:]:
@@ -2166,7 +2168,13 @@ def event_mseed2h5(input, h5_fnm, inventory,
     with Timer(tag='get_station_coords', verbose=False, summary=time_summary):
         ids = [it[0].get_id() for it in lst_st]
         stnms = ['.'.join( it.split('.')[:-1] ) for it in ids ]
-        st_coords = [inventory.get_coordinates(it[0].get_id(), it[0].stats.starttime) for it in lst_st]
+        try:
+            st_coords = [inventory.get_coordinates(it[0].get_id(), it[0].stats.starttime) for it in lst_st]
+        except Exception as err:
+            try:
+                st_coords = [inventory.get_coordinates(it[0].get_id() ) for it in lst_st]
+            except Exception as err:
+                pass
         stlas = np.array([it['latitude']    for it in st_coords], dtype=np.float64)
         stlos = np.array([it['longitude']   for it in st_coords], dtype=np.float64)
         stels = np.array([it['elevation']   for it in st_coords], dtype=np.float64)
