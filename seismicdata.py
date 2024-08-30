@@ -2345,11 +2345,11 @@ def flatten_inv_to_stations(inventory, client_name=None, removed_duplicated_stat
             sta.client_name = client_name
         stas.extend( stations )
     if removed_duplicated_station:
-        threefloat2int = lambda x1,x2,x3: int((x1+x2+x3)*1000)  # this could be not working for many cases of different stations
+        threefloat2str = lambda x1,x2,x3: '%d_%d_%d' % (int(x1*1000), int(x2*1000), int(x3) )
         tmp = list()
         net_sta_set = set()
         for sta in sorted_stations:
-            v = sta.net_code, sta.code, threefloat2int(sta.latitude, sta.longitude, sta.elevation)
+            v = sta.net_code, sta.code, threefloat2str(sta.latitude, sta.longitude, sta.elevation)
             if v not in net_sta_set:
                 net_sta_set.add(v)
                 tmp.append(sta)
@@ -2411,11 +2411,11 @@ def sort_stations(lst_stations, preferred_client_names=None, preferred_nets='II,
     sorted_stations.extend(other_stations)
     ####
     if removed_duplicated_station:
-        threefloat2int = lambda x1,x2,x3: int((x1+x2+x3)*1000) # this could be not working for many cases of different stations
+        threefloat2str = lambda x1,x2,x3: '%d_%d_%d' % (int(x1*1000), int(x2*1000), int(x3) )
         tmp = list()
         net_sta_set = set()
         for sta in sorted_stations:
-            v = sta.net_code, sta.code, threefloat2int(sta.latitude, sta.longitude, sta.elevation) 
+            v = sta.net_code, sta.code, threefloat2str(sta.latitude, sta.longitude, sta.elevation) 
             if v not in net_sta_set:
                 net_sta_set.add(v)
                 tmp.append(sta)
