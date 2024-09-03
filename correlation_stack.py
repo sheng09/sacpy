@@ -468,7 +468,7 @@ class CS_InterRcv:
         #t_total = time_time() - t0
         #t_other = t_total*1000 - local_time_summary.total_t() # miliseconds
         #local_time_summary.push('other', t_other, color='k')
-        log_print(1, 'Time consumption:')
+        log_print(1, 'Time consumption:', flush=True)
         local_time_summary.plot_rough(file=log_print.log_fid, prefix_str='        ')
         ############################################################################################################
         self.time_summary += local_time_summary
@@ -487,7 +487,7 @@ class CS_InterRcv:
             ####
             #stack_mat = np.fft.irfft(stack_mat_spec, cc_fftsize, axis=1).astype(np.float32)
             stack_mat = irfft(stack_mat_spec, cc_fftsize, axis=1)
-            log_print(2, 'stack_mat:    ', stack_mat.shape, 'Finished.')
+            log_print(2, 'stack_mat:    ', stack_mat.shape, stack_mat.dtype, 'Finished.')
         ############################################################################################################
         with Timer(tag='finish.roll', verbose=False, summary=self.time_summary):
             log_print(1, 'Roll...')
@@ -497,6 +497,7 @@ class CS_InterRcv:
             stack_mat = np.roll(stack_mat, rollsize, axis=1)
             stack_mat = stack_mat[:,:-1] #get rid of the zero point
             cc_t1, cc_t2 = -rollsize*delta, rollsize*delta
+            log_print(2, 'stack_mat:    ', stack_mat.shape, stack_mat.dtype )
             log_print(2, 'cc time range:', (cc_t1, cc_t2), 'Finished.' )
         ############################################################################################################
         if filter_band is not None:
@@ -513,7 +514,7 @@ class CS_InterRcv:
                 stack_mat += stack_mat[:, ::-1]
                 stack_mat = stack_mat[:, rollsize:]
                 cc_t1, cc_t2 = 0, rollsize*delta
-                log_print(2, 'stack_mat:    ', stack_mat.shape)
+                log_print(2, 'stack_mat:    ', stack_mat.shape, stack_mat.dtype )
                 log_print(2, 'cc time range:', (cc_t1, cc_t2), 'Finished.')
         ############################################################################################################
         if cut is not None:
@@ -529,7 +530,7 @@ class CS_InterRcv:
                 cc_t1 = cc_t1 + post_i1 *delta
                 cc_t2 = cc_t1 + (post_i2-post_i1-1)*delta
                 stack_mat = stack_mat[:, post_i1:post_i2 ]
-                log_print(2, 'stack_mat:    ', stack_mat.shape)
+                log_print(2, 'stack_mat:    ', stack_mat.shape, stack_mat.dtype)
                 log_print(2, 'cc time range:', (cc_t1, cc_t2), 'Finished.')
         ############################################################################################################
         if taper_sec:
@@ -542,7 +543,7 @@ class CS_InterRcv:
         ############################################################################################################
         if norm:
             with Timer(tag='finish.norm', verbose=False, summary=self.time_summary):
-                log_print(1, 'Norm...', taper_sec)
+                log_print(1, 'Norm...')
                 for xs in stack_mat:
                     v = xs.max()
                     if v> 0.0:
@@ -582,16 +583,6 @@ class CS_InterRcv:
         mpi_rank = mpi_comm.Get_rank()
         mpi_ncpu = mpi_comm.Get_size()
         ########################################################################
-        # gather and print time consumption information
-        log_print(-1, 'Finish adding on rank0...')
-        log_print( 1, 'Time summary for adding on this rank')
-        self.time_summary.plot_rough(file=log_print.log_fid, prefix_str='        ')
-        self.mpi_gather_time_summary()
-        if mpi_rank == 0:
-            log_print( 1, 'Summed time summary for adding on all ranks')
-            self.global_time_summary.plot_rough(file=log_print.log_fid, prefix_str='        ')
-        mpi_comm.Barrier()
-        ########################################################################
         # gather stack_mat_spec and stack_count
         log_print(-1, 'MPI reduce stack results to rank0...')
         stack_mat_spec = self.stack_mat_spec
@@ -608,14 +599,25 @@ class CS_InterRcv:
         ########################################################################
         # finish on rank 0
         if mpi_rank == 0:
-            log_print(-1, 'Finished and return results on rank 0...')
+            log_print(-1, 'Finish on rank 0...')
             self.stack_mat_spec = global_stack_mat_spec
             self.stack_count    = global_stack_count
-            tmp = self.finish(filter_band=filter_band, fold=fold, cut=cut, taper_sec=taper_sec, norm=norm, ofnm=ofnm)
-            log_print(1, 'Done!')
-            return tmp
+            to_return = self.finish(filter_band=filter_band, fold=fold, cut=cut, taper_sec=taper_sec, norm=norm, ofnm=ofnm)
+            log_print(1, 'Finished.')
         else:
-            return None
+            to_return = None
+        ########################################################################
+        # gather and print time consumption information
+        mpi_comm.Barrier()
+        log_print(-1, 'Done!')
+        log_print( 1, 'Time summary for all operations on this rank')
+        self.time_summary.plot_rough(file=log_print.log_fid, prefix_str='        ')
+        self.mpi_gather_time_summary()
+        if mpi_rank == 0:
+            log_print( 1, 'Summed on all ranks')
+            self.global_time_summary.plot_rough(file=log_print.log_fid, prefix_str='        ')
+        ########################################################################
+        return to_return
     def mpi_gather_time_summary(self):
         """
         Gather all `time_summary` from all ranks, and sum them up
@@ -640,7 +642,7 @@ class CS_InterRcv:
         """
         """
         log_print = self.logger
-        log_print(-1, 'Plot')
+        log_print(-1, 'Plot correlogram...', fignm)
         stack_mat = self.stack_mat
         if stack_mat is None:
             raise ValueError('!')
@@ -664,6 +666,7 @@ class CS_InterRcv:
         except Exception as err:
             print(err, file=sys.stderr)
             traceback.print_exc(file=sys.stderr)
+        log_print(1, 'Finished.')
     @staticmethod
     def mkdirs(filename):
         if filename:

@@ -42,10 +42,12 @@ class TimeSummary(OrderedDict):
         """
         accumulative: True or False. If True, the time consumption from the same tag will be summed together.
         """
-        self.accumulative = accumulative
-        self.push = self.__cum_push if accumulative else self.__noncum_push
+        self.accumulative = 1 if accumulative else 0
     def id(self):
         return len(self)+1
+    def push(self, tag, time_ms, color):
+        funcs = [self.__noncum_push, self.__cum_push]
+        return funcs[self.accumulative](tag, time_ms, color)
     def __cum_push(self, tag, time_ms, color):
         """
         tag: a string
@@ -602,7 +604,7 @@ if __name__ == '__main__':
     if False:
         content = 'Test content %d' % randint(0, 99999999)
         subject = 'Test Subject %d' % randint(0, 99999999)
-    if True:
+    if False:
         time_summary  = TimeSummary(accumulative=True)
         time_summary2 = TimeSummary(accumulative=True)
         with Timer(tag='part1', summary=time_summary):
@@ -652,3 +654,14 @@ if __name__ == '__main__':
             print( add.load_from_cache('key2') )
             print( add.load_from_cache('key1') )
         add([0, 0, 0], [9, 8, 7])
+    if True:
+        from mpi4py import MPI
+        mpi_comm = MPI.COMM_WORLD.Dup()
+        mpi_rank = mpi_comm.Get_rank()
+        mpi_size = mpi_comm.Get_size()
+        time_summary = TimeSummary(accumulative=True)
+        if mpi_rank != 0:
+            mpi_comm.send(time_summary, dest=0, tag=mpi_rank)
+        else:
+            for i in range(1, mpi_size):
+                it = mpi_comm.recv(source=i, tag=i)
