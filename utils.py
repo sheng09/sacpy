@@ -31,7 +31,6 @@ def deprecated_run(message='will be deprecated soon!'):
             return result
         return wrapper
     return decorator
-
 class TimeSummary(OrderedDict):
     """
     This is used for as an argument for `Timer`, which is for
@@ -79,13 +78,17 @@ class TimeSummary(OrderedDict):
         prefix_each_line: the prefix string for each line. (default: '')
         """
         total_t = self.total_t()
-        plot_lines = ['\n%s%-10s :%s\n' % (prefix_str, 'Total', TimeSummary.pretty_time(total_t)), ]
+        plot_lines = ['%s+--------------------+' % (prefix_str) ]
         for id, vol in self.items():
             t_percentage = vol['time_ms']/total_t * 100.0 if total_t>0.0 else 0.0
             t_bin = '*'*int(t_percentage/5)
-            line = '%s%-10s :%-10s %5.2f%%|%-25s|\n' % (prefix_str, vol['tag'][:10], TimeSummary.pretty_time(vol['time_ms']), t_percentage, t_bin)
+            #line = '%s%-10s :%-10s %5.2f%%|%-25s|\n' % (prefix_str, vol['tag'][:10], TimeSummary.pretty_time(vol['time_ms']), t_percentage, t_bin)
+            line = '%s|%-20s|%5.2f%% %-8s %s' % (prefix_str, t_bin, t_percentage, TimeSummary.pretty_time(vol['time_ms']), vol['tag'])
             plot_lines.append(line)
-        histogram = ''.join(plot_lines)
+        plot_lines.append( '%s+--------------------+' % (prefix_str) )
+        plot_lines.append( '%sTotal: %s' % (prefix_str, TimeSummary.pretty_time(total_t)) )
+        #plot_lines.append('%s%-10s :%s' % (prefix_str, 'Total', TimeSummary.pretty_time(total_t)) )
+        histogram = '\n'.join(plot_lines)
         print( histogram, file=file )
     def plot(self, figname=None, show=False, plot_percentage=True):
         """
@@ -628,14 +631,14 @@ if __name__ == '__main__':
         sub(2, 3)
         sub(4, 5)
 
-        print(time_summary)
-        time_summary.plot_rough()
-        time_summary.plot(show=False, figname='time_summary.png')
+        #print(time_summary)
+        time_summary.plot_rough(prefix_str= '    ')
+        #time_summary.plot(show=False, figname='time_summary.png')
 
-        print('\n\n\n')
-        print(time_summary)
-        print(time_summary2)
-        print(time_summary+time_summary2)
+        #print('\n\n\n')
+        #print(time_summary)
+        #print(time_summary2)
+        #print(time_summary+time_summary2)
     if False:
         with CacheRun('junk.h5', clear=True) as cache:
             print( cache.load_from_cache('key1') )

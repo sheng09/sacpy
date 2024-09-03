@@ -369,12 +369,7 @@ class CS_InterRcv:
     def add(self, zne_mat_f32, stlo_rad, stla_rad, evlo_rad, evla_rad, infostr=None):
         """
         """
-        t0 = time_time()
         local_time_summary = TimeSummary(accumulative=True)
-        #stlo_rad = np.array(stlo_rad, dtype=np.float32)
-        #stla_rad = np.array(stla_rad, dtype=np.float32)
-        #evlo_rad = np.array(evlo_rad, dtype=np.float32)
-        #evla_rad = np.array(evla_rad, dtype=np.float32)
         ############################################################################################################
         #### log
         log_print = self.logger
@@ -387,34 +382,36 @@ class CS_InterRcv:
         log_print( 2, 'evla:        ', evla_rad.shape, evla_rad.dtype)
         ############################################################################################################
         #### get ZNERT if necessary, the RT here refers to event-receiver R and T (ERR, ERT)
-        log_print(1, 'Cutting and making ZNERT matrix from the ZNE...')
         with Timer(tag='zne2znert', verbose=False, summary=local_time_summary):
+            log_print(1, 'Cutting and making ZNERT matrix from the ZNE...')
             idx0, idx1 = self.cut_idx_range
             idx0 = max(idx0, 0)
             idx1 = min(idx1, zne_mat_f32.shape[1])
             znert_mat_f32 = np.zeros( (zne_mat_f32.shape[0]//3*5, idx1-idx0), dtype=np.float32)
             zne2znert(zne_mat_f32[:, idx0:idx1], znert_mat_f32, stlo_rad, stla_rad, evlo_rad, evla_rad)
-        log_print(2, 'Finished.')
-        log_print(2, 'znert_mat_f32: ', znert_mat_f32.shape, znert_mat_f32.dtype)
+            log_print(2, 'Finished.')
+            log_print(2, 'znert_mat_f32: ', znert_mat_f32.shape, znert_mat_f32.dtype)
         ############################################################################################################
         #### whiten the input data in time series
-        log_print(1, 'Whitening the ZNERT matrix...')
-        with Timer(tag='wt', verbose=False, summary=local_time_summary):
-            if self.wtlen:
+        if self.wtlen:
+            with Timer(tag='wt', verbose=False, summary=local_time_summary):
+                log_print(1, 'Temporal normalization for the ZNERT matrix...')
                 for xs in znert_mat_f32:
                     if xs.max() > xs.min():
                         tnorm_f32(xs,   self.delta, self.wtlen, self.wt_f1, self.wt_f2, 1.0e-5, self.whiten_taper_halfsize)
-        with Timer(tag='wf', verbose=False, summary=local_time_summary):
-            if self.wflen:
+                log_print(2, 'Finished.')
+        if self.wflen:
+            with Timer(tag='wf', verbose=False, summary=local_time_summary):
+                log_print(1, 'Spectral whitening for the ZNERT matrix...')
                 for xs in znert_mat_f32:
                     if xs.max() > xs.min():
                         fwhiten_f32(xs, self.delta, self.wflen, 1.0e-5, self.whiten_taper_halfsize)
-        log_print(2, 'Finished.')
+                log_print(2, 'Finished.')
         ############################################################################################################
         #### remove Nan of Inf
-        log_print(1, 'Zeroing the stations with any Nan of Inf in any of ZNERT...')
         not_valid = lambda xs: np.any( np.isnan(xs) ) or np.any( np.isinf(xs) ) or (np.max(xs) == np.min(xs) )
         with Timer(tag='fix_nan', verbose=False, summary=local_time_summary):
+            log_print(1, 'Zeroing the stations with any Nan of Inf in any of ZNERT...')
             invalid_stas = [idx//5 for idx, xs in enumerate(znert_mat_f32) if not_valid(xs) ]
             invalid_stas = list(set(invalid_stas) )
             for ista in invalid_stas:
@@ -423,19 +420,19 @@ class CS_InterRcv:
                 znert_mat_f32[ista*5+2, :] = 0.0
                 znert_mat_f32[ista*5+3, :] = 0.0
                 znert_mat_f32[ista*5+4, :] = 0.0
-        log_print(2, 'Finished.')
+            log_print(2, 'Finished.')
         ############################################################################################################
         #### fft
-        log_print(1, 'FFTing...')
         with Timer(tag='fft', verbose=False, summary=local_time_summary):
+            log_print(1, 'FFTing...')
             #spectra_c64 = np.fft.rfft(znert_mat_f32, self.cc_fftsize, axis=1) # spectra has (n, cc_fftsize//2+1)
             spectra_c64 = rfft(znert_mat_f32, self.cc_fftsize, axis=1).astype(np.complex64) # spectra has (n, cc_fftsize//2+1)
-        log_print(2, 'Finished.')
-        log_print(2, 'spectra_c64: ', spectra_c64.shape, spectra_c64.dtype)
+            log_print(2, 'Finished.')
+            log_print(2, 'spectra_c64: ', spectra_c64.shape, spectra_c64.dtype)
         ############################################################################################################
         #### selection
-        log_print(1, 'Selecting and weighting(not implemented)...')
         with Timer(tag='select', verbose=False, summary=local_time_summary):
+            log_print(1, 'Selecting and weighting(not implemented)...')
             selection_mat = np.zeros( (stlo_rad.size, stlo_rad.size), dtype=np.int8) + 1
             if (self.gcd_range_rad is not None) or (self.daz_range_rad is not None):
                 gcd_min_rad, gcd_max_rad = self.gcd_range_rad if (self.gcd_range_rad is not None) else (-1, 1000) # (-1, 1000) means to select all
@@ -446,108 +443,128 @@ class CS_InterRcv:
             for ista in invalid_stas:
                 selection_mat[ista,:] = 0
                 selection_mat[:,ista] = 0
-        log_print(2, 'Finished.')
-        log_print(2, 'selection_mat: ', selection_mat.shape, selection_mat.dtype)
+            log_print(2, 'Finished.')
+            log_print(2, 'selection_mat: ', selection_mat.shape, selection_mat.dtype)
         ############################################################################################################
         #### stack index
-        log_print(1, 'Computing the stack index...')
         with Timer(tag='get_stack_index', verbose=False, summary=local_time_summary):
+            log_print(1, 'Computing the stack index...')
             stack_index_mat_nn = np.zeros( (stlo_rad.size, stlo_rad.size), dtype=np.uint32)
             dist_min, dist_step = self.stack_bins.centers[0], self.stack_bins.step
             get_stack_index_mat(stlo_rad.size, stlo_rad, stla_rad, dist_min, dist_step, stack_index_mat_nn)
-        log_print(2, 'Finished.')
-        log_print(2, 'stack_index_mat_nn: ', stack_index_mat_nn.shape, stack_index_mat_nn.dtype)
+            log_print(2, 'Finished.')
+            log_print(2, 'stack_index_mat_nn: ', stack_index_mat_nn.shape, stack_index_mat_nn.dtype)
         ############################################################################################################
         #### cc & stack
-        log_print(1, 'cc&stack...')
         with Timer(tag='ccstack', verbose=False, summary=local_time_summary):
+            log_print(1, 'cc&stack...')
             ch1, ch2 = self.ch_pair_type
             stack_count = self.stack_count
             stack_mat_spec = self.stack_mat_spec
             #print(spectra_c64.dtype, stack_mat_spec.dtype, stack_count.dtype, stack_index_mat_nn.dtype, selection_mat.dtype, flush=True)
             cc_stack(ch1, ch2, spectra_c64, stlo_rad, stla_rad, stack_mat_spec, stack_count, stack_index_mat_nn, selection_mat)
-        log_print(2, 'Finished.')
+            log_print(2, 'Finished.')
         ############################################################################################################
-        t_total = time_time() - t0
-        t_other = t_total*1000 - local_time_summary.total_t() # miliseconds
-        local_time_summary.push('other', t_other, color='k')
+        #t_total = time_time() - t0
+        #t_other = t_total*1000 - local_time_summary.total_t() # miliseconds
+        #local_time_summary.push('other', t_other, color='k')
         log_print(1, 'Time consumption:')
         local_time_summary.plot_rough(file=log_print.log_fid, prefix_str='        ')
-        #log_print(1, 'Total time lapse(%s) zne2rt(%s) wt(%s) wf(%s) fft(%s) selection&weight(%s) cc&stack(%s) other(%s)' % (TimeSummary.pretty_time(t_total),
-        #                                                                                                                    TimeSummary.pretty_time(local_time_summary['zne2znert']['time_ms']),
-        #                                                                                                                    TimeSummary.pretty_time(local_time_summary['wt']['time_ms']),
-        #                                                                                                                    TimeSummary.pretty_time(local_time_summary['wf']['time_ms']),
-        #                                                                                                                    TimeSummary.pretty_time(local_time_summary['fix_nan']['time_ms']),
-        #                                                                                                                    TimeSummary.pretty_time(local_time_summary['fft']['time_ms']),
-        #                                                                                                                    TimeSummary.pretty_time(local_time_summary['select']['time_ms']),
-        #                                                                                                                    TimeSummary.pretty_time(local_time_summary['ccstack']['time_ms']),
-        #                                                                                                                    TimeSummary.pretty_time(t_other) ),  flush=True)
         ############################################################################################################
         self.time_summary += local_time_summary
         ############################################################################################################
     def finish(self, filter_band=(0.02, 0.066), fold=True, cut=None, taper_sec=None, norm=True, ofnm=None):
         """
         """
-        cc_fftsize = self.cc_fftsize
-        stack_count = self.stack_count
-        stack_mat_spec = self.stack_mat_spec
-        ####
-        #stack_mat = np.fft.irfft(stack_mat_spec, cc_fftsize, axis=1).astype(np.float32)
-        stack_mat = irfft(stack_mat_spec, cc_fftsize, axis=1)
-        ####
-        nt = self.nt
-        delta = self.delta
-        rollsize = nt-1
-        stack_mat = np.roll(stack_mat, rollsize, axis=1)
-        stack_mat = stack_mat[:,:-1] #get rid of the zero point
-        cc_t1, cc_t2 = -rollsize*delta, rollsize*delta
-        ####
+        log_print = self.logger
+        log_print(-1, 'To finish...')
+        ############################################################################################################
+        with Timer(tag='finish.ifft', verbose=False, summary=self.time_summary):
+            log_print(1, 'IFFT...')
+            cc_fftsize = self.cc_fftsize
+            stack_count = self.stack_count
+            stack_mat_spec = self.stack_mat_spec
+            ####
+            #stack_mat = np.fft.irfft(stack_mat_spec, cc_fftsize, axis=1).astype(np.float32)
+            stack_mat = irfft(stack_mat_spec, cc_fftsize, axis=1)
+            log_print(2, 'stack_mat:    ', stack_mat.shape, 'Finished.')
+        ############################################################################################################
+        with Timer(tag='finish.roll', verbose=False, summary=self.time_summary):
+            log_print(1, 'Roll...')
+            nt = self.nt
+            delta = self.delta
+            rollsize = nt-1
+            stack_mat = np.roll(stack_mat, rollsize, axis=1)
+            stack_mat = stack_mat[:,:-1] #get rid of the zero point
+            cc_t1, cc_t2 = -rollsize*delta, rollsize*delta
+            log_print(2, 'cc time range:', (cc_t1, cc_t2), 'Finished.' )
+        ############################################################################################################
         if filter_band is not None:
-            f1, f2 = filter_band
-            for xs in stack_mat:
-                iirfilter_f32(xs, delta, 0, 2, f1, f2, 2, 2)
-        ####
+            with Timer(tag='finish.filter', verbose=False, summary=self.time_summary):
+                log_print(1, 'Filter...', filter_band)
+                f1, f2 = filter_band
+                for xs in stack_mat:
+                    iirfilter_f32(xs, delta, 0, 2, f1, f2, 2, 2)
+                log_print(2, 'Finished.')
+        ############################################################################################################
         if fold:
-            stack_mat += stack_mat[:, ::-1]
-            stack_mat = stack_mat[:, rollsize:]
-            cc_t1, cc_t2 = 0, rollsize*delta
-        ####
+            with Timer(tag='finish.fold', verbose=False, summary=self.time_summary):
+                log_print(1, 'Fold...')
+                stack_mat += stack_mat[:, ::-1]
+                stack_mat = stack_mat[:, rollsize:]
+                cc_t1, cc_t2 = 0, rollsize*delta
+                log_print(2, 'stack_mat:    ', stack_mat.shape)
+                log_print(2, 'cc time range:', (cc_t1, cc_t2), 'Finished.')
+        ############################################################################################################
         if cut is not None:
-            post_t1, post_t2 = cut
-            post_t1 = cc_t1 if post_t1 < cc_t1 else post_t1
-            post_t2 = cc_t2 if post_t2 > cc_t2 else post_t2
-            #
-            post_i1 = int( round((post_t1-cc_t1)/delta) )
-            post_i2 = int( round((post_t2-cc_t1)/delta) ) + 1
-            #
-            cc_t1 = cc_t1 + post_i1 *delta
-            cc_t2 = cc_t1 + (post_i2-post_i1-1)*delta
-            stack_mat = stack_mat[:, post_i1:post_i2 ]
-        ####
+            with Timer(tag='finish.cut', verbose=False, summary=self.time_summary):
+                log_print(1, 'Cut...', cut)
+                post_t1, post_t2 = cut
+                post_t1 = cc_t1 if post_t1 < cc_t1 else post_t1
+                post_t2 = cc_t2 if post_t2 > cc_t2 else post_t2
+                #
+                post_i1 = int( round((post_t1-cc_t1)/delta) )
+                post_i2 = int( round((post_t2-cc_t1)/delta) ) + 1
+                #
+                cc_t1 = cc_t1 + post_i1 *delta
+                cc_t2 = cc_t1 + (post_i2-post_i1-1)*delta
+                stack_mat = stack_mat[:, post_i1:post_i2 ]
+                log_print(2, 'stack_mat:    ', stack_mat.shape)
+                log_print(2, 'cc time range:', (cc_t1, cc_t2), 'Finished.')
+        ############################################################################################################
         if taper_sec:
-            post_taper_halfsize = int(taper_sec/delta)
-            for xs in stack_mat:
-                taper(xs, post_taper_halfsize)
-        ####
+            with Timer(tag='finish.taper', verbose=False, summary=self.time_summary):
+                log_print(1, 'Taper...', taper_sec)
+                post_taper_halfsize = int(taper_sec/delta)
+                for xs in stack_mat:
+                    taper(xs, post_taper_halfsize)
+                log_print(2, 'Finished.')
+        ############################################################################################################
         if norm:
-            for xs in stack_mat:
-                v = xs.max()
-                if v> 0.0:
-                    xs *= (1.0/v)
-        ####
+            with Timer(tag='finish.norm', verbose=False, summary=self.time_summary):
+                log_print(1, 'Norm...', taper_sec)
+                for xs in stack_mat:
+                    v = xs.max()
+                    if v> 0.0:
+                        xs *= (1.0/v)
+                log_print(2, 'Finished.')
+        ############################################################################################################
         if ofnm:
-            CS_InterRcv.mkdirs(ofnm)
-            with h5_File(ofnm, 'w') as fid:
-                fid.attrs['cc_time'] = (cc_t1, cc_t2, delta)
-                fid.attrs['stack_bin_centers'] = self.stack_bins.centers
-                fid.attrs['stack_bin_edges'] = self.stack_bins.edges
-                fid.attrs['filter_band'] = filter_band
-                fid.create_dataset('dat', data=stack_mat, dtype=np.float32)
-                fid.create_dataset('stack_count', data=stack_count, dtype=np.int32)
-        ####
+            with Timer(tag='finish.output', verbose=False, summary=self.time_summary):
+                log_print(1, 'Write...', ofnm)
+                CS_InterRcv.mkdirs(ofnm)
+                with h5_File(ofnm, 'w') as fid:
+                    fid.attrs['cc_time'] = (cc_t1, cc_t2, delta)
+                    fid.attrs['stack_bin_centers'] = self.stack_bins.centers
+                    fid.attrs['stack_bin_edges'] = self.stack_bins.edges
+                    fid.attrs['filter_band'] = filter_band
+                    fid.create_dataset('dat', data=stack_mat, dtype=np.float32)
+                    fid.create_dataset('stack_count', data=stack_count, dtype=np.int32)
+                log_print(2, 'Finished.')
+        ############################################################################################################
         self.stack_mat = stack_mat
         self.cc_time_range = (cc_t1, cc_t2)
-        ####
+        ############################################################################################################
         result = {'stack_mat': stack_mat, 'stack_count': stack_count, 
                   'cc_time': (cc_t1, cc_t2, delta),
                   'cc_dist': (self.stack_bins.centers, self.stack_bins.edges) }
@@ -559,18 +576,24 @@ class CS_InterRcv:
         if mpi_comm is None:
             raise ValueError('mpi_comm is None!')
         ####
-        #global_time_summary = TimeSummary(accumulative=True)
-        ####
         log_print = self.logger
         ####
         mpi_comm.Barrier()
         mpi_rank = mpi_comm.Get_rank()
         mpi_ncpu = mpi_comm.Get_size()
-        ####
-        log_print(-1, 'MPI finish on rank0...')
-        log_print( 1, 'Time lapse for all adding')
+        ########################################################################
+        # gather and print time consumption information
+        log_print(-1, 'Finish adding on rank0...')
+        log_print( 1, 'Time summary for adding on this rank')
         self.time_summary.plot_rough(file=log_print.log_fid, prefix_str='        ')
-        ####
+        self.mpi_gather_time_summary()
+        if mpi_rank == 0:
+            log_print( 1, 'Summed time summary for adding on all ranks')
+            self.global_time_summary.plot_rough(file=log_print.log_fid, prefix_str='        ')
+        mpi_comm.Barrier()
+        ########################################################################
+        # gather stack_mat_spec and stack_count
+        log_print(-1, 'MPI reduce stack results to rank0...')
         stack_mat_spec = self.stack_mat_spec
         stack_count    = self.stack_count
         global_stack_mat_spec = stack_mat_spec
@@ -580,16 +603,39 @@ class CS_InterRcv:
             global_stack_count    = np.zeros(stack_count.shape,    dtype=stack_count.dtype )
         mpi_comm.Reduce([stack_mat_spec, MPI.C_FLOAT_COMPLEX], [global_stack_mat_spec, MPI.C_FLOAT_COMPLEX], MPI.SUM, root= 0)
         mpi_comm.Reduce([stack_count, MPI.INT32_T], [global_stack_count, MPI.INT32_T], MPI.SUM, root= 0 )
+        log_print(1, 'Finished.')
         mpi_comm.Barrier()
-        ####
-        log_print(1, 'Finished and return results')
-        ####
+        ########################################################################
+        # finish on rank 0
         if mpi_rank == 0:
+            log_print(-1, 'Finished and return results on rank 0...')
             self.stack_mat_spec = global_stack_mat_spec
             self.stack_count    = global_stack_count
-            return self.finish(filter_band=filter_band, fold=fold, cut=cut, taper_sec=taper_sec, norm=norm, ofnm=ofnm)
+            tmp = self.finish(filter_band=filter_band, fold=fold, cut=cut, taper_sec=taper_sec, norm=norm, ofnm=ofnm)
+            log_print(1, 'Done!')
+            return tmp
         else:
             return None
+    def mpi_gather_time_summary(self):
+        """
+        Gather all `time_summary` from all ranks, and sum them up
+        into a `self.global_time_summary` which is only meaningful
+        on rank 0.
+        """
+        global_time_summary = TimeSummary(accumulative=True)
+        mpi_comm = self.mpi_comm
+        mpi_rank = mpi_comm.Get_rank()
+        mpi_size = mpi_comm.Get_size()
+        if mpi_rank != 0:
+            # Send the object to rank 0
+            mpi_comm.send(self.time_summary, dest=0, tag=mpi_rank)
+        else:
+            global_time_summary += self.time_summary
+            # Rank 0: Receive objects from all other ranks
+            for i in range(1, mpi_size):
+                it_time_summary = mpi_comm.recv(source=i, tag=i)
+                global_time_summary += it_time_summary
+        self.global_time_summary = global_time_summary
     def plot(self, fignm='test.png', figsize=(4, 8), vmin=-0.6, vmax=0.6, cmap='gray', color='#999999', title=''):
         """
         """
