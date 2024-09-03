@@ -190,19 +190,28 @@ class Timer:
     #
     Example:
         >>> # Initialize a TimeSummary object
-        >>> time_summary = TimeSummary()
+        >>> time_summary = TimeSummary(accmulative=True)
+        >>> # Note:
+        >>> # set `accmulative=False` to separate all time consumptions even if they have the same `tag`.
+        >>> # set `accmulative=True` to sum the time consumptions with the same `tag`.
         >>> #
         >>> # Use the Timer to mark the time consumption
-        >>> with Timer(tag='test1', summary=time_summary):
+        >>> with Timer(tag='test1', summary=time_summary): # a `tag` must be provided
         >>>     a = 1
         >>>     b = 2
         >>>     c = a + b
         >>> #
         >>> # Use the Timer as a decorator
-        >>> @Timer(summary=time_summary)
+        >>> @Timer(summary=time_summary) # a `tag` will be created automatically
         >>> def sub(a, b):
         >>>     return a-b
         >>> sub(1, 2)
+        >>> #
+        >>> # Or we can do as below (Note we use the same `tag` as above and `accmulative=True`)
+        >>> @Timer(tag='test1', summary=time_summary)
+        >>> def add(a, b):
+        >>>     return a+b
+        >>> add(1, 2)
         >>> #
         >>> print(time_summary) # Print the summary
         >>> time_summary.plot_rough() # Plot a rough histogram in terminal
