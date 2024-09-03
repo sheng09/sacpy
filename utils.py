@@ -18,6 +18,7 @@ import requests
 import re
 import wget
 import rangeparser, types
+import copy
 
 def deprecated_run(message='will be deprecated soon!'):
     def decorator(func):
@@ -127,6 +128,32 @@ class TimeSummary(OrderedDict):
         if show:
             plt.show()
         plt.close()
+    def __add__(self, other):
+        """
+        Merge two TimeSummary objects. The time consumptions with the same key or tag (if accumulative is on) will be summed together, and the others will be kept.
+        Return a new TimeSummary object. The returned object will use the accumulative and color setting of the first object.
+        """
+        if not isinstance(other, TimeSummary):
+            raise ValueError('Invalid add between an object of TimeSummary and %s' % str(type(other)) )
+        result = TimeSummary(accumulative=self.accumulative)
+        ###### copy and preserve the order of self
+        for id, vol in self.items():
+            result[id] = copy.deepcopy(vol)
+        ######
+        result += other
+        return result
+    def __iadd__(self, other):
+        """
+
+        """
+        if not isinstance(other, TimeSummary):
+            raise ValueError('Invalid add(+=) an object of %s to object of TimeSummary' % str(type(other)) )
+        for id, vol in other.items():
+            if id in self:
+                self[id]['time_ms'] += vol['time_ms']
+            else:
+                self[id] =  copy.deepcopy(vol)
+        return self
     def __str__(self):
         result  = """################ Marked Time Consumption Summary ################\n"""
         for id, vol in self.items():
@@ -405,6 +432,15 @@ class Logger:
     def close(self):
         self.log_fid.close()
 
+def mpi_makedirs(mpi_comm, wd):
+    """
+    Make a directory if it does not exist.
+    """
+    mpi_comm.Barrier()
+    if mpi_comm.Get_rank() == 0:
+        if not os.path.exists(wd):
+            os.makedirs(wd)
+    mpi_comm.Barrier()
 def get_folder(filename, makedir=True, mpi_comm=None):
     """
     Get the folder for hosting a filename, and make the folder if it does not exist and `makedir=True`.
@@ -512,7 +548,7 @@ def get_filename_from_url_content_disposition(url):
     return fname
 
 if __name__ == '__main__':
-    if True:
+    if False:
         t_ms = [10**x+0.1 for x in range(0, 12)]
         for t in t_ms:
             print('%f -> %s' % (t, TimeSummary.pretty_time(t)))
@@ -563,8 +599,9 @@ if __name__ == '__main__':
     if False:
         content = 'Test content %d' % randint(0, 99999999)
         subject = 'Test Subject %d' % randint(0, 99999999)
-    if False:
-        time_summary = TimeSummary(accumulative=True)
+    if True:
+        time_summary  = TimeSummary(accumulative=True)
+        time_summary2 = TimeSummary(accumulative=True)
         with Timer(tag='part1', summary=time_summary):
             a = 1
             b = 2
@@ -575,7 +612,7 @@ if __name__ == '__main__':
             b = 2
             c = a + b
 
-        with Timer(tag='part1', summary=time_summary):
+        with Timer(tag='part1', summary=time_summary2):
             a = 1
             b = 2
             c = a + b
@@ -594,6 +631,11 @@ if __name__ == '__main__':
         print(time_summary)
         time_summary.plot_rough()
         time_summary.plot(show=False, figname='time_summary.png')
+
+        print('\n\n\n')
+        print(time_summary)
+        print(time_summary2)
+        print(time_summary+time_summary2)
     if False:
         with CacheRun('junk.h5', clear=True) as cache:
             print( cache.load_from_cache('key1') )
