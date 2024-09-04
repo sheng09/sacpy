@@ -2154,27 +2154,62 @@ def event_mseed2h5(input, h5_fnm, inventory,
         if channels in ('ZNE', 'NE', 'N', 'E'): # rotate to ZNE is necessary
             tmp = [it.to_stream() for it in lst_strec if it.is_zne_z12()]
             for it in tmp:
-                msg = it.__str__(extended=True)
                 try:
                     it.rotate( '->ZNE', inventory=inventory)
                     lst_st.append(it)
                 except Exception as err: # rotation could fail due to the lack of inventory
-                    print('<<<<<<<<<<<<<<<<<<', file=sys.stderr)
-                    print('Failed to rotate to ZNE for %s' % msg, file=sys.stderr)
-                    traceback.print_exc(file=sys.stderr)
-                    print(err, file=sys.stderr)
-                    print('>>>>>>>>>>>>>>>>>>', file=sys.stderr)
+                    #print('<<<<<<<<<<<<<<<<<<', file=sys.stderr)
+                    #rint('Failed to rotate to ZNE for %s' % msg, file=sys.stderr)
+                    #traceback.print_exc(file=sys.stderr)
+                    #print(err, file=sys.stderr)
+                    #print('>>>>>>>>>>>>>>>>>>', file=sys.stderr)
+                    msg = it.__str__(extended=True)
+                    warn_msg = "Cannot rotate to ZNE for %s" % msg
+                    warnings.warn(warn_msg)
     #### search for stlo, stla, stel, stdp for each station
     with Timer(tag='get_station_coords', verbose=False, summary=time_summary):
         ids = [it[0].get_id() for it in lst_st]
         stnms = ['.'.join( it.split('.')[:-1] ) for it in ids ]
-        try:
-            st_coords = [inventory.get_coordinates(it[0].get_id(), it[0].stats.starttime) for it in lst_st]
-        except Exception as err:
+        flag_need_coords = True
+        if flag_need_coords:
             try:
-                st_coords = [inventory.get_coordinates(it[0].get_id() ) for it in lst_st]
+                st_coords = [inventory.get_coordinates(it[0].get_id(), it[0].stats.starttime) for it in lst_st]
+                flag_need_coords= False
             except Exception as err:
                 pass
+        if flag_need_coords:
+            # maybe the time range does not cover, try to fix it
+            try:
+                st_coords = [inventory.get_coordinates(it[0].get_id() ) for it in lst_st]
+                flag_need_coords= False
+            except Exception as err:
+                pass
+        if flag_need_coords:
+            # maybe the traces' ids contain wrong channel names (),
+            # e.g., 'E' other than 'BHE' or 'HHE' or 'LHE'. Sheng found this issue for 2G.SS1..E for 2016-11-13 events
+            # which should be 2G.SS1..HHE according to IRIS-MDA search results.
+            st_coords  = list()
+            new_lst_st = list()
+            # let's go over each station
+            for it in lst_st:
+                #### let's try to fix with different channel names, and give up the stations that
+                #### cannot be fixed. That means, we will use the `new_lst_st` only for those wrongless
+                #### or fixed, and it exclude those that cannot be fixed.
+                id0 = it[0].get_id()
+                id1= "%(network)s.%(station)s.%(location)s.BH%(channel)s" % it[0].stats
+                id2= "%(network)s.%(station)s.%(location)s.HH%(channel)s" % it[0].stats
+                id3= "%(network)s.%(station)s.%(location)s.LH%(channel)s" % it[0].stats
+                for id in (id0, id1, id2, id3):
+                    try:
+                        coord = inventory.get_coordinates(id)
+                        st_coords.append(coord)
+                        new_lst_st.append(it)
+                        break
+                    except Exception as err:
+                        pass
+            lst_st = new_lst_st
+            flag_need_coords = False
+        ##########################################################################################
         stlas = np.array([it['latitude']    for it in st_coords], dtype=np.float64)
         stlos = np.array([it['longitude']   for it in st_coords], dtype=np.float64)
         stels = np.array([it['elevation']   for it in st_coords], dtype=np.float64)
@@ -2184,6 +2219,11 @@ def event_mseed2h5(input, h5_fnm, inventory,
             dists = np.array([haversine(evlo, evla, stlo, stla) for stlo, stla in zip(stlos, stlas)], dtype=np.float64 )
             azs   = np.array([azimuth(evlo, evla, stlo, stla)   for stlo, stla in zip(stlos, stlas)], dtype=np.float64 )
             bazs  = np.array([azimuth(stlo, stla, evlo, evla)   for stlo, stla in zip(stlos, stlas)], dtype=np.float64 )
+    ####
+    if len(lst_st) <= 0:
+        warn_msg = 'Empty streams after rotation to ZNE and trying to get station coordinates! Nothing to save to hdf5'
+        warnings.warn(warn_msg)
+        return 0, 0
     #### convert to a matrix
     with Timer(tag='convert_to_mat', verbose=False, summary=time_summary):
         nch = len(channels)
