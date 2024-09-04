@@ -198,16 +198,22 @@ def cc_stack(ch1, ch2, znert_mat_spec_c64, lo_rad, la_rad, stack_mat_spec_c64, s
         e1 = mat_spec[ista1*ncmp+2]
         err1 = mat_spec[ista1*ncmp+3]
         ert1 = mat_spec[ista1*ncmp+4]
+        #### compute the angle from 1->2 and 2->1
+        angle12 =  HALF_PI - azimuth_rad(lo1, la1, lo_rad, la_rad)  # convert azimuth (clockwise from north) to angle (counter-clockwise from east)
+        angle21 = -HALF_PI - azimuth_rad(lo_rad, la_rad, lo1, la1)
+        cos12, sin12 = np.cos(angle12).astype(np.float32), np.sin(angle12).astype(np.float32)
+        cos21, sin21 = np.cos(angle21).astype(np.float32), np.sin(angle21).astype(np.float32)
+        ####
         start = 0 if ch1 != ch2 else ista1
         for ista2 in range(start, n):
-            lo2, la2 = lo_rad[ista2], la_rad[ista2]
+            #lo2, la2 = lo_rad[ista2], la_rad[ista2]
             z2 = mat_spec[ista2*ncmp]
             n2 = mat_spec[ista2*ncmp+1]
             e2 = mat_spec[ista2*ncmp+2]
             err2 = mat_spec[ista2*ncmp+3]
             ert2 = mat_spec[ista2*ncmp+4]
             ####
-            if stack_index_mat_nn[ista1, ista2] > 0:
+            if selection_mat_nn[ista1, ista2] > 0:
                 if flag_IR:
                     # rotate to get IRR and IRT along the great-circle-path between the two stations
                     # virtual event -> station #1 -> station #2
@@ -223,14 +229,20 @@ def cc_stack(ch1, ch2, znert_mat_spec_c64, lo_rad, la_rad, stack_mat_spec_c64, s
                     #    / sta #1
                     #   /
                     #  * virtual event
-                    ang1 =  HALF_PI - azimuth_rad(lo1, la1, lo2, la2)  # convert azimuth (clockwise from north) to angle (counter-clockwise from east)
-                    ang2 = -HALF_PI - azimuth_rad(lo2, la2, lo1, la1)
-                    c1, s1 = np.array(np.cos(ang1), dtype=np.float32), np.array(np.sin(ang1), dtype=np.float32)
-                    c2, s2 = np.array(np.cos(ang2), dtype=np.float32), np.array(np.sin(ang2), dtype=np.float32)
-                    irr1 = e1*c1 + n1*s1
-                    irt1 = e1*s1 - n1*c1
-                    irr2 = e2*c2 + n2*s2
-                    irt2 = e2*s2 - n2*c2
+                    #irr1 = e1*c1 + n1*s1
+                    #irt1 = e1*s1 - n1*c1
+                    #irr2 = e2*c2 + n2*s2
+                    #irt2 = e2*s2 - n2*c2
+                    c1, s1 = cos12[ista2], sin12[ista2]
+                    c2, s2 = cos21[ista2], sin21[ista2]
+                    if ch1 == 1:             #1 for inter-receiver R IRR
+                        irr1 = e1*c1 + n1*s1 #
+                    elif ch1 == 2:           #2 for inter-receiver T IRT
+                        irt1 = e1*s1 - n1*c1 #
+                    if ch2 == 1:             #1 for inter-receiver R IRR
+                        irr2 = e2*c2 + n2*s2 #
+                    elif ch2 == 2:           #2 for inter-receiver T IRT
+                        irt2 = e2*s2 - n2*c2 #
                 #### cc
                 #dtypes = dtypes.union( set( [str(it) for it in (z1.dtype, irr1.dtype, irt1.dtype, n1.dtype, e1.dtype, err1.dtype, ert1.dtype)] ) )
                 #print(z1.dtype, irr1.dtype, irt1.dtype, n1.dtype, e1.dtype, err1.dtype, ert1.dtype, flush=True)
@@ -373,7 +385,7 @@ class CS_InterRcv:
         ############################################################################################################
         #### log
         log_print = self.logger
-        log_print(-1, 'Adding... %s' % infostr)
+        log_print(-1, 'Adding... %s' % infostr, flush=True)
         log_print( 1, 'Function variables:')
         log_print( 2, 'zne_mat_f32: ', zne_mat_f32.shape, zne_mat_f32.dtype)
         log_print( 2, 'stlo:        ', stlo_rad.shape, stlo_rad.dtype)
@@ -584,7 +596,7 @@ class CS_InterRcv:
         mpi_ncpu = mpi_comm.Get_size()
         ########################################################################
         # gather stack_mat_spec and stack_count
-        log_print(-1, 'MPI reduce stack results to rank0...')
+        log_print(-1, 'MPI reduce stack results to rank0...', flush=True)
         stack_mat_spec = self.stack_mat_spec
         stack_count    = self.stack_count
         global_stack_mat_spec = stack_mat_spec
@@ -599,11 +611,9 @@ class CS_InterRcv:
         ########################################################################
         # finish on rank 0
         if mpi_rank == 0:
-            log_print(-1, 'Finish on rank 0...')
             self.stack_mat_spec = global_stack_mat_spec
             self.stack_count    = global_stack_count
             to_return = self.finish(filter_band=filter_band, fold=fold, cut=cut, taper_sec=taper_sec, norm=norm, ofnm=ofnm)
-            log_print(1, 'Finished.')
         else:
             to_return = None
         ########################################################################
