@@ -2228,6 +2228,9 @@ def event_mseed2h5(input, h5_fnm, inventory,
             grp.create_dataset('az',   data=azs,   dtype=np.float64)
             grp.create_dataset('baz',  data=bazs,  dtype=np.float64)
         fid.close()
+    del vol
+    del mat
+    del lst_st
     return len(lst_st), mat.shape[0]
 
 #####################################################################################################################
