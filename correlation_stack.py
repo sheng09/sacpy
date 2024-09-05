@@ -378,10 +378,17 @@ class CS_InterRcv:
         log_print( 1, 'whiten_taper_halfsize: ', self.whiten_taper_halfsize, flush=True)
         ############################################################################################################
         self.time_summary  = TimeSummary(accumulative=True)
-    def add(self, zne_mat_f32, stlo_rad, stla_rad, evlo_rad, evla_rad, infostr=None):
+    def add(self, zne_mat_f32, stlo_rad, stla_rad, evlo_rad, evla_rad, infostr=None, local_time_summary=None):
         """
+        local_time_summary: a TimeSummary object to record the time consumption for this function.
+                            If `None`, a internal empty TimeSummary object will be created.
+                            #
+                            Note, all time summary by the `local_time_summary` will be added
+                            to `time.time_summary`.  So be careful for avoiding repeatedly
+                            adding the same time summary multiple times.
         """
-        local_time_summary = TimeSummary(accumulative=True)
+        if local_time_summary is None:
+            local_time_summary = TimeSummary(accumulative=True)
         ############################################################################################################
         #### log
         log_print = self.logger
