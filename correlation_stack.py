@@ -14,7 +14,7 @@ import sys, traceback, os, os.path
 
 from .geomath import haversine_rad, azimuth_rad, point_distance_to_great_circle_plane_rad
 from .utils import Logger, Timer, TimeSummary
-from .processing import fwhiten_f32, tnorm_f32, iirfilter_f32, taper
+from .processing import fwhiten_f32, tnorm_f32, iirfilter_f32, taper, get_rfft_spectra_bound
 
 class StackBins:
     """
@@ -296,6 +296,7 @@ class CS_InterRcv:
                  dist_range=(0.0, 180.0), dist_step=1.0,
                  wtlen=None, wt_f1=None, wt_f2=None, wflen=None, whiten_taper_halfsize=50,
                  daz_range=None, gcd_range=None, log_print=None,
+                 speedup_critical_frequency_band=None, speedup_critical_level=0.01,
                  mpi_comm=None):
         """
         ch_pair_type: a pair of int.
@@ -324,18 +325,20 @@ class CS_InterRcv:
         ############################################################################################################
         # Stacking settings
         self.ch_pair_type = ch_pair_type
-        log_print(-1, 'Init settings' )
+        log_print(-1, 'Init' )
         log_print( 1, 'ch_pair_type:       ', self.ch_pair_type, '(Note: 0:Z; 1:IRR; 2:IRT; 3:N; 4:E; 5:ERR; 6:ERT)')
         #
         self.stack_bins = StackBins(dist_range[0], dist_range[1], dist_step)
-        log_print( 1, 'stack_bins:         ', dist_range, dist_step )
-        log_print( 1, 'stack_bins.centers: ', self.stack_bins.centers[0], '...', self.stack_bins.centers[-1])
-        log_print( 1, 'stack_bins.edges:   ', self.stack_bins.edges[0],   '...', self.stack_bins.edges[-1])
+        log_print( 1, 'Stacking settings:' )
+        log_print( 2, 'stack_bins:         ', dist_range, dist_step )
+        log_print( 2, 'stack_bins.centers: ', self.stack_bins.centers[0], '...', self.stack_bins.centers[-1])
+        log_print( 2, 'stack_bins.edges:   ', self.stack_bins.edges[0],   '...', self.stack_bins.edges[-1])
         #
         self.daz_range_rad = np.deg2rad(daz_range) if daz_range else None
         self.gcd_range_rad = np.deg2rad(gcd_range) if gcd_range else None
-        log_print( 1, 'daz_range:          ', daz_range, self.daz_range_rad)
-        log_print( 1, 'gcd_range:          ', gcd_range, self.gcd_range_rad)
+        log_print( 1, 'Select correlation pairs:' )
+        log_print( 2, 'daz_range:          ', daz_range, self.daz_range_rad)
+        log_print( 2, 'gcd_range:          ', gcd_range, self.gcd_range_rad)
         ############################################################################################################
         # time and spectral settings
         idx0 = 0
@@ -349,23 +352,41 @@ class CS_InterRcv:
         self.nt = nt
         self.delta = delta
         self.cc_fftsize = self.nt*2
-        self.nf = self.cc_fftsize//2 + 1
         self.stack_mat = None
         self.cc_time_range = None
-        log_print( 1, 'delta:                   ', self.delta)
-        log_print( 1, 'original cut_time_range: [%.2f, %.2f]' % (cut_time_range[0], cut_time_range[1]) )
-        log_print( 1, 'adjusted cut_time_range: [%.2f, %.2f]' % (self.cut_time_range[0], self.cut_time_range[1]) )
-        log_print( 1, 'adjusted cut_idx_range:  [%d, %d)' % (self.cut_idx_range[0], self.cut_idx_range[1]) )
-        log_print( 1, 'nt:                      ', self.nt)
-        log_print( 1, 'cc_fftsize:              ', self.cc_fftsize)
-        log_print( 1, 'nf:                      ', self.nf)
+        log_print( 1, 'Time domain settings:' )
+        log_print( 2, 'delta:                   ', self.delta)
+        log_print( 2, 'original cut_time_range: [%.2f, %.2f]' % (cut_time_range[0], cut_time_range[1]) )
+        log_print( 2, 'adjusted cut_time_range: [%.2f, %.2f]' % (self.cut_time_range[0], self.cut_time_range[1]) )
+        log_print( 2, 'adjusted cut_idx_range:  [%d, %d)' % (self.cut_idx_range[0], self.cut_idx_range[1]) )
+        log_print( 2, 'nt:                      ', self.nt)
+        log_print( 2, 'cc_fftsize:              ', self.cc_fftsize)
+        ############################################################################################################
+        # obtain cc_nf for cross correlatino with optional speed up
+        if (speedup_critical_frequency_band is not None) and (speedup_critical_level is not None):
+            i1, i2 = get_rfft_spectra_bound(self.cc_fftsize, self.delta,
+                                            speedup_critical_frequency_band, speedup_critical_level)
+            ####
+            self.cc_speedup_spectra_index_range = (i1, i2)
+            cc_nf = i2-i1
+            log_print( 1, 'Correlation speed up ON')
+            log_print( 2, 'critical_frequency_band:       ', speedup_critical_frequency_band)
+            log_print( 2, 'critical_level:                ', speedup_critical_level)
+            log_print( 2, 'cc_speedup_spectra_index_range:', self.cc_speedup_spectra_index_range)
+            log_print( 2, 'cc_nf:                         ', cc_nf)
+        else:
+            cc_nf = self.cc_fftsize//2 + 1
+            self.cc_speedup_spectra_index_range = (0, cc_nf)
+            log_print( 1, 'Correlation speed up OFF')
+            log_print( 2, 'cc_nf:                         ', cc_nf)
         ############################################################################################################
         # stack buffers
         #self.stack_mat      = np.zeros( (self.stack_bins.centers.size, self.cc_fftsize-1),  dtype=np.float32)
-        self.stack_mat_spec = np.zeros( (self.stack_bins.centers.size, self.nf ), dtype=np.complex64)
+        self.stack_mat_spec = np.zeros( (self.stack_bins.centers.size, cc_nf ), dtype=np.complex64)
         self.stack_count    = np.zeros(  self.stack_bins.centers.size, dtype=np.int32)
-        log_print( 1, 'stack_mat_spec: ', self.stack_mat_spec.shape, self.stack_mat_spec.dtype)
-        log_print( 1, 'stack_count:    ', self.stack_count.shape, self.stack_count.dtype)
+        log_print( 1, 'Correlation spectra stack buffer:')
+        log_print( 2, 'stack_mat_spec: ', self.stack_mat_spec.shape, self.stack_mat_spec.dtype)
+        log_print( 2, 'stack_count:    ', self.stack_count.shape, self.stack_count.dtype)
         ############################################################################################################
         # whiten settings
         self.wtlen = wtlen
@@ -373,9 +394,29 @@ class CS_InterRcv:
         self.wt_f2 = wt_f2
         self.wflen = wflen
         self.whiten_taper_halfsize = whiten_taper_halfsize
-        log_print( 1, 'wtlen:                 ', self.wtlen, self.wt_f1, self.wt_f2)
-        log_print( 1, 'wflen:                 ', self.wflen)
-        log_print( 1, 'whiten_taper_halfsize: ', self.whiten_taper_halfsize, flush=True)
+        log_print( 1, 'Temporal normalization and spectral whitening settings:')
+        log_print( 2, 'wtlen:                 ', self.wtlen, self.wt_f1, self.wt_f2)
+        log_print( 2, 'wflen:                 ', self.wflen)
+        log_print( 2, 'whiten_taper_halfsize: ', self.whiten_taper_halfsize, flush=True)
+        ############################################################################################################
+        # Optional: turn on spectral whitening speedup
+        if (speedup_critical_frequency_band is not None) and (speedup_critical_level is not None) and (self.wtlen is not None):
+            f1, f2 = speedup_critical_frequency_band
+            f1, f2 = f1-wflen, f2+wflen
+            if f1 < 0:
+                f1 = 0
+            if f2 > 0.5/self.delta:
+                f2 = 0.5/self.delta
+            i1, i2 = get_rfft_spectra_bound(self.nt, self.delta, (f1, f2), speedup_critical_level)
+            ####
+            self.whiten_speedup_spectra_index_range = (i1, i2)
+            log_print( 1, 'Spectral whitening speedup ON')
+            log_print( 2, 'critical_frequency_band:           ', (f1, f2) )
+            log_print( 2, 'critical_level:                    ', speedup_critical_level)
+            log_print( 2, 'whiten_speedup_spectra_index_range:', self.whiten_speedup_spectra_index_range)
+        else:
+            self.whiten_speedup_spectra_index_range = (-1, -1) # -1 in fwhiten_f32 for disabling speedup
+            log_print( 1, 'Spectral whitening speedup OFF or not applicable')
         ############################################################################################################
         self.time_summary  = TimeSummary(accumulative=True)
     def add(self, zne_mat_f32, stlo_rad, stla_rad, evlo_rad, evla_rad, infostr=None, local_time_summary=None):
@@ -410,6 +451,7 @@ class CS_InterRcv:
             zne2znert(zne_mat_f32[:, idx0:idx1], znert_mat_f32, stlo_rad, stla_rad, evlo_rad, evla_rad)
             log_print(2, 'Finished.')
             log_print(2, 'znert_mat_f32: ', znert_mat_f32.shape, znert_mat_f32.dtype)
+            del zne_mat_f32
         ############################################################################################################
         #### whiten the input data in time series
         if self.wtlen:
@@ -421,10 +463,11 @@ class CS_InterRcv:
                 log_print(2, 'Finished.')
         if self.wflen:
             with Timer(tag='wf', verbose=False, summary=local_time_summary):
+                su_wf_i1, su_wf_i2 = self.whiten_speedup_spectra_index_range # default is (-1, -1) to disable speedup
                 log_print(1, 'Spectral whitening for the ZNERT matrix...')
                 for xs in znert_mat_f32:
                     if xs.max() > xs.min():
-                        fwhiten_f32(xs, self.delta, self.wflen, 1.0e-5, self.whiten_taper_halfsize)
+                        fwhiten_f32(xs, self.delta, self.wflen, 1.0e-5, self.whiten_taper_halfsize, su_wf_i1, su_wf_i2)
                 log_print(2, 'Finished.')
         ############################################################################################################
         #### remove Nan of Inf
@@ -444,10 +487,14 @@ class CS_InterRcv:
         #### fft
         with Timer(tag='fft', verbose=False, summary=local_time_summary):
             log_print(1, 'FFTing...')
-            #spectra_c64 = np.fft.rfft(znert_mat_f32, self.cc_fftsize, axis=1) # spectra has (n, cc_fftsize//2+1)
-            spectra_c64 = rfft(znert_mat_f32, self.cc_fftsize, axis=1).astype(np.complex64) # spectra has (n, cc_fftsize//2+1)
+            nrow = znert_mat_f32.shape[0]
+            i1, i2 = self.cc_speedup_spectra_index_range
+            spectra_c64 = np.zeros( (nrow, i2-i1), dtype=np.complex64)
+            for irow in range(nrow): # do fft one by one may save some memory
+                spectra_c64[irow] = rfft(znert_mat_f32[irow], self.cc_fftsize)[i1:i2]
             log_print(2, 'Finished.')
             log_print(2, 'spectra_c64: ', spectra_c64.shape, spectra_c64.dtype)
+            del znert_mat_f32
         ############################################################################################################
         #### selection
         with Timer(tag='select', verbose=False, summary=local_time_summary):
@@ -462,8 +509,8 @@ class CS_InterRcv:
             for ista in invalid_stas:
                 selection_mat[ista,:] = 0
                 selection_mat[:,ista] = 0
-            log_print(2, 'Finished.')
             log_print(2, 'selection_mat: ', selection_mat.shape, selection_mat.dtype)
+            log_print(2, 'Finished.')
         ############################################################################################################
         #### stack index
         with Timer(tag='get_stack_index', verbose=False, summary=local_time_summary):
@@ -471,8 +518,8 @@ class CS_InterRcv:
             stack_index_mat_nn = np.zeros( (stlo_rad.size, stlo_rad.size), dtype=np.uint32)
             dist_min, dist_step = self.stack_bins.centers[0], self.stack_bins.step
             get_stack_index_mat(stlo_rad.size, stlo_rad, stla_rad, dist_min, dist_step, stack_index_mat_nn)
-            log_print(2, 'Finished.')
             log_print(2, 'stack_index_mat_nn: ', stack_index_mat_nn.shape, stack_index_mat_nn.dtype)
+            log_print(2, 'Finished.')
         ############################################################################################################
         #### cc & stack
         with Timer(tag='ccstack', verbose=False, summary=local_time_summary):
@@ -505,7 +552,11 @@ class CS_InterRcv:
             stack_mat_spec = self.stack_mat_spec
             ####
             #stack_mat = np.fft.irfft(stack_mat_spec, cc_fftsize, axis=1).astype(np.float32)
-            stack_mat = irfft(stack_mat_spec, cc_fftsize, axis=1)
+            #stack_mat = irfft(stack_mat_spec, cc_fftsize, axis=1)
+            i1, i2 = self.cc_speedup_spectra_index_range
+            full_stack_mat_spec = np.zeros( (stack_mat_spec.shape[0], i2), dtype=np.complex64)
+            full_stack_mat_spec[:, i1:i2] = stack_mat_spec
+            stack_mat = irfft(full_stack_mat_spec, cc_fftsize, axis=1)
             log_print(2, 'stack_mat:    ', stack_mat.shape, stack_mat.dtype, 'Finished.')
         ############################################################################################################
         with Timer(tag='finish.roll', verbose=False, summary=self.time_summary):
@@ -692,11 +743,12 @@ class CS_InterRcv:
                 os.makedirs(folder)
 
 if __name__ == "__main__":
-    bins = StackBins(0, 10, 1)
-    print(bins.centers)
-    print(bins.edges)
-    print(bins.get_idx(2.5))
-    print(bins.get_idx(3.5))
-    print(bins.get_idx(4.5))
-    print(bins.get_idx(5.5))
-    print(bins.get_idx(6.5))
+    if False:
+        bins = StackBins(0, 10, 1)
+        print(bins.centers)
+        print(bins.edges)
+        print(bins.get_idx(2.5))
+        print(bins.get_idx(3.5))
+        print(bins.get_idx(4.5))
+        print(bins.get_idx(5.5))
+        print(bins.get_idx(6.5))

@@ -322,7 +322,65 @@ def floor_closest_amp_index(xs, t0, delta, tref, amplitude=0.0):
     i0 = np.where(vmul<=0.0)[0][-1]
     return i0, t0+delta*i0, ys[i0]
 
-
+#############################################################################################################################
+# search sth for spectra processing
+#############################################################################################################################
+def get_rfft_spectra_bound(fftsize, delta, frequency_band, critical_level=0.01):
+    """
+    Return the index bound [i1, i2) for spectral computation, based on the
+    fact that the spectra outside  [i1, i2), namely the given `frequency_band`,
+    are below the `critical_level` and hence can be ignored.
+    #
+    Note: we consider the rfft for the transform between time and frequency domain.
+    In other words, the `fftsize` means the spectra length is `fftsize//2+1`.
+    #
+    Parameters:
+        fftsize:        the fft size.
+        delta:          the sampling interval in seconds.
+        frequency_band: the frequency band of interest. A tuple of (f1, f2) in Hz.
+        critical_level: the critical level between 0.0 and 1.0 for ignoring the spectra.
+                        `critical_level=0.01` means ignoring spectra below 1% of
+                        the maximum amplitude
+                        Default is 0.01.
+    Return:
+        i1, i2: the index bound for the frequency band.
+    """
+    df = 1.0/(fftsize*delta)
+    fmin, fmax = df, 0.5/delta-df # safe value
+    f1, f2 = frequency_band
+    ##########################################################################################
+    if f1 >= f2 or (f1<=fmin and f2>=fmax) or f1>=fmax or f2 <=fmin:
+        return 0, fftsize//2+1
+    ##########################################################################################
+    i1, i2 = 0, fftsize//2+1
+    x = np.zeros(fftsize, dtype=np.float32)
+    x[fftsize//2] = 1.0 # Note! cannot use x[0] = 1.0 for setting the delta function
+    if f1 <=fmin:    # a lowpass filter is used
+        iirfilter_f32(x, delta, 0, 0, f1, f2, 2, 2)
+        amp = np.abs( rfft(x, fftsize) )
+        c = amp.max() * critical_level
+        i2 = np.argmax(amp<c)
+    elif f2 >= fmax: # a highpass filter is used
+        iirfilter_f32(x, delta, 0, 1, f1, f2, 2, 2)
+        amp = np.abs( rfft(x, fftsize) )
+        c = amp.max() * critical_level
+        i1 = np.argmax(amp>=c)
+    else:             # a bandpass filter is used
+        iirfilter_f32(x, delta, 0, 2, f1, f2, 2, 2)
+        amp = np.abs( rfft(x, fftsize) )
+        c = amp.max() * critical_level
+        i1 = np.argmax(amp>=c)
+        i2 = i1 + np.argmax(amp[i1:]<c)
+    ##########################################################################################
+    # in case of out of bound or invalid values
+    if i1 < 0:
+        i1 = 0
+    if i2 > fftsize//2+1:
+        i2 = fftsize//2+1
+    if i2 <= i1:
+        i1, i2 = 0, fftsize//2+1
+    ##########################################################################################
+    return i1, i2
 
 #############################################################################################################################
 # JIT cut
@@ -626,6 +684,31 @@ def split_arrays_range(xmin, xmax, xs, *args, edge='i'):
 if __name__ == "__main__":
     import matplotlib.pyplot as plt
     if True:
+        critical_level = 0.01 # 1 percent
+        fftsize = 32401
+        dt = 1.0
+        band = (0.02, 0.06666)
+        i1, i2 = get_rfft_spectra_bound(fftsize, dt, band, critical_level)
+        ###
+        xs = np.zeros(fftsize, dtype=np.float32)
+        xs[fftsize//2] = 1.0
+        ys = xs.copy()
+        iirfilter_f32(ys, dt, 0, 2, band[0], band[1], 2, 2)
+        xfs = rfft(xs, fftsize)
+        yfs = rfft(ys, fftsize)
+        fs = np.fft.rfftfreq(fftsize, d=dt)
+        ###
+        s1, s2 = fs[i1], fs[i2]
+        ###
+        plt.plot(fs, np.abs(xfs) )
+        plt.plot(fs, np.abs(yfs) )
+        plt.plot([s1, s1], [0, 1], 'r')
+        plt.plot([s2, s2], [0, 1], 'r')
+        plt.plot(fs, critical_level+fs*0)
+        plt.ylim((-0.1, 2) )
+        plt.title((i2-i1)/fs.size*100)
+        plt.show()
+    if False:
         xs = np.array([0, 1, 2, 4, 5, 6, 7, 5, 3, 2, 1, 0])
         ys = np.array(xs)+10
         zs = np.array(xs)+20
