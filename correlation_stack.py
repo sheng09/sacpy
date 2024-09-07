@@ -88,7 +88,7 @@ def zne2znert(zne_mat, znert_mat, stlo_rad, stla_rad, evlo_rad, evla_rad):
         znert_mat[ista*5+4] = e*s - n*c
 
 @jit(nopython=True, nogil=True)
-def gcd_daz_selection(n, lo_rad, la_rad, ptlo_rad, ptla_rad, gcd_min_rad, gcd_max_rad, daz_min_rad, daz_max_rad, selection_mat_nn):
+def gcd_daz_selection(n, lo_rad, la_rad, ptlo_rad, ptla_rad, gcd_range_rad, daz_range_rad, selection_mat_nn):
     """
     Compute a NxN matrix with values of 1 or 0 for selecting the pairs of stations or not.
     1 for selecting and 0 for discarding.
@@ -109,24 +109,48 @@ def gcd_daz_selection(n, lo_rad, la_rad, ptlo_rad, ptla_rad, gcd_min_rad, gcd_ma
         ptla_rad: a single value for the latitude of the point in radian
                   This means the event latitude for inter-station correlations,
                   and the station latitude for inter-source correlations.
-        gcd_min_rad: the minimum great circle distance in radian
-        gcd_max_rad: the maximum great circle distance in radian
-        daz_min_rad: the minimum azimuth difference in radian
-        daz_max_rad: the maximum azimuth difference in radian
+        gcd_range_rad: the minimum and maximum great circle distance in radian
+        daz_range_rad: the minimum and maximum azimuth difference in radian
         selection_mat_nn: the output selection matrix
     """
-    az = azimuth_rad(ptlo_rad, ptla_rad, lo_rad, la_rad)
-    np.fill_diagonal(selection_mat_nn, 1)
-    for ista1 in range(n-1):
-        lo1, la1, az1 = lo_rad[ista1], la_rad[ista1], az[ista1]
-        ista2 = ista1+1
-        gcd = np.abs( point_distance_to_great_circle_plane_rad(ptlo_rad, ptla_rad, lo1, la1, lo_rad[ista2:], la_rad[ista2:] ) )
-        daz = np.abs( az1-az[ista2:] ) % PI
-        daz = np.minimum(daz, PI-daz)
-        v = np.where((gcd_min_rad<=gcd) & (gcd<=gcd_max_rad), 1, 0) & np.where((daz_min_rad<=daz) & (daz<=daz_max_rad), 1, 0)
-        selection_mat_nn[ista1, ista2:] = v
+    dont_select_gcd = (gcd_range_rad.size == 0)
+    dont_select_daz = (daz_range_rad.size == 0)
+    if dont_select_gcd and dont_select_daz:
+        selection_mat_nn.fill(1)
+        return
+    ####
+    selection_mat_nn.fill(1)
+    single_row = np.zeros(n, dtype=selection_mat_nn.dtype)
+    #### select gcd
+    if not dont_select_gcd:
+        gcd_range_rad = np.reshape(gcd_range_rad, (-1, 2) )
+        for ista1 in range(n-1):
+            lo1, la1 = lo_rad[ista1], la_rad[ista1]
+            ista2 = ista1+1
+            gcd = np.abs( point_distance_to_great_circle_plane_rad(ptlo_rad, ptla_rad, lo1, la1, lo_rad[ista2:], la_rad[ista2:] ) )
+            single_row.fill(0)
+            for (gcd_min, gcd_max) in gcd_range_rad:
+                inside = (gcd_min<=gcd) & (gcd<=gcd_max)
+                single_row[ista2:] |= inside      # the value before ista2 is always zero!
+            selection_mat_nn[ista1] &= single_row # second, modify each row. The lower triangle including the diagonal is always zero
+    ### select daz
+    if not dont_select_daz:
+        daz_range_rad = np.reshape(daz_range_rad, (-1, 2) )
+        az = azimuth_rad(ptlo_rad, ptla_rad, lo_rad, la_rad)
+        for ista1 in range(n-1):
+            lo1, la1, az1 = lo_rad[ista1], la_rad[ista1], az[ista1]
+            ista2 = ista1+1
+            daz = np.abs( az1-az[ista2:] ) % PI
+            daz = np.minimum(daz, PI-daz)
+            single_row.fill(0)
+            for (daz_min, daz_max) in daz_range_rad:
+                inside = (daz_min<=daz) & (daz<=daz_max)
+                single_row[ista2:] |= inside      # the value before ista2 is always zero!
+            selection_mat_nn[ista1] &= single_row # third, modify each row. The lower triangle including the diagonal is always zero
+    ###
+    np.fill_diagonal(selection_mat_nn, 1) # the diagonal (auto correlation) is always zero
     selection_mat_nn |= selection_mat_nn.T # make it symmetric
-#@jit(nopython=True, nogil=True)
+@jit(nopython=True, nogil=True)
 def gc_center_selection(n, lo_rad, la_rad, ptlo_rad, ptla_rad,
                         gc_center_rect_boxes_rad, gc_center_circles_rad,
                         gc_center_selection_mat_nn):
@@ -210,6 +234,7 @@ def gc_center_selection(n, lo_rad, la_rad, ptlo_rad, ptla_rad,
     gc_center_rect_boxes_rad = np.reshape(gc_center_rect_boxes_rad, (-1, 4) )
     gc_center_circles_rad    = np.reshape(gc_center_circles_rad,    (-1, 3) )
     ####
+    gc_center_selection_mat_nn.fill(0)
     rect_mat_row   = np.zeros(n, dtype=gc_center_selection_mat_nn.dtype)
     circle_mat_row = np.zeros(n, dtype=gc_center_selection_mat_nn.dtype)
     for ista1 in range(n):
@@ -237,7 +262,7 @@ def gc_center_selection(n, lo_rad, la_rad, ptlo_rad, ptla_rad,
             circle_mat_row.fill(1)
         ####
         rect_mat_row &= circle_mat_row
-        gc_center_selection_mat_nn[ista1] = rect_mat_row # each entire row is modified
+        gc_center_selection_mat_nn[ista1, ista1:] = rect_mat_row[ista1:] # only modify the upper triangle including the diagonal
     #### make it symmetric
     gc_center_selection_mat_nn |= gc_center_selection_mat_nn.T
 __stack_bin_index = StackBins.stack_bin_index
@@ -448,9 +473,11 @@ class CS_InterRcv:
         log_print( 2, 'stack_bins:         ', dist_range, dist_step )
         log_print( 2, 'stack_bins.centers: ', self.stack_bins.centers[0], '...', self.stack_bins.centers[-1])
         log_print( 2, 'stack_bins.edges:   ', self.stack_bins.edges[0],   '...', self.stack_bins.edges[-1])
-        #
-        self.daz_range_rad = np.deg2rad(daz_range) if daz_range else None
-        self.gcd_range_rad = np.deg2rad(gcd_range) if gcd_range else None
+        ### daz and gcd selections
+        daz_range = np.zeros(0) if (daz_range is None) else daz_range
+        gcd_range = np.zeros(0) if (gcd_range is None) else gcd_range
+        self.daz_range_rad = np.deg2rad(daz_range)
+        self.gcd_range_rad = np.deg2rad(gcd_range)
         log_print( 1, 'Select correlation pairs:' )
         log_print( 2, 'daz_range (deg and rad):', daz_range, self.daz_range_rad)
         log_print( 2, 'gcd_range (deg and rad):', gcd_range, self.gcd_range_rad)
@@ -634,14 +661,11 @@ class CS_InterRcv:
         ############################################################################################################
         #### selection w.r.t. to gcd and daz
         with Timer(tag='gcd_daz_select', verbose=False, summary=local_time_summary):
-            if (self.gcd_range_rad is not None) or (self.daz_range_rad is not None):
-                log_print(1, 'Selecting and weighting(not implemented)...')
-                gcd_daz_selection_mat = np.ones( (stlo_rad.size, stlo_rad.size), dtype=np.int8)
-                gcd_min_rad, gcd_max_rad = self.gcd_range_rad if (self.gcd_range_rad is not None) else (-1, 1000) # (-1, 1000) means to select all
-                daz_min_rad, daz_max_rad = self.daz_range_rad if (self.daz_range_rad is not None) else (-1, 1000) # (-1, 1000) means to select all
-                gcd_daz_selection_mat.fill(0)
+            if (self.gcd_range_rad.size>0) or (self.daz_range_rad.size>0):
+                log_print(1, 'Selecting wr.t. gcd and daz ranges...')
+                gcd_daz_selection_mat = np.zeros( (stlo_rad.size, stlo_rad.size), dtype=np.int8)
                 gcd_daz_selection(stlo_rad.size, stlo_rad, stla_rad, evlo_rad[0], evla_rad[0],
-                                  gcd_min_rad, gcd_max_rad, daz_min_rad, daz_max_rad, gcd_daz_selection_mat)
+                                  self.gcd_range_rad, self.daz_range_rad, gcd_daz_selection_mat)
                 if flag_save_pair_selection_matrix and intermediate_outfnm_prefix:
                     fnm = '%sgcd_daz_selection_mat.npy' % intermediate_outfnm_prefix
                     np.save(fnm, gcd_daz_selection_mat)
@@ -696,7 +720,7 @@ class CS_InterRcv:
             stack_count = self.stack_count
             stack_mat_spec = self.stack_mat_spec
             #print(spectra_c64.dtype, stack_mat_spec.dtype, stack_count.dtype, stack_index_mat_nn.dtype, selection_mat.dtype, flush=True)
-            cc_stack(ch1, ch2, spectra_c64, stlo_rad, stla_rad, stack_mat_spec, stack_count, stack_index_mat_nn, selection_mat)
+            cc_stack(ch1, ch2, spectra_c64, stlo_rad, stla_rad, stack_mat_spec, stack_count, stack_index_mat_nn, ccpairs_selection_mat)
             log_print(2, 'Finished.')
         ############################################################################################################
         #t_total = time_time() - t0
