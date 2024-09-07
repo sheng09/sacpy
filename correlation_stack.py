@@ -545,7 +545,9 @@ class CS_InterRcv:
             log_print( 1, 'Spectral whitening speedup OFF or not applicable')
         ############################################################################################################
         self.time_summary  = TimeSummary(accumulative=True)
-    def add(self, zne_mat_f32, stlo_rad, stla_rad, evlo_rad, evla_rad, infostr=None, local_time_summary=None):
+    def add(self, zne_mat_f32, stlo_rad, stla_rad, evlo_rad, evla_rad, infostr=None, local_time_summary=None,
+            flag_save_pair_selection_matrix=False,
+            intermediate_outfnm_prefix='./'):
         """
         local_time_summary: a TimeSummary object to record the time consumption for this function.
                             If `None`, a internal empty TimeSummary object will be created.
@@ -553,6 +555,12 @@ class CS_InterRcv:
                             Note, all time summary by the `local_time_summary` will be added
                             to `time.time_summary`.  So be careful for avoiding repeatedly
                             adding the same time summary multiple times.
+        intermediate_outfnm_prefix:      the filename prefix for output intermediate data during running this function.
+        flag_save_pair_selection_matrix: if True, the correlation-pair selection matrix will be saved and write to file.
+                                         The saved matrix is an NxN square and symmetric matrix with 1 for selecting
+                                         and 0 for discarding. It will be linked to the input `stlo_rad, stla_rad`.
+                                         The ijth component of the matrix is 1 or 0 to select or discard the pair
+                                         formed by the ith and jth stations.
         """
         if local_time_summary is None:
             local_time_summary = TimeSummary(accumulative=True)
@@ -622,35 +630,55 @@ class CS_InterRcv:
             log_print(2, 'spectra_c64: ', spectra_c64.shape, spectra_c64.dtype)
             del znert_mat_f32
         ############################################################################################################
+        ccpairs_selection_mat = np.ones( (stlo_rad.size, stlo_rad.size), dtype=np.int8)
+        ############################################################################################################
         #### selection w.r.t. to gcd and daz
         with Timer(tag='gcd_daz_select', verbose=False, summary=local_time_summary):
-            log_print(1, 'Selecting and weighting(not implemented)...')
-            selection_mat = np.ones( (stlo_rad.size, stlo_rad.size), dtype=np.int8)
             if (self.gcd_range_rad is not None) or (self.daz_range_rad is not None):
+                log_print(1, 'Selecting and weighting(not implemented)...')
+                gcd_daz_selection_mat = np.ones( (stlo_rad.size, stlo_rad.size), dtype=np.int8)
                 gcd_min_rad, gcd_max_rad = self.gcd_range_rad if (self.gcd_range_rad is not None) else (-1, 1000) # (-1, 1000) means to select all
                 daz_min_rad, daz_max_rad = self.daz_range_rad if (self.daz_range_rad is not None) else (-1, 1000) # (-1, 1000) means to select all
-                selection_mat.fill(0)
+                gcd_daz_selection_mat.fill(0)
                 gcd_daz_selection(stlo_rad.size, stlo_rad, stla_rad, evlo_rad[0], evla_rad[0],
-                                  gcd_min_rad, gcd_max_rad, daz_min_rad, daz_max_rad, selection_mat)
-            for ista in invalid_stas:
-                selection_mat[ista,:] = 0
-                selection_mat[:,ista] = 0
-            log_print(2, 'selection_mat: ', selection_mat.shape, selection_mat.dtype)
-            log_print(2, 'Finished.')
+                                  gcd_min_rad, gcd_max_rad, daz_min_rad, daz_max_rad, gcd_daz_selection_mat)
+                if flag_save_pair_selection_matrix and intermediate_outfnm_prefix:
+                    fnm = '%sgcd_daz_selection_mat.npy' % intermediate_outfnm_prefix
+                    np.save(fnm, gcd_daz_selection_mat)
+                    log_print(2, 'gcd_daz_selection_mat saved!', fnm)
+                ccpairs_selection_mat &= gcd_daz_selection_mat ##### merge this selection to the functional selection matrix
+                log_print(2, 'gcd_daz_selection_mat: ', gcd_daz_selection_mat.shape, gcd_daz_selection_mat.dtype)
+                del gcd_daz_selection_mat # release memory
+                log_print(2, 'Finished.')
         ############################################################################################################
         #### selection w.r.t. great circle center locations
         with Timer(tag='gc_center_select', verbose=False, summary=local_time_summary):
             if (self.gc_center_rect_boxes_rad.size>0) or (self.gc_center_circles_rad.size>0):
                 log_print(1, 'Selecting w.r.t. to great circle center locations...')
-                gc_center_selection_mat_nn = np.zeros( (stlo_rad.size, stlo_rad.size), dtype=np.int8)
+                gc_center_selection_mat = np.zeros( (stlo_rad.size, stlo_rad.size), dtype=np.int8)
                 gc_center_selection(stlo_rad.size, stlo_rad, stla_rad, evlo_rad[0], evla_rad[0],
-                                    self.gc_center_rect_boxes_rad, self.gc_center_circles_rad, gc_center_selection_mat_nn)
-                for ista in invalid_stas:
-                    gc_center_selection_mat_nn[ista,:] = 0
-                    gc_center_selection_mat_nn[:,ista] = 0
-                selection_mat &= gc_center_selection_mat_nn ##### merge this selection to the functional selection matrix
-                log_print(2, 'gc_center_selection_mat_nn: ', gc_center_selection_mat_nn.shape, gc_center_selection_mat_nn.dtype)
+                                    self.gc_center_rect_boxes_rad, self.gc_center_circles_rad, gc_center_selection_mat)
+                if flag_save_pair_selection_matrix and intermediate_outfnm_prefix:
+                    fnm = '%sgc_center_selection_mat.npy' % intermediate_outfnm_prefix
+                    np.save(fnm, gc_center_selection_mat)
+                    log_print(2, 'gc_center_selection_mat saved!', fnm)
+                ccpairs_selection_mat &= gc_center_selection_mat ##### merge this selection to the functional selection matrix
+                log_print(2, 'gc_center_selection_mat: ', gc_center_selection_mat.shape, gc_center_selection_mat.dtype)
+                del gc_center_selection_mat # release memory
                 log_print(2, 'Finished.')
+        ############################################################################################################
+        #### Finish the correlation selection
+        with Timer(tag='cc_pair_select', verbose=False, summary=local_time_summary):
+            log_print(1, 'Finish obtaining cc pair selections matrix...')
+            for ista in invalid_stas:
+                ccpairs_selection_mat[ista,:] = 0
+                ccpairs_selection_mat[:,ista] = 0
+            if flag_save_pair_selection_matrix and intermediate_outfnm_prefix:
+                fnm = '%sccpairs_selection_mat.npy' % intermediate_outfnm_prefix
+                np.save(fnm, ccpairs_selection_mat)
+                log_print(2, 'ccpairs_selection_mat saved!', fnm)
+            log_print(2, 'ccpairs_selection_mat: ', ccpairs_selection_mat.shape, ccpairs_selection_mat.dtype)
+            log_print(2, 'Finished.')
         ############################################################################################################
         #### stack index
         with Timer(tag='get_stack_index', verbose=False, summary=local_time_summary):
