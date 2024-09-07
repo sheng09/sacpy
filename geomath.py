@@ -264,15 +264,23 @@ def great_circle_plane_center_triple(lon1, lat1, lon2, lat2, ptlo, ptla, critica
     """
     Return great_circle_plane_center_triple(lon1, lat1, lon2, lat2) is the two points #1 and #2 are far away (distance above `critical_distance`)
     or great_circle_plane_center_triple(lon1, lat1, ptlo, ptla) if the two points #1 and #2 are too close (distance below `critical_distance`).
+    #
+    The input of `lon1, lat1, lon2, lat2` could be single values(v) or np.ndarray objects(a). They could be:
+    1. great_circle_plane_center_triple(v1, v2, v3, v4,  v5, v6, v7)
+    2. great_circle_plane_center_triple(v1, v2, a1, a2,  v5, v6, v7) where a1 and a2 have the same size.
+    2. great_circle_plane_center_triple(a1, a2, v1, v2,  v5, v6, v7) where a1 and a2 have the same size.
+    3. great_circle_plane_center_triple(a1, a2, a3, a4,  v5, v6, v7) where all a1, a2, a3, a4 have the same size.
+    #
+    NOTE: it is users' responsibility to make sure the input are not list/tuple/etc but np.ndarray when necessary.
     """
     dist = haversine(lon1, lat1, lon2, lat2)
-    lon1 = np.where(dist>critical_distance, lon1, ptlo)
+    lon1 = np.where(dist>critical_distance, lon1, ptlo) # this works either lon1 is a single value or an ndarray
     lat1 = np.where(dist>critical_distance, lat1, ptla)
     return great_circle_plane_center(lon1, lat1, lon2, lat2)
 @jit(nopython=True, nogil=True)
 def great_circle_plane_center_triple_rad(lon1, lat1, lon2, lat2, ptlo, ptla, critical_distance):
     """
-    The same as great_circle_plane_center_triple, but input and output are in radian.
+    The same as great_circle_plane_center_triple, but all the input and output are in radian.
     """
     dist = haversine_rad(lon1, lat1, lon2, lat2)
     lon1 = np.where(dist>critical_distance, lon1, ptlo)

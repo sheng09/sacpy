@@ -12,7 +12,7 @@ from h5py import File as h5_File
 import matplotlib.pyplot as plt
 import sys, traceback, os, os.path
 
-from .geomath import haversine_rad, azimuth_rad, point_distance_to_great_circle_plane_rad
+from .geomath import haversine_rad, azimuth_rad, point_distance_to_great_circle_plane_rad, great_circle_plane_center_triple_rad
 from .utils import Logger, Timer, TimeSummary
 from .processing import fwhiten_f32, tnorm_f32, iirfilter_f32, taper, get_rfft_spectra_bound
 
@@ -125,7 +125,121 @@ def gcd_daz_selection(n, lo_rad, la_rad, ptlo_rad, ptla_rad, gcd_min_rad, gcd_ma
         daz = np.minimum(daz, PI-daz)
         v = np.where((gcd_min_rad<=gcd) & (gcd<=gcd_max_rad), 1, 0) & np.where((daz_min_rad<=daz) & (daz<=daz_max_rad), 1, 0)
         selection_mat_nn[ista1, ista2:] = v
-        selection_mat_nn[ista2:, ista1] = v
+    selection_mat_nn |= selection_mat_nn.T # make it symmetric
+#@jit(nopython=True, nogil=True)
+def gc_center_selection(n, lo_rad, la_rad, ptlo_rad, ptla_rad,
+                        gc_center_rect_boxes_rad, gc_center_circles_rad,
+                        gc_center_selection_mat_nn):
+    """
+    Compute a NxN matrix with values of 1 or 0 for selecting the pairs of stations or not given
+    rectangle boxes and circle areas for the selection.
+    A correlation pair will be discarded if it is discarded through either the rectangle-box
+    selection or the circle-area selection.
+    In other word, a pair is only selected if it is selected through both the rectangle-box
+    selection and the circle-area selection!!!
+    #
+    Parameters:
+        n:        the length of lo_rad or la_rad used for computation.
+        lo_rad:   an ndarray for the longitudes in radian.
+                  This means the station longitudes for inter-station correlations,
+                  and the event longitudes for inter-source correlations.
+        la_rad:   an ndarray for the latitudes in radian.
+                  This means the station latitudes for inter-station correlations,
+                  and the event latitudes for inter-source correlations.
+        ptlo_rad: a single value for the longitude of the point in radian.
+                  This means the event longitude for inter-station correlations,
+                  and the station longitude for inter-source correlations.
+        ptla_rad: a single value for the latitude of the point in radian
+                  This means the event latitude for inter-station correlations,
+                  and the station latitude for inter-source correlations.
+        gc_center_rect_boxes_rad: a 2D matrix, each row of which corresponds to a rectangle boxes for selecting correlation
+                                  pairs. Each row is (lon_min_rad, lon_max_rad, lat_min_rad, lat_max_rad).
+                                  #
+                                  Also, a flattend 1D array can be used so that every 4 elements define a rectangle box.
+                                  In other words, `x = np.reshape(x, (-1, 4))` will be called to reshape the input.
+                                  #
+                                  Also, an zero-length array can be used to disable the rectangle box selection.
+                                  `gc_center_rect_boxes_rad = np.array([] )` or
+                                  `gc_center_rect_boxes_rad = np.empty((0, 4))` works.
+                                  #
+                                  We will compute the center of the great circle path for each pair of stations.
+                                  For a pair, if the center is not inside any rectangle boxes, then we discard it.
+                                  #
+                                  The center of the great circle path is defined by a (longitude, latitude) on the
+                                  northern sphere surface.
+                                  For example, the center for the equator is the north pole (long=0, lat=90).
+                                               the center for the Prime meridian is (lon=90, lat=0).
+                                  #
+                                  A rectangle box is on the sphere surface, and it is defined by
+                                  (lon_min_rad, lon_max_rad, lat_min_rad, lat_max_rad).
+                                  Please make sure the lon_min_rad is in the range of [0, 2PI].
+        gc_center_circles_rad:    a 2D matrix, each row if which corresponds to a circle areas for selecting correlation
+                                  pairs. Each row is (lon_center_rad, lat_center_rad, radius_rad).
+                                  #
+                                  Also, a flattend 1D array can be used so that every 3 elements define a circle area.
+                                  In other words, `x = np.reshape(x, (-1, 3))` will be called to reshape the input.
+                                  #
+                                  Also, an zero-length array can be used to disable the circle area selection.
+                                  `gc_center_circles_rad = np.array([] )` or
+                                  `gc_center_circles_rad = np.empty((0, 3))` works.
+                                  #
+                                  We will compute the center of the great circle path for each pair of stations.
+                                  For a pair, if the center is not inside any circle areas, then we discard it.
+                                  #
+                                  The center of the great circle path is defined by a (longitude, latitude) on the
+                                  northern sphere surface.
+                                  For example, the center for the equator is the north pole (long=0, lat=90).
+                                               the center for the Prime meridian is (lon=90, lat=0).
+                                  #
+                                  A circle area is on the sphere surface, and it is defined by
+                                  a center point (lon_center_rad, lat_center_rad) and a radius_rad.
+                                  Please make sure the lon_center_rad is in the range of [0, 2PI].
+        gc_center_selection_mat_nn: the buffer to output selection matrix. The matrix will be modified in-place.
+                                    It is an NxN with values of 1 or 0 for selecting the pairs of stations or not.
+                                    1 for selecting and 0 for discarding. The ijth component of the matrix is
+                                    1 or 0 to select or discard the pair formed by the ith and jth records.
+                                    The matrix is symmetric!
+    """
+    ####
+    dont_select_rect   = (gc_center_rect_boxes_rad.size == 0)
+    dont_select_circle = (gc_center_circles_rad.size    == 0)
+    if dont_select_rect and dont_select_circle:
+        gc_center_selection_mat_nn.fill(1)
+        return
+    #### in case of flattend arrays or zero-length arrays
+    gc_center_rect_boxes_rad = np.reshape(gc_center_rect_boxes_rad, (-1, 4) )
+    gc_center_circles_rad    = np.reshape(gc_center_circles_rad,    (-1, 3) )
+    ####
+    rect_mat_row   = np.zeros(n, dtype=gc_center_selection_mat_nn.dtype)
+    circle_mat_row = np.zeros(n, dtype=gc_center_selection_mat_nn.dtype)
+    for ista1 in range(n):
+        lo1, la1 = lo_rad[ista1], la_rad[ista1]
+        ##### compute the clo, cla for a list of correlation pairs
+        (clos, clas), junk = great_circle_plane_center_triple_rad(lo1, la1, lo_rad[ista1:], la_rad[ista1:],
+                                                                  ptlo_rad, ptla_rad, critical_distance=0.00174)
+                                                                  # 0.00174 rad is about 0.1 degree
+        #### check with the rectangle boxes
+        rect_mat_row.fill(0)
+        for (lon_min, lon_max, lat_min, lat_max) in gc_center_rect_boxes_rad:
+            inside = ~( (clos < lon_min) | (lon_max < clos) | (clas < lat_min) | (lat_max < clas) )
+            #inside = ((lon_min <= clos) & (clos <= lon_max) & (lat_min <= clas) & (clas <= lat_max))
+            rect_mat_row[ista1:] |= inside
+        #### check with the circle areas
+        circle_mat_row.fill(0)
+        for (lon_center, lat_center, radius) in gc_center_circles_rad:
+            tmp = haversine_rad(lon_center, lat_center, clos, clas)
+            inside = (tmp <= radius)
+            circle_mat_row[ista1:] |= inside
+        #### don't commit select if no rectangle boxes or circle areas are provided
+        if dont_select_rect:
+            rect_mat_row.fill(1)
+        if dont_select_circle:
+            circle_mat_row.fill(1)
+        ####
+        rect_mat_row &= circle_mat_row
+        gc_center_selection_mat_nn[ista1] = rect_mat_row # each entire row is modified
+    #### make it symmetric
+    gc_center_selection_mat_nn |= gc_center_selection_mat_nn.T
 __stack_bin_index = StackBins.stack_bin_index
 @jit(nopython=True, nogil=True)
 def get_stack_index_mat(n, lo_rad, la_rad, dist_min_deg, dist_step_deg, stack_index_mat_nn):
@@ -295,9 +409,10 @@ class CS_InterRcv:
                  delta, nt, cut_time_range=None,
                  dist_range=(0.0, 180.0), dist_step=1.0,
                  wtlen=None, wt_f1=None, wt_f2=None, wflen=None, whiten_taper_halfsize=50,
-                 daz_range=None, gcd_range=None, log_print=None,
+                 daz_range=None, gcd_range=None,
+                 gc_center_rect_boxes=None, gc_center_circles=None,
                  speedup_critical_frequency_band=None, speedup_critical_level=0.01,
-                 mpi_comm=None):
+                 log_print=None, mpi_comm=None):
         """
         ch_pair_type: a pair of int.
                       E.g., (0, 0) for ZZ, (1, 1) for RR, (0, 3) for ZN...
@@ -337,8 +452,19 @@ class CS_InterRcv:
         self.daz_range_rad = np.deg2rad(daz_range) if daz_range else None
         self.gcd_range_rad = np.deg2rad(gcd_range) if gcd_range else None
         log_print( 1, 'Select correlation pairs:' )
-        log_print( 2, 'daz_range:          ', daz_range, self.daz_range_rad)
-        log_print( 2, 'gcd_range:          ', gcd_range, self.gcd_range_rad)
+        log_print( 2, 'daz_range (deg and rad):', daz_range, self.daz_range_rad)
+        log_print( 2, 'gcd_range (deg and rad):', gcd_range, self.gcd_range_rad)
+        ### great circle center selections
+        #Don't worry if gc_center_rect_boxes/gc_center_circles is None, 1d or 2d array. They are handled well latter.
+        gc_center_rect_boxes = np.zeros(0) if (gc_center_rect_boxes is None) else gc_center_rect_boxes
+        gc_center_circles    = np.zeros(0) if (gc_center_circles is  None)   else gc_center_circles
+        self.gc_center_rect_boxes_rad = np.deg2rad(gc_center_rect_boxes)
+        self.gc_center_circles_rad    = np.deg2rad(gc_center_circles)
+        log_print( 1, 'Select correlation pairs by the center of the great circle path:' )
+        log_print( 2, 'gc_center_rect_boxes:     ', gc_center_rect_boxes)
+        log_print( 2, 'gc_center_rect_boxes(rad):', self.gc_center_rect_boxes_rad)
+        log_print( 2, 'gc_center_circles:        ', gc_center_circles)
+        log_print( 2, 'gc_center_circles(rad):   ', self.gc_center_circles_rad)
         ############################################################################################################
         # time and spectral settings
         idx0 = 0
@@ -496,14 +622,14 @@ class CS_InterRcv:
             log_print(2, 'spectra_c64: ', spectra_c64.shape, spectra_c64.dtype)
             del znert_mat_f32
         ############################################################################################################
-        #### selection
-        with Timer(tag='select', verbose=False, summary=local_time_summary):
+        #### selection w.r.t. to gcd and daz
+        with Timer(tag='gcd_daz_select', verbose=False, summary=local_time_summary):
             log_print(1, 'Selecting and weighting(not implemented)...')
-            selection_mat = np.zeros( (stlo_rad.size, stlo_rad.size), dtype=np.int8) + 1
+            selection_mat = np.ones( (stlo_rad.size, stlo_rad.size), dtype=np.int8)
             if (self.gcd_range_rad is not None) or (self.daz_range_rad is not None):
                 gcd_min_rad, gcd_max_rad = self.gcd_range_rad if (self.gcd_range_rad is not None) else (-1, 1000) # (-1, 1000) means to select all
                 daz_min_rad, daz_max_rad = self.daz_range_rad if (self.daz_range_rad is not None) else (-1, 1000) # (-1, 1000) means to select all
-                #print(type(stlo_rad), type(stla_rad), type(evlo_rad[0]), type(evla_rad[0]) )
+                selection_mat.fill(0)
                 gcd_daz_selection(stlo_rad.size, stlo_rad, stla_rad, evlo_rad[0], evla_rad[0],
                                   gcd_min_rad, gcd_max_rad, daz_min_rad, daz_max_rad, selection_mat)
             for ista in invalid_stas:
@@ -511,6 +637,20 @@ class CS_InterRcv:
                 selection_mat[:,ista] = 0
             log_print(2, 'selection_mat: ', selection_mat.shape, selection_mat.dtype)
             log_print(2, 'Finished.')
+        ############################################################################################################
+        #### selection w.r.t. great circle center locations
+        with Timer(tag='gc_center_select', verbose=False, summary=local_time_summary):
+            if (self.gc_center_rect_boxes_rad.size>0) or (self.gc_center_circles_rad.size>0):
+                log_print(1, 'Selecting w.r.t. to great circle center locations...')
+                gc_center_selection_mat_nn = np.zeros( (stlo_rad.size, stlo_rad.size), dtype=np.int8)
+                gc_center_selection(stlo_rad.size, stlo_rad, stla_rad, evlo_rad[0], evla_rad[0],
+                                    self.gc_center_rect_boxes_rad, self.gc_center_circles_rad, gc_center_selection_mat_nn)
+                for ista in invalid_stas:
+                    gc_center_selection_mat_nn[ista,:] = 0
+                    gc_center_selection_mat_nn[:,ista] = 0
+                selection_mat &= gc_center_selection_mat_nn ##### merge this selection to the functional selection matrix
+                log_print(2, 'gc_center_selection_mat_nn: ', gc_center_selection_mat_nn.shape, gc_center_selection_mat_nn.dtype)
+                log_print(2, 'Finished.')
         ############################################################################################################
         #### stack index
         with Timer(tag='get_stack_index', verbose=False, summary=local_time_summary):
