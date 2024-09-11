@@ -25,7 +25,7 @@ from obspy.taup.seismic_phase import SeismicPhase
 from matplotlib import pyplot as plt
 import sacpy
 from copy import deepcopy
-import sys, os, os.path, pickle, warnings
+import sys, os, os.path, pickle, warnings, traceback
 import matplotlib
 from sacpy.processing import round_degree_180, round_degree_360
 
@@ -95,6 +95,8 @@ def __example_use_SeismicPhase_shoot_ray():
     print(arr.purist_distance, arr.time, arr.ray_param)
     rp = arr.ray_param
 
+
+
 ######################################################################################################################################################################
 # Correct a `TauModel` object with source and receiver depth
 ######################################################################################################################################################################
@@ -119,10 +121,183 @@ def get_corrected_model(tau_model, evdp_km, rcvdp_km):
     tau_model_corrected = tau_model_corrected.split_branch(rcvdp_km)
     return tau_model_corrected
 
+
+
 ######################################################################################################################################################################
 # Dealing with correlation features
 ######################################################################################################################################################################
+class CorrelationFeatureName:
+    def __init__(self):
+        pass
+    @staticmethod
+    def __find_n_character(a_string, char):
+        """
+        Find the maximal number of continuous character `char` in a string `a_string`.
+        #
+        Parameters:
+            a_string: a string.
+            char:     a character.
+        #
+        Return:
+            the maximal number of continuous character `char` in the string `a_string`.
+        #
+        E.g.,
+        'PKKKP' should return 3 for K, PKKSKP should return 2 for K.
+        """
+        n = len(a_string)
+        for i in range(n, -1, -1):
+            template = char*i
+            if template in a_string:
+                break
+        return i
+    @staticmethod
+    def __replace_K_seismic_phase(original_string, max_nchar):
+        """
+        Replace seismic phases from S[_i K]P to P[_i K]S, where i could be [1, max_nchar].
+        """
+        result = original_string
+        seg = ''
+        for i in range(max_nchar):
+            seg += 'K'
+            ph1 = 'S%sP' % seg
+            ph2 = 'P%sS' % seg
+            result = result.replace(ph1, ph2)
+        return result
+    @staticmethod
+    def __replace_I_seismic_phase(original_string, max_nchar):
+        """
+        Replace seismic phases from SK[_i I]KP to PK[_i I]KS, where i could be [1, max_nchar].
+        """
+        result = original_string
+        seg = ''
+        for i in range(max_nchar):
+            seg += 'I'
+            ph1 = 'SK%sKP' % seg
+            ph2 = 'PK%sKS' % seg
+            result = result.replace(ph1, ph2)
+        return result
+    @staticmethod
+    def decode(encoded_feature_name):
+        """
+        Decode the encoded feature name to the normal feature name.
+        #
+        Parameters:
+            encoded_feature_name: a string of the encoded feature name.
+                                  Its has the format of '_encoded_NAME1@N1+NAME2+NAME3@N3+...',
+                                  It must started with the '_encoded_'.
+                                  The 'NAME1', 'NAME2'... can be
+                                  1. seismic phase name, such as P, PKIKP, PcP, ScP, PcS,...
+                                  2. normal correlation feature name which are two seismic
+                                     phase names seperated by a '-',
+                                     such as 'PcS-PcP', 'PKIKP-PKJKP'...
+                                     Simplified names are not allows, such as 'cS-cP'.
+                                  The 'N1', 'N2'... are numbers which means the repeat times of
+                                  the 'NAME1', 'NAME2'...
+                                  If 'Ni' is 1, then 'NAMEi@1' can be simplified as 'NAMEi'.
+        """
+        if encoded_feature_name[:9] != '_encoded_':
+            raise ValueError('The input encoded_feature_name must start with "_encoded_"!')
+        try:
+            ####
+            local_encoded_feature_name = encoded_feature_name[9:].replace('ScP', 'PcS')
+            # find the maximum number of contiuous K in a string
+            nK                         = CorrelationFeatureName.__find_n_character(local_encoded_feature_name, 'K')
+            local_encoded_feature_name = CorrelationFeatureName.__replace_K_seismic_phase(local_encoded_feature_name, nK)
+            # find the maximum number of contiuous I in a string
+            nI                         = CorrelationFeatureName.__find_n_character(local_encoded_feature_name, 'I')
+            local_encoded_feature_name = CorrelationFeatureName.__replace_I_seismic_phase(local_encoded_feature_name, nI)
+            ####
+            names, repeats = list(), list()
+            for temp in local_encoded_feature_name.split('+'):
+                if '@' in temp:
+                    name, repeat = temp.split('@')
+                    repeat = int(repeat)
+                else:
+                    name, repeat = temp, 1
+                names.append(name)
+                repeats.append(repeat)
+            ####
+            vol_dict = { it2:0 for it1 in names for it2 in it1.split('-') }
+            for name, repeat in zip(names, repeats):
+                if '-' not in name:
+                    vol_dict[name] = vol_dict[name] + repeat
+                else:
+                    name1, name2 = name.split('-')
+                    vol_dict[name1] = vol_dict[name1] + repeat
+                    vol_dict[name2] = vol_dict[name2] - repeat
+            ####
+            phase1, phase2 = '', ''
+            for ph, n in sorted(vol_dict.items() ):
+                if n > 0:
+                    phase1 = phase1 + ph*n
+                elif n < 0:
+                    phase2 = phase2 + ph*(-n)
+            ####
+            if phase1 == '':
+                cc_feature_name = '%s*' % phase2
+            elif phase2 == '':
+                cc_feature_name = '%s*' % phase1
+            else:
+                cc_feature_name = '%s-%s' % (phase1, phase2)
+            return cc_feature_name
+        except Exception as err:
+            raise ValueError('The input encoded_feature_name is invalid!', encoded_feature_name)
+            traceback.print_exc()
+    @staticmethod
+    def encode(normal_feature_name):
+        """
+        Encode the normal feature name to an encoded feature name.
+        #
+        Parameters:
+            normal_feature_name: a string of the normal feature name.
+                                  It has the format of 'NAME1*' or 'NAME1-NAME2',
+                                  where 'NAME1' and 'NAME2' are seismic phase names.
+        """
+        try:
+            local_feature_name = normal_feature_name.replace('ScP', 'PcS')
+            # find the maximum number of contiuous K in a string
+            nK                         = CorrelationFeatureName.__find_n_character(local_feature_name, 'K')
+            local_feature_name = CorrelationFeatureName.__replace_K_seismic_phase(local_feature_name, nK)
+            # find the maximum number of contiuous I in a string
+            nI                         = CorrelationFeatureName.__find_n_character(local_feature_name, 'I')
+            local_feature_name = CorrelationFeatureName.__replace_I_seismic_phase(local_feature_name, nI)
+            ####
+            seismic_phase_names = list()
+            seismic_phase_names.extend( ['PK%sKP' % ('I'*n) for n in range(nI, 0, -1)] )
+            seismic_phase_names.extend( ['PK%sKS' % ('I'*n) for n in range(nI, 0, -1)] )
+            seismic_phase_names.extend( ['P%sP'   % ('K'*n) for n in range(nK, 0, -1)] )
+            seismic_phase_names.extend( ['P%sS'   % ('K'*n) for n in range(nK, 0, -1)] )
+            seismic_phase_names.extend( ['PcP', 'PcS', 'ScS'] )
+            seismic_phase_names.extend( ['P', 'S'] )  # this must be at the end
+            ####
+            vol_dict = dict()
+            if '-' in local_feature_name:
+                phase1, phase2 = local_feature_name.split('-')
+            else:
+                phase1, phase2 = local_feature_name, ''
+            #
+            for sph in seismic_phase_names:
+                if sph not in vol_dict:
+                    vol_dict[sph] = 0
+                # get the number of repeat times of sph in phase1
+                vol_dict[sph] += phase1.count(sph)
+                vol_dict[sph] -= phase2.count(sph)
+                phase1 = phase1.replace(sph, '')
+                phase2 = phase2.replace(sph, '')
+            ####
+            temp = list() #'_encoded_'
+            for sph, n in sorted(vol_dict.items()):
+                if n != 0:
+                    temp.append( '%s@%d' % (sph, n) )
+            result = '_encoded_' + '+'.join(temp)
+            return result
+        except Exception as err:
+            raise ValueError('The input normal_feature_name is invalid!', normal_feature_name)
+            traceback.print_exc()
+        pass
+
 @CacheRun('%s/bin/dataset/cc_feature_time.h5' % sacpy.__path__[0] )
+# Compute a list of all possible ray parameters, correlation times, inter-receiver distance,... for a correlation feature.
 def get_ccs(tau_model1_corrected, tau_model2_corrected, phase1_name, phase2_name, rcvdp1_km, rcvdp2_km,
             threshold_distance=0.1, max_interation=None, enable_h5update=True):
     """
@@ -239,6 +414,7 @@ def get_ccs(tau_model1_corrected, tau_model2_corrected, phase1_name, phase2_name
         attrs_dict = { 'threshold_distance': threshold_distance }
         get_ccs.dump_to_cache(cache_key, data_dict, attrs_dict)
     return rps, cc_time, trvt1, trvt2, cc_purist_distance, cc_distance, purist_distance1, purist_distance2
+# Given a list of inter-receiver distances, compute all possible ray parameters and correlation times,... for a correlation feature.
 def get_ccs_from_cc_dist(cc_distances_deg, tau_model1_corrected, tau_model2_corrected,
     phase1_name, phase2_name, rcvdp1_km, rcvdp2_km, threshold_distance=0.1, max_interation=None):
     """
@@ -351,6 +527,7 @@ def get_ccs_from_cc_dist(cc_distances_deg, tau_model1_corrected, tau_model2_corr
     cct_found = trvt1_found-trvt2_found
     #cct_found = interp(rps_found, rp1, trvt1) - interp(rps_found, rp2, trvt2)
     return rps_found, cct_found, trvt1_found, trvt2_found, cc_purist_distance_found, cc_distance_found, pd1_found, pd2_found
+#Return a lot of built-in correlation feature names.
 def get_all_cc_names():
     """
     Return a lot of built-in correlation feature names.
@@ -403,6 +580,7 @@ def get_all_cc_names():
     ccs.extend( ('SSSS', 'PcPPcS', 'ScSScP', 'PKPPKS', 'PKPSKS', 'PKSSKS', 'PKPScS',
                  'ScSPcS-PcPPcP', 'PKPPKS-ScS', 'PKPPKS-PcS', 'PKPPKS-PcP') )
     return sorted(ccs)
+#Compute a list of inter-receiver correlation feature dataset for their ray parameters, correlation times, inter-receiver distances and ...
 def get_all_interrcv_ccs(cc_feature_names=None, evdp_km=25.0, model_name='ak135', log=sys.stdout, selection_ratio=None, save_to_pickle_file=None,
                          rcvdp1_km=0.0, rcvdp2_km=0.0):
     """
@@ -495,6 +673,9 @@ def get_all_interrcv_ccs(cc_feature_names=None, evdp_km=25.0, model_name='ak135'
     #    ax.set_ylim((0, 3000))
     #    plt.show()
     return results
+
+
+
 ######################################################################################################################################################################
 # Dealing with arrivals
 ######################################################################################################################################################################
@@ -721,7 +902,7 @@ if __name__ == "__main__":
     if False:
         __example_use_SeismicPhase_shoot_ray()
         get_corrected_model(taup.TauPyModel('ak135').model, 0, 0)
-    if True:
+    if False:
         results = get_all_interrcv_ccs(['P*', 'PcP*'], evdp_km=50, model_name='ak135', log=sys.stdout, rcvdp1_km=0.0, rcvdp2_km=0.0)
         for it in results:
             name            = it['name']
@@ -731,4 +912,11 @@ if __name__ == "__main__":
             distance        = it['distance']
             plt.plot(distance, time, label=name)
         plt.show()
+    if True:
+        x = 'PcP-PcSSSSPPPPPKKKSSKKP'
+        print(x)
+        x = CorrelationFeatureName.encode(x)
+        print(x)
+        x = CorrelationFeatureName.decode(x)
+        print(x)
     pass
