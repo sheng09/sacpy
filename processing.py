@@ -521,7 +521,8 @@ def round_degree_360(xs):
     return xs % 360
 def round_degree_180(deg):
     """
-    First, round degrees to be in [0, 360), and then angles in [80, 360) will be rounded to 360-angles.
+    First, round degrees to be in [0, 360), and then angles in [180, 360) will be rounded to 360-angles.
+    For example, round_degree_180(170) = 170, round_degree_180(190) = 170...
 
     xs: a single value or a list of values (e.g., an object ot np.array)
     """

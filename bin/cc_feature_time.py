@@ -47,8 +47,9 @@ class cc_feature_time:
             print(line)
     def __plot(self, found, rp1, rp2, pd1, pd2, phase1, phase2, show=False, figname=None):
         """
+        Not finished yet!!!
         """
-        with Timer(message='plot', color='C5', verbose=self.debug, summary=self.time_summary):
+        with Timer(tag='plot', color='C5', verbose=self.debug, summary=self.time_summary):
             ##############################################################################################################
             # Init axes
             ##############################################################################################################
@@ -158,7 +159,7 @@ if __name__ == "__main__":
     if cc_feature_name == None:
         print('e.g.: %s -F PcS-PcP [-D 7.5,8.5,10,11,12,13] [-L out.png] [--accuracy=0.5] [--max_interation=5] [-S] [-V]' % (sys.argv[0]) )
         sys.exit(-1)
-    with Timer(message='#run main(...)', verbose=True):
+    with Timer(tag='#run main(...)', verbose=True):
         app = cc_feature_time('ak135', evdp_km, rcv1dp_km, rcv2dp_km, debug=debug)
         app.run(distances, cc_feature_name, show=show, figname=figname, print_result=True, dist_accuracy_deg=dist_accuracy, max_interation=max_interation)
       #self, distances, phase1, phase2, show=False, figname=None, print_result=True, dist_accuracy_deg=0.5, max_interation=10
@@ -167,6 +168,6 @@ if __name__ == "__main__":
         #print(app.time_summary )
         #app.time_summary.plot_rough()
         #app.time_summary.plot(show=True)
-    if verbose:
-        app.verbose()
+    #if verbose:
+    #    app.verbose()
     
