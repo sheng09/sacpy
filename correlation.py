@@ -129,7 +129,7 @@ def get_corrected_model(tau_model, evdp_km, rcvdp_km):
 ######################################################################################################################################################################
 # Please use AppCCFeatureNameEncoder.encode(...), AppCCFeatureNameEncoder.decode(...), and AppCCFeatureNameEncoder.encode_leg_count_dict(...)
 class AppCCFeatureNameEncoder:
-    def __init__(self, debug=True):
+    def __init__(self, debug=False):
         self.debug = debug
     def encode(self, human_feature_name):
         """
@@ -240,6 +240,10 @@ class AppCCFeatureNameEncoder:
         Encode the feature name based on the feature type and the leg count dict.
         Return a encoded string.
         """
+        # if all the number are negative, then we change all of them to positive
+        if all([n<=0 for n in leg_count_dict.values()]):
+            leg_count_dict = {leg:-n for leg, n in leg_count_dict.items() }
+        #
         temp = ['%s@%d' % (leg, n) for leg,n in sorted(leg_count_dict.items() ) if n != 0]
         encoded = '_encoded_%s_%s' % (feature_type, '+'.join(temp) )
         return encoded
@@ -285,6 +289,10 @@ class AppCCFeatureNameEncoder:
         Decode the feature name based on the feature type and the leg count dict.
         Return a human readable string.
         """
+        # if all the number are negative, then we change all of them to positive
+        if all([n<=0 for n in leg_count_dict.values()]):
+            leg_count_dict = {leg:-n for leg, n in leg_count_dict.items() }
+        #
         sps = ('PKIKP', 'SKIKS', 'PKIKS', 'SKIKP',
                'PKJKP', 'SKJKS', 'PKJKS', 'SKJKP',
                'PKiKP', 'SKiKS', 'PKiKS', 'SKiKP',
@@ -381,6 +389,8 @@ class AppCCFeatureNameEncoder:
         result = '%s-%s' % (part1, part2)
         if part2 == '':
             result = '%s*' % part1
+        if part1 == '':
+            result = '%s*' % part2
         return result
     def encode_leg_count_dict(self, feature_type, leg_count_dict):
         """
@@ -674,9 +684,24 @@ def get_all_cc_names():
     """
     bw = dict()
     ##### All first order body waves
-    bw['direct']         = ('P', 'S', 'PKP', 'PKS', 'SKS', 'PKIKP', 'PKIKS', 'SKIKS', 'PKJKP', 'PKJKS', 'SKJKS', )
-    bw['cmb_reflection'] = ('PcP', 'PcS', 'ScS', 'PKKP', 'PKKKP', 'PKKKKP', 'PKKS', 'PKKKS', 'PKKKKS', 'SKKS', 'SKKKS', 'SKKKKS', )
-    bw['icb_reflection'] = ('PKiKP', 'PKIIKP', 'PKIIKS', 'SKIIKS')
+    bw['direct']         = ('P', 'S', 'PP', 'SS', 'PPP', 'SSS',
+                            'PKP', 'PKS', 'SKS', 'PKPPKP', 'PKPPKS', 'PKPSKS', 'PKSSKS', 'SKSSKS',
+                            'PKIKP', 'PKIKS', 'SKIKS', 'PKIKPPKIKP', 'PKIKPPKIKS', 'PKIKPSKIKS', 'PKIKSSKIKS', 'SKIKSSKIKS',
+                            'PKJKP', 'PKJKS', 'SKJKS', 'PKJKPPKJKP', 'PKJKPPKJKS', 'PKJKPSKJKS', 'PKJKSSKJKS', 'SKJKSSKJKS', )
+    bw['cmb_reflection'] = ('PcP', 'PcS', 'ScS',
+                            'PcPPcP', 'PcPPcS', 'PcPScS', 'PcSScS', 'ScSScS',
+                            'PcPPcPPcP', 'PcPPcPPcS', 'PcPPcPScS', 'PcPPcSScS', 'PcPScSScS', 'PcSScSScS', 'ScSScSScS',
+                            'PcPPcPPcPPcP', 'PcPPcPPcPPcS', 'PcPPcPPcPScS', 'PcPPcPPcSScS', 'PcPPcPScSScS', 'PcPPcSScSScS', 'PcPScSScSScS', 'PcSScSScSScS', 'ScSScSScSScS',
+                            'PKKP', 'PKKKP', 'PKKKKP', 'PKKKKKP', #'PKKKKKKP', 'PKKKKKKP',
+                            'PKKS', 'PKKKS', 'PKKKKS', 'PKKKKKS', #'PKKKKKKS', 'PKKKKKKS',
+                            'SKKS', 'SKKKS', 'SKKKKS', 'SKKKKKS', #'SKKKKKKS', 'SKKKKKKS',
+                            )
+    bw['icb_reflection'] = ('PKiKP', #'PKiKS', 'SKiKS',
+                            #'PKiKPPKiKP', 'PKiKPPKiKS', 'PKiKPSPKiKS', 'PKiKSSPKiKS', 'SKiKSSPKiKS',
+                            #'PKiKPPKiKPPKiKP', 'PKiKPPKiKPPKiKS', 'PKiKPPKiKPSKiKS', 'PKiKPPKiKSSPKiKS', 'PKiKPSKiKSSPKiKS', 'PKiKSSPKiKSSPKiKS', 'SKiKSSPKiKSSPKiKS',
+                            #'PKIIKP', 'PKIIKS', 'SKIIKS', 'PKIIIKP', 'PKIIIKS', 'SKIIIKS',
+                            #'PKJJKP', 'PKJJKS', 'SKJJKS', 'PKJJJKP', 'PKJJJKS', 'SKJJJKS',
+                            )
 
     ##### All reverberation from the surface for twice
     temp = list(bw['direct'])
@@ -684,10 +709,16 @@ def get_all_cc_names():
     temp.extend(bw['icb_reflection'] )
     bw['reverberation2'] = ['%s%s' %(it, it) for it in temp]
     bw['reverberation3'] = ['%s%s%s' %(it, it, it) for it in temp]
+    bw['reverberation4'] = ['%s%s%s%s' %(it, it, it, it) for it in temp]
+    bw['reverberation5'] = ['%s%s%s%s' %(it, it, it, it) for it in temp]
 
     ##### All cross-terms
     temp.extend(bw['reverberation2'])
     temp.extend(bw['reverberation3'])
+    temp.extend(bw['reverberation4'])
+    temp.extend(bw['reverberation5'])
+    temp = sorted( set(temp) )
+
     cc_set1 = set( temp )# type X* where X is a seismic phase
     cc_set2 = set()      # type Z* where X-Y=Z*
     cc_set3 = set()      # type X-Y where X and Y are seismic phases
@@ -767,8 +798,19 @@ def get_all_interrcv_ccs(cc_feature_names=None, evdp_km=25.0, model_name='ak135'
         cc_feature_names = get_all_cc_names()
     local_cc_feature_names = cc_feature_names
     if selection_ratio:
-        step = int(len(cc_feature_names)*selection_ratio)
-        local_cc_feature_names = cc_feature_names[::step]
+        step = int(len(local_cc_feature_names)*selection_ratio)
+        local_cc_feature_names = local_cc_feature_names[::step]
+    #############################################################################################
+    # valid&encode&decode the feature names
+    app = AppCCFeatureNameEncoder()
+    temp = set()
+    for it in local_cc_feature_names:
+        try:
+            temp.add( app.decode( app.encode(it) ) )
+        except:
+            pass
+    local_cc_feature_names = sorted(temp)
+    #############################################################################################
     results = list()
     n = len(local_cc_feature_names)
     for idx, feature_name in enumerate(local_cc_feature_names):
@@ -1035,8 +1077,15 @@ if __name__ == "__main__":
         print(tmp)
         ccs = get_cc_names()
         print(ccs, len(ccs) )
-    if False:
-        get_all_interrcv_ccs(log=sys.stdout, selection_ratio=0.005)
+    if True:
+        #tmp = get_all_cc_names()
+        #print(tmp[:2])
+        get_all_interrcv_ccs(log=sys.stdout)
+        x = '-PKIKPPKIKPPKIKPPKIKPPKIKPPKIKPPKIKPPcPPcS'
+        y = encode_cc_feature_name(x)
+        z = decode_cc_feature_name(y)
+        print(x)
+        print(z)
     if False:
         __example_use_SeismicPhase_shoot_ray()
         get_corrected_model(taup.TauPyModel('ak135').model, 0, 0)
@@ -1050,7 +1099,7 @@ if __name__ == "__main__":
             distance        = it['distance']
             plt.plot(distance, time, label=name)
         plt.show()
-    if True:
+    if False:
         #get_arrival_from_ray_param(taup.TauPyModel('ak135').model, 'P', 0.01, 0)
         x = 'PcSPcSPcSPcSPcS-PcSScSScPPcPPcPPKKKSSKP'
         x = 'SKS-ScS'
