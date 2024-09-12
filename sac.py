@@ -123,7 +123,11 @@ import sys
 from glob import glob
 import pickle
 
-from pyfftw.interfaces.numpy_fft import irfft, rfft
+#from pyfftw.interfaces.numpy_fft import irfft, rfft
+try:
+    from pyfftw.interfaces.numpy_fft import rfft, irfft
+except:
+    from numpy.fft import rfft, irfft
 from sacpy.geomath import haversine, azimuth
 from sacpy.processing import iirfilter_f32, taper, detrend, cut, tnorm_f32, fwhiten_f32, cc_delay
 from obspy.signal.interpolation import lanczos_interpolation

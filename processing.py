@@ -79,7 +79,10 @@ Inplace whitening
 from matplotlib.pyplot import polar
 import numpy as np
 #from pyfftw.interfaces.cache import enable as pyfftw_cache_enable
-from pyfftw.interfaces.numpy_fft import rfft, irfft
+try:
+    from pyfftw.interfaces.numpy_fft import rfft, irfft
+except:
+    from numpy.fft import rfft, irfft
 from numba import jit
 from numba.core.typing import cffi_utils as cffi_support
 

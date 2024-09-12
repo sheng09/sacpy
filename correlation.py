@@ -20,7 +20,7 @@ Example:
 """
 from obspy import taup
 from numpy import arange, array, linspace, interp, where, abs, diff, where, round, sum
-from sacpy.utils import Timer, CacheRun
+from .utils import Timer, CacheRun
 from obspy.taup.seismic_phase import SeismicPhase
 from matplotlib import pyplot as plt
 import sacpy
@@ -28,6 +28,7 @@ from copy import deepcopy
 import sys, os, os.path, pickle, warnings, traceback
 import matplotlib
 from sacpy.processing import round_degree_180, round_degree_360
+import numpy as np
 
 __global_verbose= False
 
@@ -126,175 +127,312 @@ def get_corrected_model(tau_model, evdp_km, rcvdp_km):
 ######################################################################################################################################################################
 # Dealing with correlation features
 ######################################################################################################################################################################
-class CorrelationFeatureName:
-    def __init__(self):
-        pass
-    @staticmethod
-    def __find_n_character(a_string, char):
+# Please use AppCCFeatureNameEncoder.encode(...), AppCCFeatureNameEncoder.decode(...), and AppCCFeatureNameEncoder.encode_leg_count_dict(...)
+class AppCCFeatureNameEncoder:
+    def __init__(self, debug=True):
+        self.debug = debug
+    def encode(self, human_feature_name):
         """
-        Find the maximal number of continuous character `char` in a string `a_string`.
+        Encode the human readable feature name to a unique string.
         #
         Parameters:
-            a_string: a string.
-            char:     a character.
+            human_feature_name: a string of the human feature name.
+            Note! Currently, do not allow the simplified feature name, such as 'cS-cP', 'K*', 'I2*',...
         #
         Return:
-            the maximal number of continuous character `char` in the string `a_string`.
-        #
-        E.g.,
-        'PKKKP' should return 3 for K, PKKSKP should return 2 for K.
+            a string of the encoded feature name.
         """
-        n = len(a_string)
-        for i in range(n, -1, -1):
-            template = char*i
-            if template in a_string:
+        #1. Determine if the feature-related seismic phases are
+        #   IC: inner-core related (which has I,J,i in the name),
+        #   OC: or only outer-core (which has K,c in the name but no I,J,i in the name),
+        #   MANTLE: or only mantle related (which has P,S in the name but no I,J,i,K,c in the name).
+        feature_type = self.__determine_feature_type(human_feature_name)
+        #2. separate all the legs
+        leg_count_dict = self.__separate_legs(human_feature_name)
+        #3. valid if the legs are valid
+        flag_valid = self.__valid_legs(human_feature_name, feature_type, leg_count_dict)
+        if not flag_valid:
+            raise ValueError('The input human_feature_name is invalid!', human_feature_name)
+        #4. encode the leg_count_dict to a string
+        encoded = self.__encode_dict_2_str(feature_type, leg_count_dict)
+        return encoded
+    def __determine_feature_type(self, human_feature_name):
+        """
+        Return 'IC', 'OC, or 'MANTLE' if all the feature-related seismic phases
+        are inner-core related, outer-core related, or mantle related, repsectively.
+        """
+        feature_type_dict = {'IC': ('IJi', ''), 'OC': ('Kc', 'IJi'), 'MANTLE': ('PS', 'IJiKc') }
+        ####
+        result = None
+        for feature_type, (must_included_legs, must_not_included_legs) in feature_type_dict.items():
+            tmp1 = any( [leg in human_feature_name for leg in must_included_legs] )
+            tmp2 = all( [(leg not in human_feature_name) for leg in must_not_included_legs] )
+            if tmp1 and tmp2:
+                result = feature_type
                 break
-        return i
-    @staticmethod
-    def __replace_K_seismic_phase(original_string, max_nchar):
-        """
-        Replace seismic phases from S[_i K]P to P[_i K]S, where i could be [1, max_nchar].
-        """
-        result = original_string
-        seg = ''
-        for i in range(max_nchar):
-            seg += 'K'
-            ph1 = 'S%sP' % seg
-            ph2 = 'P%sS' % seg
-            result = result.replace(ph1, ph2)
+        if result is None:
+            raise ValueError('The input human_feature_name is invalid!', human_feature_name)
+        if self.debug:
+            print('The feature type is:', result, 'for', human_feature_name)
         return result
-    @staticmethod
-    def __replace_I_seismic_phase(original_string, max_nchar):
+    def __separate_legs(self, human_feature_name):
         """
-        Replace seismic phases from SK[_i I]KP to PK[_i I]KS, where i could be [1, max_nchar].
+        Separate the seismic phase names into different legs.
+        Return:
+            leg_count_dict:      a dict of leg -> number of legs in the feature name (considering the minus sign)
         """
-        result = original_string
-        seg = ''
-        for i in range(max_nchar):
-            seg += 'I'
-            ph1 = 'SK%sKP' % seg
-            ph2 = 'PK%sKS' % seg
-            result = result.replace(ph1, ph2)
-        return result
-    @staticmethod
-    def decode(encoded_feature_name):
+        if human_feature_name[-1] == '*':
+            human_feature_name = human_feature_name[:-1]
+        leg_count_dict = {leg:0 for leg in 'IJKPS'} # this count the number of legs in the feature name considering the minus sign
+        part1, part2   = human_feature_name.split('-') if ('-' in human_feature_name) else (human_feature_name, '')
+        for leg in 'IJKPS':
+            leg_count_dict[leg] += part1.count(leg)
+            leg_count_dict[leg] -= part2.count(leg)
+            if self.debug:
+                part1 = part1.replace(leg, '')
+                part2 = part2.replace(leg, '')
+        ## remove empty items
+        #to_remove = [leg for leg, n in leg_count_dict.items() if n == 0]
+        #for leg in to_remove:
+        #    leg_count_dict.pop(leg)
+        if self.debug:
+            part1 = part1.replace('i', '').replace('c', '')
+            part2 = part2.replace('i', '').replace('c', '')
+            print('After separating all `IJKPS` legs and removing `ic`:', part1, part2)
+        return leg_count_dict
+    def __valid_legs(self, human_feature_name, feature_type, leg_count_dict):
         """
-        Decode the encoded feature name to the normal feature name.
+        Check if the legs are valid.
+        """
+        flag_valid = True
+        nP, nS =    leg_count_dict['P'], leg_count_dict['S']
+        nK, nI, nJ = leg_count_dict['K'], leg_count_dict['I'], leg_count_dict['J']
+        # For IC-related features
+        # 1. the number of P+S legs must be even
+        # 2. the number of K legs must be even
+        if feature_type == 'IC':
+            if (nP+nS)%2 != 0 or (nK%2 != 0):
+                flag_valid = False
+        # For OC-related features
+        # 1. the number of P+S legs must be even
+        # 2. there should not be any I, J legs and i letters in the feature name
+        if feature_type == 'OC':
+            if (nP+nS)%2 != 0:
+                flag_valid = False
+            for letter in 'IJi':
+                if letter in human_feature_name:
+                    flag_valid = False
+                    break
+        # For MANTLE-related features
+        # 1. there should not be any I, J, K legs and i, c letters in the feature name
+        if feature_type == 'MANTLE':
+            for letter in 'IJKic':
+                if letter in human_feature_name:
+                    flag_valid = False
+                    break
+        ####
+        if self.debug:
+            msg = 'The feature name is valid' if flag_valid else 'The feature name is invalid'
+            print(msg)
+        return flag_valid
+    def __encode_dict_2_str(self, feature_type, leg_count_dict):
+        """
+        Encode the feature name based on the feature type and the leg count dict.
+        Return a encoded string.
+        """
+        temp = ['%s@%d' % (leg, n) for leg,n in sorted(leg_count_dict.items() ) if n != 0]
+        encoded = '_encoded_%s_%s' % (feature_type, '+'.join(temp) )
+        return encoded
+    def decode(self, encoded_str):
+        """
+        Decode the encoded feature name to the human readable feature name.
         #
         Parameters:
-            encoded_feature_name: a string of the encoded feature name.
-                                  Its has the format of '_encoded_NAME1@N1+NAME2+NAME3@N3+...',
-                                  It must started with the '_encoded_'.
-                                  The 'NAME1', 'NAME2'... can be
-                                  1. seismic phase name, such as P, PKIKP, PcP, ScP, PcS,...
-                                  2. normal correlation feature name which are two seismic
-                                     phase names seperated by a '-',
-                                     such as 'PcS-PcP', 'PKIKP-PKJKP'...
-                                     Simplified names are not allows, such as 'cS-cP'.
-                                  The 'N1', 'N2'... are numbers which means the repeat times of
-                                  the 'NAME1', 'NAME2'...
-                                  If 'Ni' is 1, then 'NAMEi@1' can be simplified as 'NAMEi'.
-        """
-        if encoded_feature_name[:9] != '_encoded_':
-            raise ValueError('The input encoded_feature_name must start with "_encoded_"!')
-        try:
-            ####
-            local_encoded_feature_name = encoded_feature_name[9:].replace('ScP', 'PcS')
-            # find the maximum number of contiuous K in a string
-            nK                         = CorrelationFeatureName.__find_n_character(local_encoded_feature_name, 'K')
-            local_encoded_feature_name = CorrelationFeatureName.__replace_K_seismic_phase(local_encoded_feature_name, nK)
-            # find the maximum number of contiuous I in a string
-            nI                         = CorrelationFeatureName.__find_n_character(local_encoded_feature_name, 'I')
-            local_encoded_feature_name = CorrelationFeatureName.__replace_I_seismic_phase(local_encoded_feature_name, nI)
-            ####
-            names, repeats = list(), list()
-            for temp in local_encoded_feature_name.split('+'):
-                if '@' in temp:
-                    name, repeat = temp.split('@')
-                    repeat = int(repeat)
-                else:
-                    name, repeat = temp, 1
-                names.append(name)
-                repeats.append(repeat)
-            ####
-            vol_dict = { it2:0 for it1 in names for it2 in it1.split('-') }
-            for name, repeat in zip(names, repeats):
-                if '-' not in name:
-                    vol_dict[name] = vol_dict[name] + repeat
-                else:
-                    name1, name2 = name.split('-')
-                    vol_dict[name1] = vol_dict[name1] + repeat
-                    vol_dict[name2] = vol_dict[name2] - repeat
-            ####
-            phase1, phase2 = '', ''
-            for ph, n in sorted(vol_dict.items() ):
-                if n > 0:
-                    phase1 = phase1 + ph*n
-                elif n < 0:
-                    phase2 = phase2 + ph*(-n)
-            ####
-            if phase1 == '':
-                cc_feature_name = '%s*' % phase2
-            elif phase2 == '':
-                cc_feature_name = '%s*' % phase1
-            else:
-                cc_feature_name = '%s-%s' % (phase1, phase2)
-            return cc_feature_name
-        except Exception as err:
-            raise ValueError('The input encoded_feature_name is invalid!', encoded_feature_name)
-            traceback.print_exc()
-    @staticmethod
-    def encode(normal_feature_name):
-        """
-        Encode the normal feature name to an encoded feature name.
+            encoded_str: a string of the encoded feature name.
         #
-        Parameters:
-            normal_feature_name: a string of the normal feature name.
-                                  It has the format of 'NAME1*' or 'NAME1-NAME2',
-                                  where 'NAME1' and 'NAME2' are seismic phase names.
+        Return:
+            a string of the human readable feature name.
         """
-        try:
-            local_feature_name = normal_feature_name.replace('ScP', 'PcS')
-            # find the maximum number of contiuous K in a string
-            nK                         = CorrelationFeatureName.__find_n_character(local_feature_name, 'K')
-            local_feature_name = CorrelationFeatureName.__replace_K_seismic_phase(local_feature_name, nK)
-            # find the maximum number of contiuous I in a string
-            nI                         = CorrelationFeatureName.__find_n_character(local_feature_name, 'I')
-            local_feature_name = CorrelationFeatureName.__replace_I_seismic_phase(local_feature_name, nI)
-            ####
-            seismic_phase_names = list()
-            seismic_phase_names.extend( ['PK%sKP' % ('I'*n) for n in range(nI, 0, -1)] )
-            seismic_phase_names.extend( ['PK%sKS' % ('I'*n) for n in range(nI, 0, -1)] )
-            seismic_phase_names.extend( ['P%sP'   % ('K'*n) for n in range(nK, 0, -1)] )
-            seismic_phase_names.extend( ['P%sS'   % ('K'*n) for n in range(nK, 0, -1)] )
-            seismic_phase_names.extend( ['PcP', 'PcS', 'ScS'] )
-            seismic_phase_names.extend( ['P', 'S'] )  # this must be at the end
-            ####
-            vol_dict = dict()
-            if '-' in local_feature_name:
-                phase1, phase2 = local_feature_name.split('-')
+        #1. extract the feature type and leg count dict
+        feature_type, leg_count_dict = self.__interpret_encoded_str_2_dict(encoded_str)
+        #2. Valid the leg count dict
+        effective_legs = [leg for leg, n in leg_count_dict.items() if n!=0]
+        flag_valid = self.__valid_legs( ''.join(effective_legs), feature_type, leg_count_dict)
+        if not flag_valid:
+            raise ValueError('The input encoded string is invalid!', encoded_str)
+        #3. decode the leg count dict to the human readable feature name
+        decoded = self.__decode_dict_2_str(feature_type, leg_count_dict)
+        return decoded
+    def __interpret_encoded_str_2_dict(self, encoded_str):
+        """
+        Valid and interpret the encoded string to the feature type and leg count dict.
+        Return a tuple of (feature_type, leg_count_dict).
+        """
+        if '_encoded_' not in encoded_str:
+            raise ValueError('The input encoded_str is invalid! There must be a leading `_encoded_` keyword!', encoded_str)
+        feature_type, temp = encoded_str[9:].split('_')
+        if feature_type not in ['IC', 'OC', 'MANTLE']:
+            raise ValueError('The input encoded_str is invalid! The feature type must be `IC`, `OC` or `MANTLE`!', encoded_str)
+        leg_count_dict = {leg:0 for leg in 'IJKPS'} # this count the number of legs in the feature name considering the minus sign
+        for seg in temp.split('+'):
+            leg, n = seg.split('@') if ('@' in seg) else (seg, 1)
+            if leg not in 'IJKPS':
+                raise ValueError('The input encoded_str is invalid! The leg name must be `I`, `J`, `K`, `P`, `S`!', encoded_str)
+            leg_count_dict[leg] += int(n)
+        return feature_type, leg_count_dict
+    def __decode_dict_2_str(self, feature_type, leg_count_dict):
+        """
+        Decode the feature name based on the feature type and the leg count dict.
+        Return a human readable string.
+        """
+        sps = ('PKIKP', 'SKIKS', 'PKIKS', 'SKIKP',
+               'PKJKP', 'SKJKS', 'PKJKS', 'SKJKP',
+               'PKiKP', 'SKiKS', 'PKiKS', 'SKiKP',
+               'PKP', 'SKS', 'PKS', 'SKP',
+               'PcP', 'ScS', 'PcS', 'ScP',
+               'P', 'S')
+        seismic_phase_count_dict = {it:0 for it in sps }
+        for leg in 'IJKPS':
+            n = leg_count_dict[leg]
+            if n == 0:
+                continue
+            if leg == 'I':  # handle I
+                if abs(leg_count_dict['P']) >= abs(leg_count_dict['S']):
+                    seismic_phase_count_dict['PKIKP'] += n
+                    leg_count_dict['I'] -=  n
+                    leg_count_dict['K'] -= (n*2)
+                    leg_count_dict['P'] -= (n*2)
+                else:
+                    seismic_phase_count_dict['SKIKS'] += n
+                    leg_count_dict['I'] -=  n
+                    leg_count_dict['K'] -= (n*2)
+                    leg_count_dict['S'] -= (n*2)
+            elif leg == 'J': # handle J
+                if abs(leg_count_dict['P']) >= abs(leg_count_dict['S']):
+                    seismic_phase_count_dict['PKJKP'] += n
+                    leg_count_dict['J'] -=  n
+                    leg_count_dict['K'] -= (n*2)
+                    leg_count_dict['P'] -= (n*2)
+                else:
+                    seismic_phase_count_dict['SKJKS'] += n
+                    leg_count_dict['J'] -=  n
+                    leg_count_dict['K'] -= (n*2)
+                    leg_count_dict['S'] -= (n*2)
+            elif leg == 'K': # handle K
+                if feature_type == 'IC':
+                    if abs(leg_count_dict['P']) >= abs(leg_count_dict['S']):
+                        seismic_phase_count_dict['PKiKP'] += n//2 # n must be a even as it passed the valid check
+                        leg_count_dict['K'] -= ((n//2)*2)
+                        leg_count_dict['P'] -= ((n//2)*2)
+                    else:
+                        seismic_phase_count_dict['SKiKS'] += n//2 # n must be a even as it passed the valid check
+                        leg_count_dict['K'] -= ((n//2)*2)
+                        leg_count_dict['S'] -= ((n//2)*2)
+                elif feature_type == 'OC':
+                    if abs(leg_count_dict['P']) >= abs(leg_count_dict['S']):
+                        seismic_phase_count_dict['PKP'] += n
+                        leg_count_dict['K'] -= n
+                        leg_count_dict['P'] -= (n*2)
+                    else:
+                        seismic_phase_count_dict['SKS'] += n
+                        leg_count_dict['K'] -= n
+                        leg_count_dict['S'] -= (n*2)
+                else:
+                    raise ValueError('The input feature_type or leg_count_dict are invalid!', feature_type, leg_count_dict)
+            elif leg in 'P': # handle P
+                if feature_type in ('IC', 'OC'):
+                    if n%2 != 0:
+                        if n > 0:
+                            seismic_phase_count_dict['PcS'] += 1
+                            leg_count_dict['P'] -= 1
+                            leg_count_dict['S'] -= 1
+                        else:
+                            seismic_phase_count_dict['PcS'] -= 1
+                            leg_count_dict['P'] -= 1
+                            leg_count_dict['S'] -= 1
+                        n = leg_count_dict['P'] # updated to even
+                    seismic_phase_count_dict['PcP'] += n//2
+                    leg_count_dict['P'] -= ((n//2)*2)
+                elif feature_type == 'MANTLE':
+                    seismic_phase_count_dict['P'] += n
+                    leg_count_dict['P'] -= n
+                else:
+                    raise ValueError('The input feature_type or leg_count_dict are invalid!', feature_type, leg_count_dict)
+            elif leg in 'S': # handle S
+                if feature_type in ('IC', 'OC'):
+                    if n%2 != 0:
+                        raise ValueError('The input feature_type or leg_count_dict are invalid!', feature_type, leg_count_dict)
+                    seismic_phase_count_dict['ScS'] += n//2
+                    leg_count_dict['S'] -= ((n//2)*2)
+                elif feature_type == 'MANTLE':
+                    seismic_phase_count_dict['S'] += n
+                    leg_count_dict['S'] -= n
+                else:
+                    raise ValueError('The input feature_type or leg_count_dict are invalid!', feature_type, leg_count_dict)
             else:
-                phase1, phase2 = local_feature_name, ''
-            #
-            for sph in seismic_phase_names:
-                if sph not in vol_dict:
-                    vol_dict[sph] = 0
-                # get the number of repeat times of sph in phase1
-                vol_dict[sph] += phase1.count(sph)
-                vol_dict[sph] -= phase2.count(sph)
-                phase1 = phase1.replace(sph, '')
-                phase2 = phase2.replace(sph, '')
-            ####
-            temp = list() #'_encoded_'
-            for sph, n in sorted(vol_dict.items()):
-                if n != 0:
-                    temp.append( '%s@%d' % (sph, n) )
-            result = '_encoded_' + '+'.join(temp)
-            return result
-        except Exception as err:
-            raise ValueError('The input normal_feature_name is invalid!', normal_feature_name)
-            traceback.print_exc()
-        pass
+                raise ValueError('The leg is invalid!', leg)
+        ################################################################################################
+        part1, part2 = '', ''
+        for sp, count in sorted(seismic_phase_count_dict.items() ):
+            if count > 0:
+                part1 += sp*count
+            elif count < 0:
+                part2 += sp*(-count)
+        result = '%s-%s' % (part1, part2)
+        if part2 == '':
+            result = '%s*' % part1
+        return result
+    def encode_leg_count_dict(self, feature_type, leg_count_dict):
+        """
+        Encode the leg count dict to a string.
+        """
+        effective_legs = [leg for leg, n in leg_count_dict.items() if n!=0]
+        if not self.__valid_legs(effective_legs, feature_type, leg_count_dict):
+            raise ValueError('The input leg_count_dict is invalid!', feature_type, leg_count_dict)
+        return self.__encode_dict_2_str(feature_type, leg_count_dict)
+# Encode a human feature name to a unique string. A wrapper of AppCCFeatureNameEncoder.encode(...)
+def encode_cc_feature_name(human_feature_name, debug=False):
+    """
+    Encode the human feature name to a unique string
+    #
+    Parameters:
+        human_feature_name: a string of the human feature name.
+        debug:              a Boolean value to enable the debug information.
+    #
+    Return:
+        a string of the encoded feature name.
+    """
+    app = AppCCFeatureNameEncoder(debug=debug)
+    return app.encode(human_feature_name)
+# Encode a leg count dict to a unique string. A wrapper of AppCCFeatureNameEncoder.encode_leg_count_dict(...)
+def encode_leg_count_dict(feature_type, leg_count_dict, debug=False):
+    """
+    Encode the leg count dict to a unique string.
+    #
+    Parameters:
+        feature_type:    a string of the feature type, which is either 'IC', 'OC', or 'MANTLE'.
+        leg_count_dict:  a dict of leg -> number of legs in the feature name (considering the minus sign).
+        debug:           a Boolean value to enable the debug information.
+    #
+    Return:
+        a string of the encoded feature name.
+    """
+    app = AppCCFeatureNameEncoder(debug=debug)
+    return app.encode_leg_count_dict(feature_type, leg_count_dict)
+# Eecode the encoded string to a unique human readable feature name. A wrapper of AppCCFeatureNameEncoder.decode(...)
+def decode_cc_feature_name(encoded_string, debug=False):
+    """
+    Decode the encoded string to the human readable feature name.
+    #
+    Parameters:
+        encoded_feature_name: a string of the encoded feature name.
+    #
+    Return:
+        a string of the human readable feature name.
+    """
+    app = AppCCFeatureNameEncoder(debug=debug)
+    return app.decode(encoded_string)
+
 
 @CacheRun('%s/bin/dataset/cc_feature_time.h5' % sacpy.__path__[0] )
 # Compute a list of all possible ray parameters, correlation times, inter-receiver distance,... for a correlation feature.
@@ -913,10 +1051,60 @@ if __name__ == "__main__":
             plt.plot(distance, time, label=name)
         plt.show()
     if True:
-        x = 'PcP-PcSSSSPPPPPKKKSSKKP'
+        #get_arrival_from_ray_param(taup.TauPyModel('ak135').model, 'P', 0.01, 0)
+        x = 'PcSPcSPcSPcSPcS-PcSScSScPPcPPcPPKKKSSKP'
+        x = 'SKS-ScS'
+        y = encode_cc_feature_name(x)
+        z = decode_cc_feature_name(y)
         print(x)
-        x = CorrelationFeatureName.encode(x)
+        print(y)
+        print(z)
+        #
+        x = 'PKIKPPKIKP-PKiKP'
+        y = encode_cc_feature_name(x)
+        z = decode_cc_feature_name(y)
         print(x)
-        x = CorrelationFeatureName.decode(x)
-        print(x)
-    pass
+        print(y)
+        print(z)
+        #####
+        lst = get_all_cc_names()
+        print(len(lst))
+        encodes = set()
+        for it in lst:
+            try:
+                encodes.add( encode_cc_feature_name(it) )
+            except Exception:
+                pass
+        print(len(encodes))
+        #####
+        all_encodes = set()
+        leg_count_dict = {leg:0 for leg in 'IJKPS'}
+        nmin, nmax = -5, 6
+        for feature_name in ('IC', 'OC', 'MANTLE'):
+            for nI in range(nmin, nmax):
+                leg_count_dict['I'] = nI
+                for nJ in range(nmin, nmax):
+                    leg_count_dict['J'] = nJ
+                    for nK in range(nmin, nmax):
+                        leg_count_dict['K'] = nK
+                        for nP in range(nmin, nmax):
+                            leg_count_dict['P'] = nP
+                            for nS in range(nmin, nmax):
+                                leg_count_dict['S'] = nS
+                                try:
+                                    encoded_str = encode_leg_count_dict(feature_name, leg_count_dict)
+                                    all_encodes.add(encoded_str)
+                                except Exception:
+                                    pass
+        print(len(all_encodes))
+        for it in sorted(all_encodes):
+            try:
+                x = decode_cc_feature_name(it)
+                #print(it, x )
+            except Exception:
+                print(it)
+                pass
+        #####
+        x = '_encoded_MANTLE_P@1'
+        y = decode_cc_feature_name(x)
+        print(y)
