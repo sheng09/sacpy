@@ -22,6 +22,7 @@ from obspy import taup
 from numpy import arange, array, linspace, interp, where, abs, diff, where, round, sum
 from .utils import Timer, CacheRun
 from obspy.taup.seismic_phase import SeismicPhase
+from obspy.taup import taup_create
 from matplotlib import pyplot as plt
 import sacpy
 from copy import deepcopy
@@ -31,8 +32,10 @@ from sacpy.processing import round_degree_180, round_degree_360
 import numpy as np
 
 __global_verbose= False
+__default_model_name = 'ak135'
 
 """
+**HOW TO USE obspy's SeismicPhase class**
 Here, we rely on the `taup` method to compute ray_param-distance-time relations for cross-correlation features.
 So, it is better to understand how obspy's `get_travel_times(...)` works.
 Below shows the workflow of the `get_travel_times(...)` method in `obspy.taup`.
@@ -43,6 +46,7 @@ Then, form the `SeismicPhase` object with the corrected `TauModel` object and re
 Then, using shooting methods `SeismicPhase.shoot_ray(...)` by trying different ray parameters
       to get the arrival with its epicentral distance close to the targeted distance.
 
+The code workflow is as follows:
         In `obspy.taup`, when running `TauPyModel.get_travel_times(....)` the workflow is as follows:
         1. `mod = obspy.taup.TauPyModel('ak135')` will run:
             +--> `mod.model.from_file(model, cache=cache)` where the `model` is either a pre-existed model name or a file name.
@@ -74,6 +78,15 @@ Then, using shooting methods `SeismicPhase.shoot_ray(...)` by trying different r
 
 From the workflow of obspy's `get_travel_times(...)`, using the `SeismicPhase` and its `shoot_ray(...)` is very powerful!
 In other words, we can compute epicentral distance and travel time given ray parameter and phase name!
+"""
+
+"""
+Here we show how to create a model by ourself:
+>>> import obspy.taup.taup_create as taup_create
+>>> taup_create.build_taup_model('path_to/filename.nd', output_folder='out_folder/', verbose=False)
+>>> my_mod = taup.TauPyModel('out_folder/filename.npz')
+>>> # where the `path_to/filename.nd` is the path to the model file, and `out_folder/` is the output folder.
+>>> # Can check `...../lib/python3.10/site-packages/obspy/taup/data/prem.nd` for the format of input `.nd` file
 """
 def __example_use_SeismicPhase_shoot_ray():
     """
@@ -447,7 +460,7 @@ def decode_cc_feature_name(encoded_string, debug=False):
 @CacheRun('%s/bin/dataset/cc_feature_time.h5' % sacpy.__path__[0] )
 # Compute a list of all possible ray parameters, correlation times, inter-receiver distance,... for a correlation feature.
 def get_ccs(tau_model1_corrected, tau_model2_corrected, phase1_name, phase2_name, rcvdp1_km, rcvdp2_km,
-            threshold_distance=0.1, max_interation=None, enable_h5update=True):
+            threshold_distance=0.1, max_interation=None, enable_h5update=True, model_tag=__default_model_name):
     """
     Compute all possible ray parameters, correlation times, and inter-receiver distance for a correlation feature.
     #
@@ -467,7 +480,8 @@ def get_ccs(tau_model1_corrected, tau_model2_corrected, phase1_name, phase2_name
         max_interation:     the maximum number of iterations for the denser arrivals.
         enable_h5update:    A Boolean value to enable the update of the cache file, as this function use `CacheRun` for acceleration.
                             Set `True` (default) to append the results in the cache file, and `False` to not.
-    #
+        model_tag:          The model name tag for the originial model that is used for generating
+                            the `tau_model_corrected`. Default is `ak135`.
     Return: (rps, cc_time, trvt1, trvt2, cc_purist_distance, cc_distance, purist_distance1, purist_distance2)
             NOTE, all the arrays are sorted with respect to the ray parameters!
         rps:                an array of ray parameters in sec/radian.
@@ -485,6 +499,9 @@ def get_ccs(tau_model1_corrected, tau_model2_corrected, phase1_name, phase2_name
     rdp1_meter = int(round(rcvdp1_km*1000.0) )
     rdp2_meter = int(round(rcvdp2_km*1000.0) )
     cache_key = 'CC_%s-%s_EV%d-%dRCV%d-%d' % (phase1_name, phase2_name, evdp1_meter, evdp2_meter, rdp1_meter, rdp2_meter)
+    # cache_key in default is for built-in ak135 model
+    if model_tag != __default_model_name:
+        cache_key = '%s@%s' % (cache_key, model_tag)
     # The load_from_cache(...) is added by the CacheRun decorator
     temp = get_ccs.load_from_cache(cache_key) # return None if cannot find anything
     if temp:
@@ -750,7 +767,7 @@ def get_all_cc_names():
                  'ScSPcS-PcPPcP', 'PKPPKS-ScS', 'PKPPKS-PcS', 'PKPPKS-PcP') )
     return sorted(ccs)
 #Compute a list of inter-receiver correlation feature dataset for their ray parameters, correlation times, inter-receiver distances and ...
-def get_all_interrcv_ccs(cc_feature_names=None, evdp_km=25.0, model_name='ak135', log=sys.stdout, selection_ratio=None, save_to_pickle_file=None,
+def get_all_interrcv_ccs(cc_feature_names=None, evdp_km=25.0, model_name=__default_model_name, log=sys.stdout, selection_ratio=None, save_to_pickle_file=None,
                          rcvdp1_km=0.0, rcvdp2_km=0.0):
     """
     Return a list of inter-receiver correlation feature dataset for their ray parameters, correlation times, inter-receiver distances and ...
@@ -769,7 +786,10 @@ def get_all_interrcv_ccs(cc_feature_names=None, evdp_km=25.0, model_name='ak135'
                                     depth `evdp_km`) and to the second receiver (at depth `rcvdp2_km`).
                                     In this case, the provided `evdp_km` is useful!
         evdp_km:             the depth (in km) of the same source for forming the inter-receiver correlation features.
-        model_name:          the name of the seismic model.
+        model_name:          the name of the seismic model (default is 'ak135'), or the path/filename of a user-defined model.
+                             The user-defined model can be in the format of `.nd` or `.npz`.
+                             The `.nd` file is a pure text file, and an example can be `..../site-packages/obspy/taup/data/prem.nd`
+                             The `.npz` file is a binary file, which can be generate by `obspy.taup.taup_create.build_taup_model(nd_file)`.
         log:                 the file object to write the log information.
         selection_ratio:     a float number between 0 and 1 to select a subset of the `cc_feature_names`.
         save_to_pickle_file: the file path to save the results in a pickle file.
@@ -791,9 +811,25 @@ def get_all_interrcv_ccs(cc_feature_names=None, evdp_km=25.0, model_name='ak135'
         msg = 'Currently, the `rcvdp1_km` and `rcvdp2_km` must be 0.0. They are forced to be 0.0 from {}, {}'.format(rcvdp1_km, rcvdp2_km)
         warnings.warn(msg)
     verbose = True if log else False
-    modc_seismic_phase = get_corrected_model( taup.TauPyModel(model_name).model, evdp_km=rcvdp1_km, rcvdp_km=rcvdp2_km) # for 'X*'
-    modc1 = get_corrected_model( taup.TauPyModel(model_name).model, evdp_km=evdp_km, rcvdp_km=rcvdp1_km) # for 'X-Y'
-    modc2 = get_corrected_model( taup.TauPyModel(model_name).model, evdp_km=evdp_km, rcvdp_km=rcvdp2_km)
+    #############################################################################################
+    if model_name[-3:] == '.nd':
+        taup_create.build_taup_model(model_name, output_folder='./', verbose=False)
+        model_tag = model_name.split('/')[-1].replace('.nd', '')
+        temp = './%s.npz' % model_tag
+        original_tau_model = taup.TauPyModel(temp).model
+    elif model_name[-4:] == '.npz':
+        original_tau_model = taup.TauPyModel(model_name).model
+        model_tag = model_name.split('/')[-1].replace('.npz', '')
+    else:
+        original_tau_model = taup.TauPyModel(model_name).model
+        model_tag = model_name
+    #############################################################################################
+    modc_seismic_phase = deepcopy(original_tau_model)
+    modc1              = deepcopy(original_tau_model)
+    modc2              = deepcopy(original_tau_model)
+    modc_seismic_phase = get_corrected_model( modc_seismic_phase, evdp_km=rcvdp1_km, rcvdp_km=rcvdp2_km) # for 'X*'
+    modc1              = get_corrected_model( modc1,              evdp_km=evdp_km,   rcvdp_km=rcvdp1_km) # for 'X-Y'
+    modc2              = get_corrected_model( modc2,              evdp_km=evdp_km,   rcvdp_km=rcvdp2_km)
     if cc_feature_names == None:
         cc_feature_names = get_all_cc_names()
     local_cc_feature_names = cc_feature_names
@@ -820,13 +856,15 @@ def get_all_interrcv_ccs(cc_feature_names=None, evdp_km=25.0, model_name='ak135'
             if '*' in feature_name: # for 'X*'
                 phase = feature_name[:-1]
                 rps, trvt, purist_distance, distance = get_arrivals(modc_seismic_phase, phase, rcvdp2_km, None,
-                                                                    0.5, 20, enable_h5update=True)
+                                                                    0.5, 20, enable_h5update=True,
+                                                                    model_tag=model_tag)
                 if rps.size>0:
                     ak = rps, trvt, purist_distance, distance
             elif '-' in feature_name: # for 'X-Y'
                 phase1, phase2= feature_name.split('-')
                 tmp = get_ccs(modc1, modc2, phase1, phase2, rcvdp1_km, rcvdp2_km,
-                              0.5, 20, True)
+                              0.5, 20, True,
+                              model_tag=model_tag)
                 rps, cc_time, trvt1, trvt2, cc_purist_distance, cc_distance, purist_distance1, purist_distance2  = tmp
                 if rps.size>0:
                     ak = rps, cc_time, cc_purist_distance, cc_distance 
@@ -862,7 +900,7 @@ def get_all_interrcv_ccs(cc_feature_names=None, evdp_km=25.0, model_name='ak135'
 # Get a list of dense-distance arrivals sorted with respect to ray parameter for a given ray parameter range
 @CacheRun('%s/bin/dataset/cc_feature_time.h5' % sacpy.__path__[0] )
 def get_arrivals(tau_model_corrected, phase_name, rcvdp_km, ray_param_range=None, threshold_distance=0.3, max_interation=None,
-                 enable_h5update=True):
+                 enable_h5update=True, model_tag = __default_model_name):
     """
     Compute a list of seismic arrival data sorted with respect to ray parameter for a given ray parameter range.
     #
@@ -883,6 +921,8 @@ def get_arrivals(tau_model_corrected, phase_name, rcvdp_km, ray_param_range=None
         enable_h5update:     A Boolean value to enable the update of the cache file, as this function
                              use `CacheRun` for acceleration. Set `True` (default) to append the results
                              in the cache file, and `False` to not.
+        model_tag:           the model name tag for the originial model that is used for generating
+                             the `tau_model_corrected`. Default is `ak135`.
     #
     Return: (ray_params, trvts, purist_distances, distances)
         ray_params:         a ndarray of ray parameters in sec/radian.
@@ -895,6 +935,9 @@ def get_arrivals(tau_model_corrected, phase_name, rcvdp_km, ray_param_range=None
     evdp_meter = int(round(tau_model_corrected.source_depth * 1000.0))
     rdp_meter = int(round(rcvdp_km*1000.0) )
     cache_key = 'SP%s_EV%d_RCV%d' % (phase_name, evdp_meter, rdp_meter)
+    # cache_key in default is for built-in ak135 model
+    if model_tag != __default_model_name:
+        cache_key = '%s@%s' % (cache_key, model_tag)
     # The load_from_cache(...) is added by the CacheRun decorator
     temp = get_arrivals.load_from_cache(cache_key) # return None if cannot find anything
     if temp:
