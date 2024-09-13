@@ -318,7 +318,7 @@ class AppCCFeatureNameEncoder:
             if n == 0:
                 continue
             if leg == 'I':  # handle I
-                if abs(leg_count_dict['P']) >= abs(leg_count_dict['S']):
+                if abs(leg_count_dict['P']) > abs(leg_count_dict['S']):
                     seismic_phase_count_dict['PKIKP'] += n
                     leg_count_dict['I'] -=  n
                     leg_count_dict['K'] -= (n*2)
@@ -329,7 +329,7 @@ class AppCCFeatureNameEncoder:
                     leg_count_dict['K'] -= (n*2)
                     leg_count_dict['S'] -= (n*2)
             elif leg == 'J': # handle J
-                if abs(leg_count_dict['P']) >= abs(leg_count_dict['S']):
+                if abs(leg_count_dict['P']) > abs(leg_count_dict['S']):
                     seismic_phase_count_dict['PKJKP'] += n
                     leg_count_dict['J'] -=  n
                     leg_count_dict['K'] -= (n*2)
@@ -341,7 +341,7 @@ class AppCCFeatureNameEncoder:
                     leg_count_dict['S'] -= (n*2)
             elif leg == 'K': # handle K
                 if feature_type == 'IC':
-                    if abs(leg_count_dict['P']) >= abs(leg_count_dict['S']):
+                    if abs(leg_count_dict['P']) > abs(leg_count_dict['S']):
                         seismic_phase_count_dict['PKiKP'] += n//2 # n must be a even as it passed the valid check
                         leg_count_dict['K'] -= ((n//2)*2)
                         leg_count_dict['P'] -= ((n//2)*2)
@@ -350,7 +350,7 @@ class AppCCFeatureNameEncoder:
                         leg_count_dict['K'] -= ((n//2)*2)
                         leg_count_dict['S'] -= ((n//2)*2)
                 elif feature_type == 'OC':
-                    if abs(leg_count_dict['P']) >= abs(leg_count_dict['S']):
+                    if abs(leg_count_dict['P']) > abs(leg_count_dict['S']):
                         seismic_phase_count_dict['PKP'] += n
                         leg_count_dict['K'] -= n
                         leg_count_dict['P'] -= (n*2)
@@ -369,8 +369,8 @@ class AppCCFeatureNameEncoder:
                             leg_count_dict['S'] -= 1
                         else:
                             seismic_phase_count_dict['PcS'] -= 1
-                            leg_count_dict['P'] -= 1
-                            leg_count_dict['S'] -= 1
+                            leg_count_dict['P'] += 1
+                            leg_count_dict['S'] += 1
                         n = leg_count_dict['P'] # updated to even
                     seismic_phase_count_dict['PcP'] += n//2
                     leg_count_dict['P'] -= ((n//2)*2)
@@ -1120,7 +1120,7 @@ if __name__ == "__main__":
         print(tmp)
         ccs = get_cc_names()
         print(ccs, len(ccs) )
-    if True:
+    if False:
         #tmp = get_all_cc_names()
         #print(tmp[:2])
         get_all_interrcv_ccs(log=sys.stdout)
@@ -1200,3 +1200,9 @@ if __name__ == "__main__":
         x = '_encoded_MANTLE_P@1'
         y = decode_cc_feature_name(x)
         print(y)
+    if True:
+        x = '_encoded_OC_P@-1+S@1'
+        y = decode_cc_feature_name(x)
+        print(y)
+    pass
+    pass
