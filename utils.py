@@ -325,52 +325,62 @@ class CacheRun:
     Please note. This CacheRun as a decorator with be constructed for once no matter how
     many times the function that is decoratored will be called.
     """
-    def __init__(self, h5_filename=None, clear=False):
+    def __init__(self, h5_filename=None, clear=False, mpi_comm=None, debug=False):
         """
         h5_filename: Use an additional hdf5 file in the disk to save files.
                      The memory cache will still be used.
         clear: clear the h5 file.
         """
+        self.debug = debug
+        if self.debug:
+            print('__init__')
         try:
             if h5_filename and clear:
                 os.remove(h5_filename)
         except Exception:
             pass
-        #print('enter CacheRun._init__(...)')
-        self.h5cache = None
-        if h5_filename:
-            try:
-                mpi_rank = int(os.environ['OMPI_COMM_WORLD_RANK'])
-                h5_filename = '%s_mpi_%4d' % (h5_filename, mpi_rank)
-            except:
-                pass
-            self.h5cache = h5py.File(h5_filename, 'a')
+        self.h5_filename = h5_filename
+        self.h5cache = None ### will create when __entering__ a function context
         self.cache   = dict()
+        self.mpi_comm = mpi_comm
         #######################################################
         def __load(group_name):
+            if self.debug:
+                print('__load')
             try:
                 cache = self.cache
                 if group_name in cache:
+                    if self.debug:
+                        print('load from cache', group_name )
                     return cache[group_name]
-                h5cache = self.h5cache
-                if h5cache:
-                    if group_name in h5cache:
-                        cache[group_name] = {_k: _v for _k, _v in h5cache[group_name].items()}
-                        h5cache[group_name]
-                        cache[group_name]['attrs'] = {_k: _v for _k, _v in h5cache[group_name].attrs.items() }
+                if self.h5cache:
+                    if group_name in self.h5cache:
+                        if self.debug:
+                            print('load from h5cache', group_name )
+                        cache[group_name] = {_k: _v[:] for _k, _v in self.h5cache[group_name].items()}
+                        cache[group_name]['attrs'] = {_k: _v for _k, _v in self.h5cache[group_name].attrs.items() }
+                        if self.debug:
+                            print('    loaded successfully')
                         return cache[group_name]
             except Exception:
                 pass
             return None
         self.load_from_cache = __load
         def __dump(group_name, data_dict, attrs_dict=None):
-            h5cache = self.h5cache
-            if h5cache:
-                if group_name in h5cache:
-                    del h5cache[group_name]
-                grp = h5cache.create_group(group_name)
+            if self.debug:
+                print('__dump')
+            if self.h5cache:
+                if group_name in self.h5cache:
+                    if self.debug:
+                        print('h5cache to file: del', group_name)
+                    del self.h5cache[group_name]
+                if self.debug:
+                    print('h5cache to file: create_group', group_name)
+                grp = self.h5cache.create_group(group_name)
                 for _k, _v in data_dict.items():
                     if _k != 'attrs':
+                        if self.debug:
+                            print('h5cache to file: create_dataset', _k)
                         grp.create_dataset(_k, data=_v)
                 if attrs_dict:
                     for _k, _v in attrs_dict.items():
@@ -379,13 +389,34 @@ class CacheRun:
             cache[group_name] = data_dict
             cache[group_name]['attrs'] = attrs_dict
         self.dump_to_cache = __dump
+    def __open_h5_file(self):
+        if self.debug:
+            print('__open_h5_file')
+        if self.h5cache is None:
+            if self.h5_filename:
+                h5_filename = self.h5_filename
+                if self.mpi_comm is not None:
+                    mpi_rank = self.mpi_comm.Get_rank() #int(os.environ['OMPI_COMM_WORLD_RANK'])
+                    h5_filename = '%s_mpi_%4d' % (self.h5_filename, mpi_rank)
+                self.h5cache = h5py.File(h5_filename, 'a')
+    def __close_h5_file(self):
+        if self.debug:
+            print('__close_h5_file')
+        if self.h5cache is not None:
+            self.h5cache.close()
+            self.h5cache = None
     def __enter__(self):
+        if self.debug:
+            print('__enter__')
+        self.__open_h5_file()
         return self
-        pass
     def __exit__(self, *exc_args):
-        self.h5cache.close()
-        pass
+        if self.debug:
+            print('__exit__')
+        self.__close_h5_file()
     def __call__(self, func):
+        if self.debug:
+            print('__call__')
         #func.h5cache = self.h5cache
         #func.cache = self.cache
         ########################################################
@@ -395,7 +426,10 @@ class CacheRun:
         ########################################################
         @wraps(func)
         def __wrapper(*args, **kwargs):
-            return func(*args, **kwargs)
+            self.__open_h5_file() ### Note, place here instead of outside the wrapper
+            temp = func(*args, **kwargs)
+            self.__close_h5_file()
+            return temp
         return __wrapper
 
 class Logger:
