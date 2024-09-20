@@ -455,6 +455,76 @@ def decode_cc_feature_name(encoded_string, debug=False):
     """
     app = AppCCFeatureNameEncoder(debug=debug)
     return app.decode(encoded_string)
+# Compress human readable feature name to a unique string.
+def compress_human_cc_feature_name(human_feature_name, debug=False):
+    """
+    Compress the human feature name to a unique string.
+    For example, 'ScSScS*' -> '{ScS}_2*'
+    """
+    maxn = len(human_feature_name)
+    basic_phase_names = list()
+    ################################################################################################
+    nIs = ['I'*n for n in range(1, maxn+1)]
+    PKnIKPs = ['PK%sKP' % it for it in nIs]
+    PKnIKSs = ['PK%sKS' % it for it in nIs]
+    SKnIKPs = ['SK%sKP' % it for it in nIs]
+    SKnIKSs = ['SK%sKS' % it for it in nIs]
+    basic_phase_names.extend(PKnIKPs)
+    basic_phase_names.extend(PKnIKSs)
+    basic_phase_names.extend(SKnIKPs)
+    basic_phase_names.extend(SKnIKSs)
+    ################################################################################################
+    nJs = ['J'*n for n in range(1, maxn+1)]
+    PKnJKPs = ['PK%sKP' % it for it in nJs]
+    PKnJKSs = ['PK%sKS' % it for it in nJs]
+    SKnJKPs = ['SK%sKP' % it for it in nJs]
+    SKnJKSs = ['SK%sKS' % it for it in nJs]
+    basic_phase_names.extend(PKnJKPs)
+    basic_phase_names.extend(PKnJKSs)
+    basic_phase_names.extend(SKnJKPs)
+    basic_phase_names.extend(SKnJKSs)
+    ################################################################################################
+    basic_phase_names.extend( [ 'PKiKP', 'PKiKS', 'SKiKP', 'SKiKS'] )
+    ################################################################################################
+    nKs = ['K'*n for n in range(1, maxn+1)]
+    PnKPs = ['P%sP' % it for it in nKs]
+    PnKSs = ['P%sS' % it for it in nKs]
+    SnKPs = ['S%sP' % it for it in nKs]
+    SnKSs = ['S%sS' % it for it in nKs]
+    basic_phase_names.extend(PnKPs)
+    basic_phase_names.extend(PnKSs)
+    basic_phase_names.extend(SnKPs)
+    basic_phase_names.extend(SnKSs)
+    ################################################################################################
+    basic_phase_names.extend([ 'PcP', 'PcS', 'ScP', 'ScS', 'P', 'S', ])
+    ################################################################################################
+    temp = {it:0 for it in basic_phase_names}
+    part1, part2 = human_feature_name.split('-') if ('-' in human_feature_name) else (human_feature_name, '')
+    for phase in basic_phase_names:
+        n = part1.count(phase) - part2.count(phase)
+        temp[phase] = n
+        part1 = part1.replace(phase, '')
+        part2 = part2.replace(phase, '')
+    ####
+    part1, part2 = '', ''
+    for phase in basic_phase_names:
+        if temp[phase] == 0:
+            continue
+        elif temp[phase] > 0:
+            if temp[phase] == 1:
+                part1 += phase
+            else:
+                part1 += '{%s}_%d' % (phase, temp[phase])
+        else:
+            if temp[phase] == -1:
+                part2 += phase
+            else:
+                part2 += '{%s}_%d' % (phase, -temp[phase])
+    ####
+    result = '%s-%s' % (part1, part2)
+    if part2 == '':
+        result = '%s*' % part1
+    return result
 
 
 @CacheRun('%s/bin/dataset/cc_feature_time.h5' % sacpy.__path__[0] )
