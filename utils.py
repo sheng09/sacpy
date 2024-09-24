@@ -221,11 +221,11 @@ class Timer:
     colors = ['C0', 'C1', 'C2', 'C3', 'C4', 'C5', 'C6']
     def __init__(self, tag=None, color=None, verbose=True, file=sys.stdout, summary=None):
         """
-        tag:
-        color:
-        verbose:
-        file:
-        summary: an object of OrderedDict
+        tag:      a tag name to mark the operation. (default: None)
+        color:    a string of color name or hex value. (default: None)
+        verbose:  True or False to print the time consumption during the runtime. (default: True)
+        file:     where to print the time consumption. (default: sys.stdout)
+        summary:  an object of OrderedDict to store the time consumption. (default: None)
         """
         if summary != None:
             if summary.accumulative:
@@ -241,7 +241,7 @@ class Timer:
         self.summary = summary
     def __enter__(self):
         self.__do_enter()
-    def __exit__(self, *exc_args): #def __exit__(self, exc_type, exc_value, traceback):
+    def __exit__(self, *exc_args):
         self.__do_exit()
     def __do_enter(self):
         self.starttime = compute_time()
@@ -435,6 +435,21 @@ class CacheRun:
 class Logger:
     """
     Logger that supports MPI.
+    #
+    Example:
+        >>> logger = Logger(log_dir='./')
+        >>> logger(level=-1, 'Level -1 message')
+        >>> logger(level= 0, 'Level  0 message')
+        >>> logger(level= 1, 'Level  1 message')
+        >>> logger.close()
+        >>>
+        >>> # MPI loggers
+        >>> from mpi4py import MPI
+        >>> mpi_comm = MPI.COMM_WORLD.Dup()
+        >>> logger = Logger(log_dir='./', mpi_comm=mpi_comm)
+        >>> logger(level=-1, 'Level -1 message')
+        >>> #...
+        >>> logger.close()
     """
     prompt_dict = {-1: '>>> ', 0: '',
                    1: ' '*4,   2: ' '*8,   3: ' '*12,  4: ' '*16,

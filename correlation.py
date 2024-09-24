@@ -4,7 +4,9 @@
 This module provides functions to compute the ray parameters, correlation times, inter-receiver distances for cross-correlation features.
 
 Example:
-    >>>
+    >>> ############
+    >>> # Example: compute time curves for a list of cross-correlation features
+    >>> ############
     >>> cc_features = get_all_interrcv_ccs(['P*', 'PcP*'], evdp_km=50, model_name='ak135', log=sys.stdout, rcvdp1_km=0.0, rcvdp2_km=0.0)
     >>>
     >>> # Now, plot
@@ -16,6 +18,25 @@ Example:
     >>>     distance        = it['distance']
     >>>     plt.plot(distance, time, label=name)
     >>> plt.show()
+    >>>
+    >>> ###########
+    >>> # Encode and decode a feature name
+    >>> ###########
+    >>> human_feature_name1 = 'PKIKP-PKIKS'
+    >>> human_feature_name2 = 'PcP-PcS' # in fact the same thing
+    >>> encode1 = encode_cc_feature_name(human_feature_name1)
+    >>> encode2 = encode_cc_feature_name(human_feature_name2) # the encodes will be the same
+    >>> print(encode1, encode2)
+    >>> #
+    >>> decode = decode_cc_feature_name(encode1)
+    >>> print(decode)
+    >>>
+    >>> ###########
+    >>> # Compress a human feature name
+    >>> ###########
+    >>> name = 'PKIKPPKIKP-PKJKP'
+    >>> compressed = compress_human_cc_feature_name(name)
+    >>> print(compressed) # '{PKIKP}_2-PKJKP' can be used to print with latex
     >>>
 """
 from obspy import taup
@@ -527,8 +548,8 @@ def compress_human_cc_feature_name(human_feature_name, debug=False):
     return result
 
 
-@CacheRun('%s/bin/dataset/cc_feature_time.h5' % sacpy.__path__[0] )
 # Compute a list of all possible ray parameters, correlation times, inter-receiver distance,... for a correlation feature.
+@CacheRun('%s/bin/dataset/cc_feature_time.h5' % sacpy.__path__[0] )
 def get_ccs(tau_model1_corrected, tau_model2_corrected, phase1_name, phase2_name, rcvdp1_km, rcvdp2_km,
             threshold_distance=0.1, max_interation=None, enable_h5update=True, model_tag=__default_model_name):
     """
@@ -580,13 +601,13 @@ def get_ccs(tau_model1_corrected, tau_model2_corrected, phase1_name, phase2_name
             if cached_threshold_distance <= threshold_distance:
                 try:
                     rps                = temp['ray_param'][:]
-                    cc_time            = temp['cc_time'][:]
-                    cc_purist_distance = temp['cc_purist_distance'][:]
-                    cc_distance        = temp['cc_distance'][:]
                     trvt1              = temp['trvt1'][:]
                     trvt2              = temp['trvt2'][:]
                     purist_distance1 = temp['purist_distance1'][:]
                     purist_distance2 = temp['purist_distance2'][:]
+                    cc_time            = trvt1-trvt2 # the three dependent quantities
+                    cc_purist_distance = purist_distance1 - purist_distance2
+                    cc_distance        = round_degree_180(cc_purist_distance)
                     junk = (rps.size, cc_time.size, cc_purist_distance.size, cc_distance.size, trvt1.size, trvt2.size, purist_distance1.size, purist_distance2.size)
                     if len(set(junk)) == 1:
                         return rps, cc_time, trvt1, trvt2, cc_purist_distance, cc_distance, purist_distance1, purist_distance2
@@ -637,15 +658,15 @@ def get_ccs(tau_model1_corrected, tau_model2_corrected, phase1_name, phase2_name
                 break
     # Step 3 form correlation features #########################################
     # must use the `.purist_distance` which are of the same anti-clockwise direction
-    cc_purist_distance = array( [pd1-pd2 for pd1, pd2 in zip(purist_distance1, purist_distance2)] )
     trvt1, trvt2 = array(trvt1), array(trvt2)
     purist_distance1, purist_distance2 = array(purist_distance1), array(purist_distance2)
     cc_time = trvt1-trvt2
+    cc_purist_distance = purist_distance1 - purist_distance2
     cc_distance = round_degree_180(cc_purist_distance)
     rps = array(rps)
     ## Step 4 update cache #####################################################
     if enable_h5update:
-        data_dict = {  'ray_param': rps, 'trvt1': trvt1, 'trvt2': trvt2, 'cc_time': cc_time, 'cc_purist_distance': cc_purist_distance, 'cc_distance': cc_distance, 'purist_distance1': purist_distance1, 'purist_distance2':purist_distance2 }
+        data_dict = {  'ray_param': rps, 'trvt1': trvt1, 'trvt2': trvt2, 'purist_distance1': purist_distance1, 'purist_distance2':purist_distance2 }
         attrs_dict = { 'threshold_distance': threshold_distance }
         get_ccs.dump_to_cache(cache_key, data_dict, attrs_dict)
     return rps, cc_time, trvt1, trvt2, cc_purist_distance, cc_distance, purist_distance1, purist_distance2
@@ -1004,7 +1025,7 @@ def get_arrivals(tau_model_corrected, phase_name, rcvdp_km, ray_param_range=None
     #### load from memory volume
     evdp_meter = int(round(tau_model_corrected.source_depth * 1000.0))
     rdp_meter = int(round(rcvdp_km*1000.0) )
-    cache_key = 'SP%s_EV%d_RCV%d' % (phase_name, evdp_meter, rdp_meter)
+    cache_key = 'SP_%s_EV%d_RCV%d' % (phase_name, evdp_meter, rdp_meter)
     # cache_key in default is for built-in ak135 model
     if model_tag != __default_model_name:
         cache_key = '%s@%s' % (cache_key, model_tag)
@@ -1016,7 +1037,7 @@ def get_arrivals(tau_model_corrected, phase_name, rcvdp_km, ray_param_range=None
             rps             = temp['ray_param'][:]
             trvt            = temp['time'][:]
             purist_distance = temp['purist_distance'][:]
-            distance        = temp['distance'][:]
+            distance        = round_degree_180(purist_distance)
             return rps, trvt, purist_distance, distance
     #### Does not exist in the cache. Hence we need to compute the new
     # Step 0 ###################################################################
@@ -1058,7 +1079,7 @@ def get_arrivals(tau_model_corrected, phase_name, rcvdp_km, ray_param_range=None
     # Step 4 update cache #####################################################
     # The dump_to_cache(...) is added by the CacheRun decorator
     if enable_h5update:
-        data_dict  = { 'ray_param': rps, 'time': trvt, 'purist_distance': purist_distance, 'distance': distance }
+        data_dict  = { 'ray_param': rps, 'time': trvt, 'purist_distance': purist_distance }
         attrs_dict = { 'threshold_distance': threshold_distance }
         get_arrivals.dump_to_cache(cache_key, data_dict, attrs_dict)
     ###########################################################################
