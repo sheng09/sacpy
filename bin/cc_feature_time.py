@@ -125,7 +125,7 @@ class cc_feature_time:
 
 if __name__ == "__main__":
     # -F PcS-PcP -D 10 -E -30/0
-    evdp_km = 25.0
+    evdp_km = 0.0
     rcv1dp_km, rcv2dp_km = (0.0, 0.0)
     cc_feature_name = None
     distances = None
