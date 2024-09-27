@@ -12,7 +12,8 @@ from .geomath import great_circle_plane_center_triple, haversine
 
 __xy_data_ccrs = ccrs.PlateCarree()
 __gc_data_ccrs = ccrs.Geodetic()
-def plot_great_circle_path(lo1, la1, lo2, la2, ptlo, ptla, ax=None, color='k', linewidth=0.8, alpha=0.8, **kwargs):
+# Plot a single great circle path passing through two points (or using the third point in case the two points are at the same location).
+def plot_great_circle_path_deg(lo1, la1, lo2, la2, ptlo, ptla, ax=None, color='k', linewidth=0.8, alpha=0.8, **kwargs):
     """
     Plot a great circle path passing through two points on a 2D map.
     #
@@ -26,6 +27,8 @@ def plot_great_circle_path(lo1, la1, lo2, la2, ptlo, ptla, ax=None, color='k', l
         la2: a single value. The latitude of the other point in degree.
         ax:  a matplotlib axis object. Default is `None` to create a new figure and axis.
         **kwargs: other keyword arguments for the pyplot.plot options.
+    Return:
+        ax: a matplotlib axis object used for plotting.
     """
     if ax is None:
         fig, ax = plt.subplots(subplot_kw={'projection': ccrs.Robinson() } )
@@ -37,10 +40,12 @@ def plot_great_circle_path(lo1, la1, lo2, la2, ptlo, ptla, ax=None, color='k', l
     lo4, la4 = lo2+180, -la2
     ax.plot([lo1, lo2, lo3, lo4, lo1], [la1, la2, la3, la4, la1], transform=__gc_data_ccrs,
             color=color, linewidth=linewidth, alpha=alpha, **kwargs)
-def plot_great_circle_centers(lo1, la1, lo2, la2, ptlo, ptla,
-                              plot_northern_centers=True, plot_southern_centers=False,
-                              color_northern='C3', color_southern='C1',
-                              ax=None, s=20, marker='.', alpha=0.8, **kwargs):
+    return ax
+# Plot the center of great circle path passing through two points (or using the third point in case the two points are at the same location).
+def plot_great_circle_centers_deg(lo1, la1, lo2, la2, ptlo, ptla,
+                                  plot_northern_centers=True, plot_southern_centers=False,
+                                  color_northern='C3', color_southern='C1',
+                                  ax=None, s=20, marker='.', alpha=0.8, **kwargs):
     """
     Plot the center of great circle path passing through two points, or the centers of multiple
     great circle paths passing through multiple pairs of points on a 2D map.
@@ -57,8 +62,12 @@ def plot_great_circle_centers(lo1, la1, lo2, la2, ptlo, ptla,
                                Default is `True`.
         plot_southern_centers: a boolean. If `True`, plot the centers of the great circle paths in the southern hemisphere.
                                Default is `False`.
+        color_northern: a string. The color for the centers in the northern hemisphere. Default is `C3`.
+        color_southern: a string. The color for the centers in the southern hemisphere. Default is `C1`.
         ax: a matplotlib axis object. Default is `None` to create a new figure and axis.
         **kwargs: other keyword arguments for the pyplot.plot options.
+    Return:
+        ax: a matplotlib axis object used for plotting.
     #
     Note:
     The input of `lo1, la1, lo2, la2` could be single values(v) or np.ndarray objects(a). They could be:
@@ -74,12 +83,19 @@ def plot_great_circle_centers(lo1, la1, lo2, la2, ptlo, ptla,
         fig, ax = plt.subplots(subplot_kw={'projection': ccrs.Robinson() } )
         ax.set_global()
         ax.add_feature(cfeature.LAND, color='#eeeeee')
+    if 'color' in kwargs:
+        kwargs = kwargs.copy()
+        kwargs.pop('color')
     if plot_northern_centers:
         ax.scatter(clos, clas, s=s, c=color_northern, transform=__xy_data_ccrs, marker=marker, alpha=alpha, **kwargs)
     if plot_southern_centers:
         ax.scatter(aclos, aclas, s=s, c=color_southern, transform=__xy_data_ccrs, marker=marker, alpha=alpha, **kwargs)
-    pass
-def plot_correlation_pairs(los_deg, las_deg, ptlo, ptla, selection_mat=None, random_selection_rate=None, ax=None, **kwargs):
+    return ax
+# Plot correlation pairs formed using a list of points (e.g., station locations), and a common point (an event location).
+def plot_correlation_pairs_deg(los_deg, las_deg, ptlo, ptla, selection_mat=None, random_selection_rate=None, ax=None,
+                               plot_gc_path=True, plot_northern_centers=True, plot_southern_centers=False,
+                               color_northern='C3', color_southern='C1',
+                               **kwargs):
     """
     Plot correlation pairs on a 2D map.
     #
@@ -98,7 +114,15 @@ def plot_correlation_pairs(los_deg, las_deg, ptlo, ptla, selection_mat=None, ran
         random_selection_rate: a float between 0 and 1 to randomly select a portion of
                                correlation pairs. Default is `None` to select all correlation pairs.
         ax: a matplotlib axis object. Default is `None` to create a new figure and axis.
+        plot_northern_centers: a boolean. If `True`, plot the centers of the great circle paths in the northern hemisphere.
+                               Default is `True`.
+        plot_southern_centers: a boolean. If `True`, plot the centers of the great circle paths in the southern hemisphere.
+                               Default is `False`.
+        color_northern: a string. The color for the centers in the northern hemisphere. Default is `C3`.
+        color_southern: a string. The color for the centers in the southern hemisphere. Default is `C1`.
         **kwargs: other keyword arguments for the pyplot.plot options.
+    Return:
+        ax: a matplotlib axis object used for plotting.
     """
     if ax is None:
         fig, ax = plt.subplots(subplot_kw={'projection': ccrs.Robinson() } )
@@ -106,33 +130,40 @@ def plot_correlation_pairs(los_deg, las_deg, ptlo, ptla, selection_mat=None, ran
     las_deg = np.array(las_deg)
     n = los_deg.size
     #### input selection
-    selection_mat = np.ones((n, n), dtype=np.int8) if selection_mat is None else selection_mat
+    selection_mat = np.ones((n, n), dtype=np.int8)   if   (selection_mat is None)   else   selection_mat
     #### random select a portion of correlation pairs
-    n_selected    = int( np.sum(np.triu(selection_mat) ) if (random_selection_rate is None) else random_selection_rate*np.sum(np.triu(selection_mat) ) )
+    n_selected  = np.sum(np.triu(selection_mat) ) # only the upper triangle is used
+    n_selected  = n_selected   if  (random_selection_rate is None)   else  random_selection_rate*n_selected
+    n_selected  = int(n_selected)
     random_selection_arr = np.zeros(n*(n-1)//2+n, dtype=np.int8)
     random_selection_arr[:n_selected] = 1
     np.random.shuffle(random_selection_arr) # in-place modification
+    #
+    random_selection_mat = np.zeros((n, n), dtype=np.int8)
+    random_selection_mat[ np.triu_indices(n) ] = random_selection_arr
+    random_selection_mat |= random_selection_mat.T # make symmetric
+    #### apply random selection results
+    random_selection_mat &= selection_mat # here avoid modifying the input selection_mat
     ####
-    j1, j2 = 0, n
     for i1 in range(n):
         lo1, la1 = los_deg[i1], las_deg[i1]
         lo2, la2 = los_deg[i1:], las_deg[i1:]
         #### selection
-        geo_selection = selection_mat[i1, i1:] # input selection
-        tmp = (random_selection_arr[j1:j2] & geo_selection) # random selection
-        print(geo_selection.size, geo_selection.size)
-        lo2, la2 = lo2[tmp!=0], la2[tmp!=0]
-        ####
-        j1=j2
-        j2+=(n-i1-1)
+        row_selection = random_selection_mat[i1, i1:]
+        lo2, la2 = lo2[row_selection!=0], la2[row_selection!=0]
         ####
         if lo2.size == 0:
             continue
         ####
-        plot_great_circle_centers(lo1, la1, lo2, la2, ptlo, ptla, ax=ax, **kwargs)
-        for _lo2, _la2 in zip(lo2, la2):
-            plot_great_circle_path(lo1, la1, _lo2, _la2, ptlo, ptla, ax=ax, **kwargs)
-
+        if plot_northern_centers or plot_southern_centers:
+            plot_great_circle_centers_deg(lo1, la1, lo2, la2, ptlo, ptla, ax=ax,
+                                          plot_northern_centers=plot_northern_centers, plot_southern_centers=plot_southern_centers,
+                                          color_northern=color_northern, color_southern=color_southern,
+                                          **kwargs)
+        if plot_gc_path:
+            for _lo2, _la2 in zip(lo2, la2):
+                plot_great_circle_path_deg(lo1, la1, _lo2, _la2, ptlo, ptla, ax=ax, **kwargs)
+    return ax
 
 
 if __name__ == '__main__':
@@ -146,6 +177,7 @@ if __name__ == '__main__':
     los_deg = np.random.rand(10)*10+130
     las_deg = np.random.rand(10)*10+30
     ptlo, ptla = 0, 0
-    plot_correlation_pairs(los_deg, las_deg, ptlo, ptla, ax=ax, random_selection_rate=0.2, zorder=0)
+    plot_correlation_pairs_deg(los_deg, las_deg, ptlo, ptla, ax=ax, random_selection_rate=None, zorder=0, color='#987654', linewidth=0.3,
+                               plot_gc_path=True, plot_northern_centers=True, plot_southern_centers=True)
     ax.scatter(los_deg, las_deg, c='C0', s=30, marker='^', transform=__xy_data_ccrs, zorder=1)
     plt.show()
