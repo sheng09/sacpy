@@ -395,28 +395,27 @@ def cc_stack(ch1, ch2, znert_mat_spec_c64, lo_rad, la_rad, stack_mat_spec_c64, s
                 stack_mat_spec_c64[istack] += ss
                 stack_count[istack] += selection_mat_nn[ista1, ista2] # select or discard for 1 or 0, respectively
     #return(dtypes)
-#def plot_stack_mat(stack_mat, stack_count, stack_bins, freq_band, title=None, fig=None, ax=None, figname=None):
-#    """
-#    Plot the stack matrix
-#    """
-#    if fig is None:
-#        fig = plt.figure()
-#    if ax is None:
-#        ax = fig.add_subplot(111)
-#    #
-#    nf = stack_mat_spec.shape[1]
-#    freqs = np.fft.rfftfreq(nf*2, d=1.0)
-#    idxs = np.where( (freqs>=freq_band[0]) & (freqs<=freq_band[1]) )[0]
-#    freqs = freqs[idxs]
-#    spec = np.abs(stack_mat_spec).sum(axis=0)
-#    spec = spec[idxs]
-#    ax.plot(freqs, spec)
-#    ax.set_xlabel('Frequency (Hz)')
-#    ax.set_ylabel('Amplitude')
-#    if title:
-#        ax.set_title(title)
-#    return fig, ax
 
+def plot_correlogram(stack_mat, stack_count, stack_bin_centers, cc_time_range,
+                     vmin=-0.6, vmax=0.6, cmap='gray', bar_color='#999999',
+                     ax=None, hax=None):
+    """
+    Plot correlogram
+    """
+    if ax is None:
+        fig, (ax, hax) = plt.subplots(2, 1, figsize=(3, 6), gridspec_kw={'height_ratios': [5, 1] } )
+    cc_t1, cc_t2 = cc_time_range
+    x0, x1 = stack_bin_centers[0], stack_bin_centers[-1]
+    dx     = stack_bin_centers[1]-stack_bin_centers[0]
+    ax.imshow(stack_mat.transpose(), aspect='auto', extent=[x0, x1, cc_t1, cc_t2],
+              origin='lower', vmin=vmin, vmax=vmax, cmap=cmap)
+    if hax is not None:
+        hax.bar(stack_bin_centers, stack_count, dx, color=bar_color)
+        hax.set_xlim( (x0, x1) )
+        hax.set_ylim((0, stack_count[1:].max()*1.1 ) )
+        hax.set_xlabel('Distance ($\degree$)')
+    ax.set_ylabel('Time (s)')
+    return ax, hax
 class CS_InterRcv:
     """
     Correlation Stack for inter receiver settings.
@@ -580,7 +579,7 @@ class CS_InterRcv:
                             If `None`, a internal empty TimeSummary object will be created.
                             #
                             Note, all time summary by the `local_time_summary` will be added
-                            to `time.time_summary`.  So be careful for avoiding repeatedly
+                            to `self.time_summary`.  So be careful for avoiding repeatedly
                             adding the same time summary multiple times.
         intermediate_outfnm_prefix:      the filename prefix for output intermediate data during running this function.
         flag_save_pair_selection_matrix: if True, the correlation-pair selection matrix will be saved and write to file.
@@ -658,6 +657,9 @@ class CS_InterRcv:
             del znert_mat_f32
         ############################################################################################################
         ccpairs_selection_mat = np.ones( (stlo_rad.size, stlo_rad.size), dtype=np.int8)
+        gcd_daz_selection_mat = None
+        gc_center_selection_mat = None
+        dict_output_inter_mediate_data = dict()
         ############################################################################################################
         #### selection w.r.t. to gcd and daz
         with Timer(tag='gcd_daz_select', verbose=False, summary=local_time_summary):
@@ -666,13 +668,9 @@ class CS_InterRcv:
                 gcd_daz_selection_mat = np.zeros( (stlo_rad.size, stlo_rad.size), dtype=np.int8)
                 gcd_daz_selection(stlo_rad.size, stlo_rad, stla_rad, evlo_rad[0], evla_rad[0],
                                   self.gcd_range_rad, self.daz_range_rad, gcd_daz_selection_mat)
-                if flag_save_pair_selection_matrix and intermediate_outfnm_prefix:
-                    fnm = '%sgcd_daz_selection_mat.npy' % intermediate_outfnm_prefix
-                    np.save(fnm, gcd_daz_selection_mat)
-                    log_print(2, 'gcd_daz_selection_mat saved!', fnm)
+                dict_output_inter_mediate_data['gcd_daz_selection_mat'] = gcd_daz_selection_mat
                 ccpairs_selection_mat &= gcd_daz_selection_mat ##### merge this selection to the functional selection matrix
                 log_print(2, 'gcd_daz_selection_mat: ', gcd_daz_selection_mat.shape, gcd_daz_selection_mat.dtype)
-                del gcd_daz_selection_mat # release memory
                 log_print(2, 'Finished.')
         ############################################################################################################
         #### selection w.r.t. great circle center locations
@@ -682,13 +680,9 @@ class CS_InterRcv:
                 gc_center_selection_mat = np.zeros( (stlo_rad.size, stlo_rad.size), dtype=np.int8)
                 gc_center_selection(stlo_rad.size, stlo_rad, stla_rad, evlo_rad[0], evla_rad[0],
                                     self.gc_center_rect_boxes_rad, self.gc_center_circles_rad, gc_center_selection_mat)
-                if flag_save_pair_selection_matrix and intermediate_outfnm_prefix:
-                    fnm = '%sgc_center_selection_mat.npy' % intermediate_outfnm_prefix
-                    np.save(fnm, gc_center_selection_mat)
-                    log_print(2, 'gc_center_selection_mat saved!', fnm)
+                dict_output_inter_mediate_data['gc_center_selection_mat'] = gc_center_selection_mat
                 ccpairs_selection_mat &= gc_center_selection_mat ##### merge this selection to the functional selection matrix
                 log_print(2, 'gc_center_selection_mat: ', gc_center_selection_mat.shape, gc_center_selection_mat.dtype)
-                del gc_center_selection_mat # release memory
                 log_print(2, 'Finished.')
         ############################################################################################################
         #### Finish the correlation selection
@@ -697,10 +691,7 @@ class CS_InterRcv:
             for ista in invalid_stas:
                 ccpairs_selection_mat[ista,:] = 0
                 ccpairs_selection_mat[:,ista] = 0
-            if flag_save_pair_selection_matrix and intermediate_outfnm_prefix:
-                fnm = '%sccpairs_selection_mat.npy' % intermediate_outfnm_prefix
-                np.save(fnm, ccpairs_selection_mat)
-                log_print(2, 'ccpairs_selection_mat saved!', fnm)
+            dict_output_inter_mediate_data['ccpairs_selection_mat'] = ccpairs_selection_mat
             log_print(2, 'ccpairs_selection_mat: ', ccpairs_selection_mat.shape, ccpairs_selection_mat.dtype)
             log_print(2, 'Finished.')
         ############################################################################################################
@@ -710,8 +701,23 @@ class CS_InterRcv:
             stack_index_mat_nn = np.zeros( (stlo_rad.size, stlo_rad.size), dtype=np.uint32)
             dist_min, dist_step = self.stack_bins.centers[0], self.stack_bins.step
             get_stack_index_mat(stlo_rad.size, stlo_rad, stla_rad, dist_min, dist_step, stack_index_mat_nn)
+            dict_output_inter_mediate_data['stack_index_mat_nn'] = stack_index_mat_nn
             log_print(2, 'stack_index_mat_nn: ', stack_index_mat_nn.shape, stack_index_mat_nn.dtype)
             log_print(2, 'Finished.')
+        ############################################################################################################
+        #### Output the intermediate data
+        with Timer(tag='o_inter', verbose=False, summary=local_time_summary):
+            if flag_save_pair_selection_matrix and intermediate_outfnm_prefix:
+                log_print(1, 'Saving intermediate data to .npz files...')
+                dict_output_inter_mediate_data['stlo_rad'] = stlo_rad
+                dict_output_inter_mediate_data['stla_rad'] = stla_rad
+                dict_output_inter_mediate_data['evlo_rad'] = evlo_rad
+                dict_output_inter_mediate_data['evla_rad'] = evla_rad
+                fnm = '%sselection_mat.npz' % intermediate_outfnm_prefix
+                np.savez(fnm, **dict_output_inter_mediate_data)
+                log_print(2, 'Saved!', fnm)
+            del gcd_daz_selection_mat
+            del gc_center_selection_mat
         ############################################################################################################
         #### cc & stack
         with Timer(tag='ccstack', verbose=False, summary=local_time_summary):
