@@ -92,7 +92,7 @@ def plot_great_circle_centers_deg(lo1, la1, lo2, la2, ptlo, ptla,
         ax.scatter(aclos, aclas, s=s, c=color_southern, transform=__xy_data_ccrs, marker=marker, alpha=alpha, **kwargs)
     return ax
 # Plot correlation pairs formed using a list of points (e.g., station locations), and a common point (an event location).
-def plot_correlation_pairs_deg(los_deg, las_deg, ptlo, ptla, selection_mat=None, random_selection_rate=None, ax=None,
+def plot_correlation_pairs_deg(los_deg, las_deg, ptlo, ptla, selection_mat=None, random_selection = None, ax=None,
                                plot_gc_path=True, plot_northern_centers=True, plot_southern_centers=False,
                                color_northern='C3', color_southern='C1',
                                **kwargs):
@@ -111,8 +111,8 @@ def plot_correlation_pairs_deg(los_deg, las_deg, ptlo, ptla, selection_mat=None,
                        The ijth element (ith row and jth col) is 1 if the correlation pair formed
                        by the ith and jth points are selected.
                        Default is `None` to select all correlation pairs.
-        random_selection_rate: a float between 0 and 1 to randomly select a portion of
-                               correlation pairs. Default is `None` to select all correlation pairs.
+        random_selection: a float between 0 and 1 OR an integer to randomly select a portion of
+                          correlation pairs. Default is `None` to select all correlation pairs.
         ax: a matplotlib axis object. Default is `None` to create a new figure and axis.
         plot_northern_centers: a boolean. If `True`, plot the centers of the great circle paths in the northern hemisphere.
                                Default is `True`.
@@ -131,16 +131,22 @@ def plot_correlation_pairs_deg(los_deg, las_deg, ptlo, ptla, selection_mat=None,
     n = los_deg.size
     #### input selection
     selection_mat = np.ones((n, n), dtype=np.int8)   if   (selection_mat is None)   else   selection_mat
+    n_valid = np.sum( np.where( np.triu(selection_mat) != 0, 1, 0) )
     #### random select a portion of correlation pairs
-    n_selected  = np.sum(np.triu(selection_mat) ) # only the upper triangle is used
-    n_selected  = n_selected   if  (random_selection_rate is None)   else  random_selection_rate*n_selected
-    n_selected  = int(n_selected)
-    random_selection_arr = np.zeros(n*(n-1)//2+n, dtype=np.int8)
+    if random_selection is None:
+        n_selected = n_valid
+    elif type(random_selection) is float:
+        n_selected = int( n_valid*random_selection )
+    elif type(random_selection) is int:
+        n_selected = random_selection
+    else:
+        raise ValueError('Invalid random_selection value. must be None, float, or int.', random_selection)
+    random_selection_arr = np.zeros(n_valid, dtype=np.int8)
     random_selection_arr[:n_selected] = 1
     np.random.shuffle(random_selection_arr) # in-place modification
-    #
+    #### get random selection matrix
     random_selection_mat = np.zeros((n, n), dtype=np.int8)
-    random_selection_mat[ np.triu_indices(n) ] = random_selection_arr
+    random_selection_mat[ np.where( np.triu(selection_mat) != 0) ] = random_selection_arr
     random_selection_mat |= random_selection_mat.T # make symmetric
     #### apply random selection results
     random_selection_mat &= selection_mat # here avoid modifying the input selection_mat
