@@ -483,6 +483,9 @@ class Logger:
                 if mpi_comm.Get_rank() in ranks:
                     self.log_fid = open(get_log_fnm(log_dir, mpi_comm.Get_rank() ), 'w')
                     self.log_print = print
+                else:
+                    self.log_fid = open(os.devnull, 'w') # No panic as each process independently open and use os.devnull as a special file path for discarding the output.
+                    self.log_print = lambda *args, **kwargs: None
         else:
             if not os.path.exists(log_dir):
                 os.makedirs(log_dir)
