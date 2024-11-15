@@ -396,6 +396,36 @@ def cc_stack(ch1, ch2, znert_mat_spec_c64, lo_rad, la_rad, stack_mat_spec_c64, s
                 stack_count[istack] += selection_mat_nn[ista1, ista2] # select or discard for 1 or 0, respectively
     #return(dtypes)
 
+
+def rd_proc_correlogram(h5file, filter_band=(0.02, 0.06666), taper_sec=50, taper_dist_range=(-1.0, 180.0), norm=True ):
+    """
+    Read a correlogram from the h5file, preprocess it, and return the processed correlogram.
+    """
+    with h5_File(h5file, 'r') as h5:
+        stack_mat   = h5['dat'][:]
+        stack_count = h5['stack_count'][:]
+        stack_bin_centers   = h5.attrs['stack_bin_centers'][:]
+        cc_t1, cc_t2, delta = h5.attrs['cc_time'][:]
+        ######
+        f1, f2 = filter_band
+        for xs in stack_mat:
+            iirfilter_f32(xs, delta, 0, 2, f1, f2, 2, 2)
+        ######
+        dmin, dmax = taper_dist_range
+        taper_halfsize = int(taper_sec/delta)
+        for xs, d in zip(stack_mat, stack_bin_centers):
+            if dmin <= d <= dmax:
+                taper(xs, taper_halfsize, delta)
+        ######
+        if norm:
+            for xs in stack_mat:
+                for xs in stack_mat:
+                    v = xs.max()
+                    if v> 0.0:
+                        xs *= (1.0/v)
+        ######
+        return stack_mat, stack_count, stack_bin_centers, (cc_t1, cc_t2)
+    pass
 def plot_correlogram(stack_mat, stack_count, stack_bin_centers, cc_time_range,
                      vmin=-0.6, vmax=0.6, cmap='gray', bar_color='#999999',
                      ax=None, hax=None, **kwargs):
@@ -737,7 +767,7 @@ class CS_InterRcv:
         ############################################################################################################
         self.time_summary += local_time_summary
         ############################################################################################################
-    def finish(self, filter_band=(0.02, 0.066), fold=True, cut=None, taper_sec=None, norm=True, ofnm=None):
+    def finish(self, filter_band=None, fold=True, cut=None, taper_sec=None, norm=False, ofnm=None):
         """
         """
         log_print = self.logger
@@ -828,6 +858,11 @@ class CS_InterRcv:
                     fid.attrs['stack_bin_edges'] = self.stack_bins.edges
                     if filter_band is not None:
                         fid.attrs['filter_band'] = filter_band
+                    fid.attrs['flag_filter_band']= 1 if (filter_band is not None) else 0
+                    fid.attrs['flag_fold']       = 1 if fold else 0
+                    fid.attrs['flag_cut']        = 1 if cut  else 0
+                    fid.attrs['taper_sec']       = taper_sec if taper_sec else 0
+                    fid.attrs['flag_norm']       = 1 if norm else 0
                     fid.create_dataset('dat', data=stack_mat, dtype=np.float32)
                     fid.create_dataset('stack_count', data=stack_count, dtype=np.int32)
                 log_print(2, 'Finished.')
@@ -839,7 +874,7 @@ class CS_InterRcv:
                   'cc_time': (cc_t1, cc_t2, delta),
                   'cc_dist': (self.stack_bins.centers, self.stack_bins.edges) }
         return result
-    def mpi_finish(self, filter_band=(0.02, 0.066), fold=True, cut=None, taper_sec=None, norm=True, ofnm=None):
+    def mpi_finish(self, filter_band=None, fold=True, cut=None, taper_sec=None, norm=False, ofnm=None):
         """
         """
         mpi_comm = self.mpi_comm
