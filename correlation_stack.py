@@ -397,9 +397,15 @@ def cc_stack(ch1, ch2, znert_mat_spec_c64, lo_rad, la_rad, stack_mat_spec_c64, s
     #return(dtypes)
 
 
-def rd_proc_correlogram(h5file, filter_band=(0.02, 0.06666), taper_sec=50, taper_dist_range=(-1.0, 180.0), norm=True ):
+def rd_proc_correlogram(h5file, filter_band=(0.02, 0.06666), taper_sec=50, taper_dist_range=(-1.0, 180.0), cut_sec=(0, 3000), norm=True ):
     """
     Read a correlogram from the h5file, preprocess it, and return the processed correlogram.
+
+    Conduct the following preprocessing steps. The order is important.
+    1. Apply a band-pass filter.
+    2. Apply a taper given the distance range.
+    3. Cut
+    4. Normalize
     """
     with h5_File(h5file, 'r') as h5:
         stack_mat   = h5['dat'][:]
@@ -417,6 +423,14 @@ def rd_proc_correlogram(h5file, filter_band=(0.02, 0.06666), taper_sec=50, taper
             if dmin <= d <= dmax:
                 taper(xs, taper_halfsize, delta)
         ######
+        if cut_sec is not None:
+            cut1, cut2 = cut_sec
+            cut1 = max(cut1, cc_t1)
+            cut2 = min(cut2, cc_t2)
+            cc_t1, cc_t2 = cut1, cut2
+            cut1, cut2 = int(cut1/delta), int(cut2/delta)
+            stack_mat = stack_mat[:, cut1:cut2]
+        ######
         if norm:
             for xs in stack_mat:
                 for xs in stack_mat:
@@ -424,7 +438,7 @@ def rd_proc_correlogram(h5file, filter_band=(0.02, 0.06666), taper_sec=50, taper
                     if v> 0.0:
                         xs *= (1.0/v)
         ######
-        return stack_mat, stack_count, stack_bin_centers, (cc_t1, cc_t2)
+        return stack_mat, stack_count, stack_bin_centers, (cc_t1, cc_t2, delta)
     pass
 def plot_correlogram(stack_mat, stack_count, stack_bin_centers, cc_time_range,
                      vmin=-0.6, vmax=0.6, cmap='gray', bar_color='#999999',
