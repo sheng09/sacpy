@@ -398,7 +398,7 @@ def cc_stack(ch1, ch2, znert_mat_spec_c64, lo_rad, la_rad, stack_mat_spec_c64, s
 
 def plot_correlogram(stack_mat, stack_count, stack_bin_centers, cc_time_range,
                      vmin=-0.6, vmax=0.6, cmap='gray', bar_color='#999999',
-                     ax=None, hax=None):
+                     ax=None, hax=None, **kwargs):
     """
     Plot correlogram
     """
@@ -407,8 +407,8 @@ def plot_correlogram(stack_mat, stack_count, stack_bin_centers, cc_time_range,
     cc_t1, cc_t2 = cc_time_range
     x0, x1 = stack_bin_centers[0], stack_bin_centers[-1]
     dx     = stack_bin_centers[1]-stack_bin_centers[0]
-    ax.imshow(stack_mat.transpose(), aspect='auto', extent=[x0, x1, cc_t1, cc_t2],
-              origin='lower', vmin=vmin, vmax=vmax, cmap=cmap)
+    ax.imshow(stack_mat.transpose(), aspect='auto', extent=[x0-dx*0.5, x1+dx*0.5, cc_t1, cc_t2],
+              origin='lower', vmin=vmin, vmax=vmax, cmap=cmap, **kwargs)
     if hax is not None:
         hax.bar(stack_bin_centers, stack_count, dx, color=bar_color)
         hax.set_xlim( (x0, x1) )
@@ -826,7 +826,8 @@ class CS_InterRcv:
                     fid.attrs['cc_time'] = (cc_t1, cc_t2, delta)
                     fid.attrs['stack_bin_centers'] = self.stack_bins.centers
                     fid.attrs['stack_bin_edges'] = self.stack_bins.edges
-                    fid.attrs['filter_band'] = filter_band
+                    if filter_band is not None:
+                        fid.attrs['filter_band'] = filter_band
                     fid.create_dataset('dat', data=stack_mat, dtype=np.float32)
                     fid.create_dataset('stack_count', data=stack_count, dtype=np.int32)
                 log_print(2, 'Finished.')
