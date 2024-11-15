@@ -8,7 +8,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import cartopy.crs as ccrs
 import cartopy.feature as cfeature
-from .geomath import great_circle_plane_center_triple, haversine
+from .geomath import great_circle_plane_center_triple, great_circle_plane_center_triple_rad, haversine
 
 __xy_data_ccrs = ccrs.PlateCarree()
 __gc_data_ccrs = ccrs.Geodetic()
@@ -41,6 +41,21 @@ def plot_great_circle_path_deg(lo1, la1, lo2, la2, ptlo, ptla, ax=None, color='k
     ax.plot([lo1, lo2, lo3, lo4, lo1], [la1, la2, la3, la4, la1], transform=__gc_data_ccrs,
             color=color, linewidth=linewidth, alpha=alpha, **kwargs)
     return ax
+# Plot a single great circle path given its center point
+def plot_great_circle_path_given_center_deg(clo_deg, cla_deg, ax=None, color='k', linewidth=0.8, alpha=0.8, **kwargs):
+    """
+    Plot a great circle path given its center point.
+    #
+    Parameters:
+        clo_deg: a single value. The longitude of the center point in degree.
+        cla_deg: a single value. The latitude of the center point in degree.
+        ax: a matplotlib axis object. Default is `None` to create a new figure and axis.
+        **kwargs: other keyword arguments used for plotting the great circle path line (the pyplot.plot options).
+    """
+    lo1, la1 = clo_deg+90, 0
+    lo2 = clo_deg
+    la2 = cla_deg+90 if cla_deg<0 else cla_deg-90
+    return plot_great_circle_path_deg(lo1, la1, lo2, la2, 0, 0, ax=ax, color=color, linewidth=linewidth, alpha=alpha, **kwargs)
 # Plot the center of great circle path passing through two points (or using the third point in case the two points are at the same location).
 def plot_great_circle_centers_deg(lo1, la1, lo2, la2, ptlo, ptla,
                                   plot_northern_centers=True, plot_southern_centers=False,
@@ -170,7 +185,60 @@ def plot_correlation_pairs_deg(los_deg, las_deg, ptlo, ptla, selection_mat=None,
             for _lo2, _la2 in zip(lo2, la2):
                 plot_great_circle_path_deg(lo1, la1, _lo2, _la2, ptlo, ptla, ax=ax, **kwargs)
     return ax
-
+# Get the centers of great circle paths passing through pairs of points (or using the third point in case the two points are at the same location).
+def get_great_circle_centers_deg(los_deg, las_deg, ptlo, ptla, selection_mat=None):
+    """
+    Return a list of points representing the centers of great circle paths passing through pairs of points.
+    #
+    Parameters:
+        los_deg: a list of values or a 1D numpy array. The longitude of the points in degree.
+        las_deg: a list of values or a 1D numpy array. The latitude of the points in degree.
+        ptlo: the longitude for the third point in degree in case that the two points provides are at
+              the same location. Default is `None` to use the default value.
+        ptla: the same as `ptlo` but for the latitude.
+        selection_mat: a 2D numpy array. The selection matrix.
+                       The matrix has the shape of NxN, where N is the number of points (len(los_deg)).
+                       The matrix is symmetric, and each element is either 0 or 1.
+                       The ijth element (ith row and jth col) is 1 if the correlation pair formed
+                       by the ith and jth points are selected.
+                       Default is `None` to select all correlation pairs.
+    Return:
+        (clo_n, cla_n), (clo_s, cla_s): two tuples of np.ndarray.
+                                        The first tuple is for the center longitudes and latitudes in the northern hemisphere,
+                                        and the second tuple is for the centers in the southern hemisphere.
+    """
+    los = np.deg2rad( np.array(los_deg) )
+    las = np.deg2rad( np.array(las_deg) )
+    ptlo, ptla = np.deg2rad(ptlo), np.deg2rad(ptla)
+    n = los.size
+    #### input selection
+    selection_mat = np.ones((n, n), dtype=np.int8)   if   (selection_mat is None)   else   selection_mat
+    ####
+    clo_n, cla_n = list(), list()
+    clo_s, cla_s = list(), list()
+    ####
+    for i1 in range(n):
+        lo1, la1 = los[i1],  las[i1]
+        lo2, la2 = los[i1:], las[i1:]
+        #### selection
+        row_selection = selection_mat[i1, i1:]
+        lo2, la2 = lo2[row_selection!=0], la2[row_selection!=0]
+        ####
+        if lo2.size == 0:
+            continue
+        ####
+        tmp = great_circle_plane_center_triple_rad(lo1, la1, lo2, la2, ptlo, ptla, critical_distance=0.00171)
+        (clos, clas), (aclos, aclas)  = tmp # `cl` is for the northern hemisphere, and `acl` is for the southern hemisphere
+        clo_n.extend(clos)
+        cla_n.extend(clas)
+        clo_s.extend(aclos)
+        cla_s.extend(aclas)
+    ####
+    clo_n = np.rad2deg(clo_n)
+    cla_n = np.rad2deg(cla_n)
+    clo_s = np.rad2deg(clo_s)
+    cla_s = np.rad2deg(cla_s)
+    return (clo_n, cla_n), (clo_s, cla_s)
 
 if __name__ == '__main__':
     plateCr = ccrs.Robinson()
