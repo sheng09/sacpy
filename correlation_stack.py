@@ -153,7 +153,7 @@ def gcd_daz_selection(n, lo_rad, la_rad, ptlo_rad, ptla_rad, gcd_range_rad, daz_
 @jit(nopython=True, nogil=True)
 def gc_center_selection(n, lo_rad, la_rad, ptlo_rad, ptla_rad,
                         gc_center_rect_boxes_rad, gc_center_circles_rad,
-                        gc_center_selection_mat_nn):
+                        gc_center_selection_mat_nn, critical_distance_rad=0.00174):
     """
     Compute a NxN matrix with values of 1 or 0 for selecting the pairs of stations or not given
     rectangle boxes and circle areas for the selection.
@@ -223,6 +223,8 @@ def gc_center_selection(n, lo_rad, la_rad, ptlo_rad, ptla_rad,
                                     1 for selecting and 0 for discarding. The ijth component of the matrix is
                                     1 or 0 to select or discard the pair formed by the ith and jth records.
                                     The matrix is symmetric!
+        critical_distance_rad:  the critical gc distance in radian to determine if two locations are the same.
+                                # 0.00174 rad is about 0.1 degree
     """
     ####
     dont_select_rect   = (gc_center_rect_boxes_rad.size == 0)
@@ -241,7 +243,7 @@ def gc_center_selection(n, lo_rad, la_rad, ptlo_rad, ptla_rad,
         lo1, la1 = lo_rad[ista1], la_rad[ista1]
         ##### compute the clo, cla for a list of correlation pairs
         (clos, clas), junk = great_circle_plane_center_triple_rad(lo1, la1, lo_rad[ista1:], la_rad[ista1:],
-                                                                  ptlo_rad, ptla_rad, critical_distance=0.00174)
+                                                                  ptlo_rad, ptla_rad, critical_distance=critical_distance_rad)
                                                                   # 0.00174 rad is about 0.1 degree
         #### check with the rectangle boxes
         rect_mat_row.fill(0)
@@ -478,7 +480,7 @@ class CS_InterRcv:
                  dist_range=(0.0, 180.0), dist_step=1.0,
                  wtlen=None, wt_f1=None, wt_f2=None, wflen=None, whiten_taper_halfsize=50,
                  daz_range=None, gcd_range=None,
-                 gc_center_rect_boxes=None, gc_center_circles=None,
+                 gc_center_rect_boxes=None, gc_center_circles=None, critical_distance_deg=0.1,
                  speedup_critical_frequency_band=None, speedup_critical_level=0.01,
                  log_print=None, mpi_comm=None):
         """
@@ -530,11 +532,14 @@ class CS_InterRcv:
         gc_center_circles    = np.zeros(0) if (gc_center_circles is  None)   else gc_center_circles
         self.gc_center_rect_boxes_rad = np.deg2rad(gc_center_rect_boxes)
         self.gc_center_circles_rad    = np.deg2rad(gc_center_circles)
+        self.critical_distance_rad    = np.deg2rad(critical_distance_deg)
         log_print( 1, 'Select correlation pairs by the center of the great circle path:' )
         log_print( 2, 'gc_center_rect_boxes:     ', gc_center_rect_boxes)
         log_print( 2, 'gc_center_rect_boxes(rad):', self.gc_center_rect_boxes_rad)
         log_print( 2, 'gc_center_circles:        ', gc_center_circles)
         log_print( 2, 'gc_center_circles(rad):   ', self.gc_center_circles_rad)
+        log_print( 2, 'critical_distance:        ', critical_distance_deg)
+        log_print( 2, 'critical_distance(rad):   ', self.critical_distance_rad)
         ############################################################################################################
         # time and spectral settings
         idx0 = 0
@@ -723,7 +728,8 @@ class CS_InterRcv:
                 log_print(1, 'Selecting w.r.t. to great circle center locations...')
                 gc_center_selection_mat = np.zeros( (stlo_rad.size, stlo_rad.size), dtype=np.int8)
                 gc_center_selection(stlo_rad.size, stlo_rad, stla_rad, evlo_rad[0], evla_rad[0],
-                                    self.gc_center_rect_boxes_rad, self.gc_center_circles_rad, gc_center_selection_mat)
+                                    self.gc_center_rect_boxes_rad, self.gc_center_circles_rad, gc_center_selection_mat,
+                                    self.critical_distance_rad)
                 dict_output_inter_mediate_data['gc_center_selection_mat'] = gc_center_selection_mat
                 ccpairs_selection_mat &= gc_center_selection_mat ##### merge this selection to the functional selection matrix
                 log_print(2, 'gc_center_selection_mat: ', gc_center_selection_mat.shape, gc_center_selection_mat.dtype)

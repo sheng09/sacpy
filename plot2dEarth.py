@@ -186,7 +186,7 @@ def plot_correlation_pairs_deg(los_deg, las_deg, ptlo, ptla, selection_mat=None,
                 plot_great_circle_path_deg(lo1, la1, _lo2, _la2, ptlo, ptla, ax=ax, **kwargs)
     return ax
 # Get the centers of great circle paths passing through pairs of points (or using the third point in case the two points are at the same location).
-def get_great_circle_centers_deg(los_deg, las_deg, ptlo, ptla, selection_mat=None, critical_distance_rad=0.00174):
+def get_great_circle_centers_deg(los_deg, las_deg, ptlo, ptla, selection_mat=None, critical_distance_deg=0.1):
     """
     Return a list of points representing the centers of great circle paths passing through pairs of points.
     #
@@ -202,8 +202,8 @@ def get_great_circle_centers_deg(los_deg, las_deg, ptlo, ptla, selection_mat=Non
                        The ijth element (ith row and jth col) is 1 if the correlation pair formed
                        by the ith and jth points are selected.
                        Default is `None` to select all correlation pairs.
-        critical_distance_rad: a float. The critical gc distance in degree to determine if two points
-                               are at the same location. Default is 0.00174 rad (0.1 degree).
+        critical_distance_deg: a float. The critical gc distance in degree to determine if two points
+                               are at the same location. Default 0.1 degree.
     Return:
         (clo_n, cla_n), (clo_s, cla_s): two tuples of np.ndarray.
                                         The first tuple is for the center longitudes and latitudes in the northern hemisphere,
@@ -213,6 +213,7 @@ def get_great_circle_centers_deg(los_deg, las_deg, ptlo, ptla, selection_mat=Non
     las = np.deg2rad( np.array(las_deg) )
     ptlo, ptla = np.deg2rad(ptlo), np.deg2rad(ptla)
     n = los.size
+    critical_distance_rad = np.deg2rad(critical_distance_deg)
     #### input selection
     selection_mat = np.ones((n, n), dtype=np.int8)   if   (selection_mat is None)   else   selection_mat
     ####
