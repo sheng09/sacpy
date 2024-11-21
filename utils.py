@@ -502,11 +502,15 @@ def mpi_makedirs(mpi_comm, wd):
     """
     Make a directory if it does not exist.
     """
-    mpi_comm.Barrier()
-    if mpi_comm.Get_rank() == 0:
+    if mpi_comm != None:
+        mpi_comm.Barrier()
+        if mpi_comm.Get_rank() == 0:
+            if not os.path.exists(wd):
+                os.makedirs(wd)
+        mpi_comm.Barrier()
+    else:
         if not os.path.exists(wd):
             os.makedirs(wd)
-    mpi_comm.Barrier()
 def get_folder(filename, makedir=True, mpi_comm=None):
     """
     Get the folder for hosting a filename, and make the folder if it does not exist and `makedir=True`.
