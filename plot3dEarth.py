@@ -34,6 +34,91 @@ class globe3d:
         """
         self.center = center
         self.radius = radius
+    def deplola2xyz(self, dep, lo, la):
+        """
+        Given (depth, lo, la), return (x, y, z) coordinates. The lo and la are in degree.
+        The (depth, lo, la) could be three single values or three np.ndarray objects of the same size.
+        """
+        radius = self.radius-dep
+        lam, phi = np.deg2rad(lo), np.deg2rad(la)
+        x = np.cos(phi)*np.cos(lam)*radius + self.center[0]
+        y = np.cos(phi)*np.sin(lam)*radius + self.center[1]
+        z = np.sin(phi)*radius + self.center[2]
+        return x,y,z
+    def xyz2deplola(self, x, y, z):
+        """
+        Given (x, y, z) coordinates, return (depth, lo, la). The lo and la are in degree.
+        The (x, y, z) could be three single values or three np.ndarray objects of the same size.
+        """
+        x -= self.center[0]
+        y -= self.center[1]
+        z -= self.center[2]
+        radius = np.sqrt(x*x + y*y + z*z)
+        dep = self.radius-radius
+        lo = np.rad2deg(np.arctan2(y, x))
+        la = np.rad2deg(np.arcsin(z/radius))
+        return dep, lo, la
+    def get_up_vector(self, lo, la):
+        """
+        Given a point (lo, la) in degree, return the unit vector (vx, vy, yz) of the Up direction at the point.
+        The (lo, la) could be two single values or two np.ndarray objects of the same size.
+        """
+        vx, vy, vz = self.deplola2xyz(self.radius-1, lo, la)
+        vx -= self.center[0]
+        vy -= self.center[1]
+        vz -= self.center[2]
+        return vx, vy, vz
+    def get_gc_tangential_vector(self, srclo, srcla, rcvlo, rcvla):
+        """
+        Calculate the unit vector of the tangential direction along the great circle path from
+        a source point (srclo, srcla) to the receiver point (rcvlo, rcvla) on the globe surface.
+        #
+        Note, the tangential direction are the same at both the source and receiver points.
+        """
+        vup_src = self.get_up_vector(srclo, srcla)
+        vup_rcv = self.get_up_vector(rcvlo, rcvla)
+        vt = np.cross(vup_rcv, vup_src)
+        return vt
+    def get_gc_radial_vector(self, srclo, srcla, rcvlo, rcvla):
+        """
+        Calculate the unit vector of the radial direction at the receiver point along the great circle path from
+        a source point (srclo, srcla) to the receiver point (rcvlo, rcvla) on the globe surface.
+        #
+        Note, the vector is at the receiver point, not the source point.
+        """
+        vup_rcv = self.get_up_vector(rcvlo, rcvla)
+        vt      = self.get_gc_tangential_vector(srclo, srcla, rcvlo, rcvla)
+        vr_rcv  = np.cross(vup_rcv, vt)
+        return vr_rcv
+    def get_gc_path(self, lo1, la1, lo2, la2, npts=100, arc='minor'):
+        """
+        Calculate a list of points (los, las) along the great circle path between two points (lo1, la1) and (lo2, la2) on the globe surface.
+
+        Parameters:
+            lo1, la1: longitude and latitude of the source point in degree.
+            lo2, la2: longitude and latitude of the receiver point in degree.
+            npts:     number of points along the great circle path. (this number only corresponds to the number of points on the minor arc)
+            arc:  'full' or 'major'  or 'minor'(default) arc to plot.
+        """
+        up1 = self.get_up_vector(lo1, la1)
+        up2 = self.get_up_vector(lo2, la2)
+        dot_product = np.dot(up1, up2)
+        angle = np.arccos(np.clip(dot_product, -1.0, 1.0))  # Angle in radians
+        #
+        if arc == 'full':
+            angles = np.linspace(0, np.pi*2, npts) # [0, 2pi]
+        elif arc == 'major':
+            angles = np.linspace(angle, np.pi*2, npts) # [angle, 2pi]
+        else:
+            angles = np.linspace(0, angle, npts) # [0, angle]
+        coef1 = np.sin(angle-angles)
+        coef2 = np.sin(angles)
+        vx = coef1*up1[0] + coef2*up2[0]
+        vy = coef1*up1[1] + coef2*up2[1]
+        vz = coef1*up1[2] + coef2*up2[2]
+        #
+        junk, los, las = self.xyz2deplola(vx+self.center[0], vy+self.center[1], vz+self.center[2])
+        return los, las
     def point_to_xyz(self, longitude, latitude, depth):
         """
         Return the (x, y, z) given a point (longitude, latitude, depth) relative to the globe.
@@ -59,6 +144,71 @@ class globe3d:
         vz = np.cos(phi)
         x, y, z = self.point_to_xyz(longitude, latitude, depth)
         return (x, y, z), (vx, vy, vz)
+    @staticmethod
+    def benchmark():
+        # here are some benchmarking tests and also examples of how to use the class to plot event-receiver and receiver-receiver geometries
+        center = (10000000, -2000, 3000)
+        R0 = 6371.0
+        globe = globe3d(R0, center)
+        rcv1_deplola = (-30, -100, 60)
+        rcv2_deplola = (-50,  -80, 30)
+        ev_deplola = (100, 169, -50)
+        #
+        p = pv.Plotter(notebook=0, shape=(1, 1), border=False, window_size=(1700, 1000) )
+        p.set_background('white')
+        # event->rcv
+        for rcv in (rcv1_deplola, rcv2_deplola):
+            #gc
+            gc_los, gc_las = globe.get_gc_path(ev_deplola[1], ev_deplola[2], rcv[1], rcv[2], npts=100)
+            gc_xs, gc_ys, gc_zs = globe.deplola2xyz(0, gc_los, gc_las)
+            print(gc_xs[0], gc_ys[0], gc_zs[0])
+            print(globe.deplola2xyz(0, ev_deplola[1], ev_deplola[2]))
+            plot_line(p, globe, gc_xs, gc_ys, gc_zs, color='k', show_edges=True, opacity=0.5, lighting=False, line_width=3)
+            #z
+            x, y, z = globe.deplola2xyz(0, rcv[1], rcv[2])
+            vx, vy, vz = globe.get_up_vector(rcv[1], rcv[2])
+            arrow = pv.Arrow(start=(x, y, z), direction=(vx, vy, vz), tip_length=0.2, tip_radius=0.1, tip_resolution=20, scale=1500, shaft_radius=0.03, shaft_resolution=20 )
+            p.add_mesh(arrow, show_edges=False,  opacity=1.0, color='k', smooth_shading=True, lighting=True, culling=False)
+            #r
+            vx, vy, vz = globe.get_gc_radial_vector(ev_deplola[1], ev_deplola[2], rcv[1], rcv[2])
+            arrow = pv.Arrow(start=(x, y, z), direction=(vx, vy, vz), tip_length=0.2, tip_radius=0.1, tip_resolution=20, scale=1500, shaft_radius=0.03, shaft_resolution=20 )
+            p.add_mesh(arrow, show_edges=False,  opacity=1.0, color='r', smooth_shading=True, lighting=True, culling=False)
+            #t
+            vx, vy, vz = globe.get_gc_tangential_vector(ev_deplola[1], ev_deplola[2], rcv[1], rcv[2])
+            arrow = pv.Arrow(start=(x, y, z), direction=(vx, vy, vz), tip_length=0.2, tip_radius=0.1, tip_resolution=20, scale=1500, shaft_radius=0.03, shaft_resolution=20 )
+            p.add_mesh(arrow, show_edges=False,  opacity=1.0, color='b', smooth_shading=True, lighting=True, culling=False)
+        # rcv1<-->rcv2
+        #gc
+        gc_los, gc_las = globe.get_gc_path(rcv1_deplola[1], rcv1_deplola[2], rcv2_deplola[1], rcv2_deplola[2], npts=100)
+        gc_xs, gc_ys, gc_zs = globe.deplola2xyz(0, gc_los, gc_las)
+        plot_line(p, globe, gc_xs, gc_ys, gc_zs, color='k', show_edges=True, opacity=0.5, lighting=False, line_width=3)
+        #r@rcv2
+        vx, vy, vz = globe.get_gc_radial_vector(rcv1_deplola[1], rcv1_deplola[2], rcv2_deplola[1], rcv2_deplola[2])
+        x, y, z = globe.deplola2xyz(0, rcv2_deplola[1], rcv2_deplola[2])
+        arrow = pv.Arrow(start=(x, y, z), direction=(vx, vy, vz), tip_length=0.2, tip_radius=0.1, tip_resolution=20, scale=1500, shaft_radius=0.03, shaft_resolution=20 )
+        p.add_mesh(arrow, show_edges=False,  opacity=1.0, color='c', smooth_shading=True, lighting=True, culling=False)
+        #t@rcv2
+        vx, vy, vz = globe.get_gc_tangential_vector(rcv1_deplola[1], rcv1_deplola[2], rcv2_deplola[1], rcv2_deplola[2])
+        x, y, z = globe.deplola2xyz(0, rcv2_deplola[1], rcv2_deplola[2])
+        arrow = pv.Arrow(start=(x, y, z), direction=(vx, vy, vz), tip_length=0.2, tip_radius=0.1, tip_resolution=20, scale=1500, shaft_radius=0.03, shaft_resolution=20 )
+        p.add_mesh(arrow, show_edges=False,  opacity=1.0, color='#123456', smooth_shading=True, lighting=True, culling=False)
+        #r@rcv1
+        vx, vy, vz = globe.get_gc_radial_vector(rcv2_deplola[1], rcv2_deplola[2], rcv1_deplola[1], rcv1_deplola[2])
+        x, y, z = globe.deplola2xyz(0, rcv1_deplola[1], rcv1_deplola[2])
+        arrow = pv.Arrow(start=(x, y, z), direction=(vx, vy, vz), tip_length=0.2, tip_radius=0.1, tip_resolution=20, scale=1500, shaft_radius=0.03, shaft_resolution=20 )
+        p.add_mesh(arrow, show_edges=False,  opacity=1.0, color='#234567', smooth_shading=True, lighting=True, culling=False)
+        #t@rcv1
+        vx, vy, vz = globe.get_gc_tangential_vector(rcv2_deplola[1], rcv2_deplola[2], rcv1_deplola[1], rcv1_deplola[2])
+        x, y, z = globe.deplola2xyz(0, rcv1_deplola[1], rcv1_deplola[2])
+        arrow = pv.Arrow(start=(x, y, z), direction=(vx, vy, vz), tip_length=0.2, tip_radius=0.1, tip_resolution=20, scale=1500, shaft_radius=0.03, shaft_resolution=20 )
+        p.add_mesh(arrow, show_edges=False,  opacity=1.0, color='#345678', smooth_shading=True, lighting=True, culling=False)
+
+        #
+        plot_globe3d(p, globe, style='fancy2', alpha=1, land='#ee0000', ocean='#0000aa'  ) #('plane', (normal, origin, invert) )
+        plot_point(p, globe, ev_deplola[1], ev_deplola[2], ev_deplola[0], size=300, symbol='sphere1', color='r', alpha=1.0, culling='back')
+        plot_point(p, globe, rcv1_deplola[1], rcv1_deplola[2], rcv1_deplola[0], size=300, symbol='sphere1', color='g', alpha=1.0, culling='back')
+        plot_point(p, globe, rcv2_deplola[1], rcv2_deplola[2], rcv2_deplola[0], size=300, symbol='sphere1', color='b', alpha=1.0, culling='back')
+        p.show()
 
 
 def Earth_radial_model(mod='ak135', key='vp'):
@@ -175,7 +325,7 @@ def plot_globe3d(p, globe, style='simple', coastline=False, land=None, ocean=Non
 
     ### 2nd part of the sphere
     radius, center = globe.radius, globe.center
-    sphere = pv.Sphere(radius=radius, center=center, theta_resolution=60, phi_resolution=30, start_theta=0, end_theta=359.999999, direction=(0, 0, -1) )
+    sphere = pv.Sphere(radius=radius, center=center, theta_resolution=60, phi_resolution=30, start_theta=0, end_theta=359.9999, direction=(0, 0, -1) )
 
     if type(clip) != type(None):
         if clip[0] == 'box': # ('box', ((xmin, xmax, ymin, ymax, zmin, zmax), invert)) )
@@ -530,6 +680,8 @@ class beachball_3d:
                 contours = grid_scalar.contour([0.0] )
                 p.add_mesh(contours, show_edges=True, opacity=1.0, color='k')
 if __name__ == '__main__':
+    globe3d.benchmark()
+    sys.exit(0)
     p = pv.Plotter(notebook=0, shape=(1, 1), border=False, window_size=(1700, 1000) )
     p.set_background('white')
     ######
