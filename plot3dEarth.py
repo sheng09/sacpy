@@ -209,8 +209,253 @@ class globe3d:
         plot_point(p, globe, rcv1_deplola[1], rcv1_deplola[2], rcv1_deplola[0], size=300, symbol='sphere1', color='g', alpha=1.0, culling='back')
         plot_point(p, globe, rcv2_deplola[1], rcv2_deplola[2], rcv2_deplola[0], size=300, symbol='sphere1', color='b', alpha=1.0, culling='back')
         p.show()
-
-
+    @staticmethod
+    def benchmark2():
+        """
+        Plot global inter-receiver and inter-source geometries.
+        """
+        p = pv.Plotter(notebook=0, shape=(1, 2), border=False, window_size=(3500, 2000) )
+        p.set_background('white')
+        #
+        center = (0, 0, 0)
+        R0 = 6371.0
+        globe = globe3d(R0, center)
+        # use obspy to download station longitude and latitudes of a network 'II'
+        from obspy.clients.fdsn import Client
+        client = Client("IRIS")
+        inventory = client.get_stations(network='II,IU,G', level='station')
+        lons, las = [], []
+        for network in inventory:
+            for station in network:
+                lons.append(station.longitude)
+                las.append(station.latitude)
+        lons = np.array(lons)
+        las = np.array(las)
+        # plot 2d globe map
+        n_points = 100
+        ref_lo, ref_la = -76, 9
+        # select lons and lats so that -130<lo<-30 and -30<la<30
+        selected_idxs = (lons>-75)*(lons<-30)*(las>-20)*(las<15)
+        selected_lons = lons[selected_idxs]
+        selected_las  = las[selected_idxs]
+        #n_gc = 30
+        #i1i2 = np.random.randint(0, n_points, (n_gc, 2))
+        #print(i1i2.shape)
+        #class LowerThresholdGeodetic(ccrs.Geodetic):
+        #    @property
+        #    def threshold(self):
+        #        return 1e1
+        #class LowerThresholdPlateCarree(ccrs.Geodetic):
+        #    @property
+        #    def threshold(self):
+        #        return 1e1
+        prj1 = ccrs.PlateCarree(central_longitude=0)
+        prj3 = ccrs.Geodetic()
+        prj1.threshold = 0.001
+        # plot 2d globe map inter-receiver and inter-source
+        for marker, ref_marker, color, ref_color, fnm, sz in zip('*^', '^*', ('#fc7200', '#0d90e0'), ('#0d90e0', '#fc7200'), ('2.png', '1.png'), (12, 8)):
+            fig = plt.figure(figsize=(20, 10))
+            ax = fig.add_subplot(1, 1, 1, projection=prj1)
+            ax.set_global()
+            ax.add_feature(cfeature.LAND, color='#cccccc', alpha=1.0)
+            ax.add_feature(cfeature.OCEAN, color='#ffffff', alpha=1.0)
+            ax.plot(lons, las, marker, markerfacecolor=color, transform=prj3, markeredgewidth=0, markeredgecolor='k', markersize=sz)
+            ax.plot(ref_lo, ref_la, ref_marker, markerfacecolor=ref_color, transform=prj3, markeredgewidth=0, markeredgecolor='k', markersize=(20-sz)*1.2)
+            # plot great circle paths
+            # generate a random list, each list element is a tuple of two integers, representing the indices of the two points
+            for i1 in range(selected_lons.size):
+                lo1, la1 = selected_lons[i1], selected_las[i1]
+                for i2 in range(i1+1, selected_lons.size)[::2]:
+                    lo2, la2 = selected_lons[i2], selected_las[i2]
+                    ax.plot([lo1, lo2], [la1, la2], '--', color='k', transform=ccrs.Geodetic(), linewidth=0.6, zorder=0)
+            ax.axis('off')
+            plt.savefig(fnm, bbox_inches = 'tight', pad_inches = 0, dpi=300, transparent=True)
+            plt.close()
+        #
+        p.subplot(0, 0)
+        plot_globe3d(p, globe, style='1.png', alpha=1, land='#999999', ocean='#ffffff'  ) #('plane', (normal, origin, invert) )
+        p.camera_position = [(7164.4456150185315, -32959.49111285338, -3463.2338387224036), (0.0, 0.0, 0.0), (0.011160759659876018, -0.10209381453235096, 0.9947121646376144)]
+        p.subplot(0, 1)
+        plot_globe3d(p, globe, style='2.png', alpha=1, land='#999999', ocean='#ffffff'  ) #('plane', (normal, origin, invert) )
+        p.camera_position = [(7164.4456150185315, -32959.49111285338, -3463.2338387224036), (0.0, 0.0, 0.0), (0.011160759659876018, -0.10209381453235096, 0.9947121646376144)]
+        #
+        p.show(screenshot='correlation.png')
+        print(p.camera_position)
+        pass
+    @staticmethod
+    def benchmark3():
+        """
+        Plot global inter-receiver and inter-source geometries.
+        """
+        p = pv.Plotter(notebook=0, shape=(1, 2), border=False, window_size=(3500, 2000) )
+        p.set_background('white')
+        #
+        center = (0, 0, 0)
+        R0 = 6371.0
+        globe = globe3d(R0, center)
+        # use obspy to download station longitude and latitudes of a network 'II'
+        from obspy.clients.fdsn import Client
+        client = Client("IRIS")
+        inventory = client.get_stations(network='II,IU,G', level='station')
+        lons, las = [], []
+        for network in inventory:
+            for station in network:
+                lons.append(station.longitude)
+                las.append(station.latitude)
+        lons = np.array(lons)
+        las = np.array(las)
+        cat = client.get_events(starttime="2010-01-01", endtime="2015-01-02", minmagnitude=6.0)
+        evlons, evlas, evdeps = [], [], []
+        for event in cat:
+            evlons.append(event.origins[0].longitude)
+            evlas.append(event.origins[0].latitude)
+            evdeps.append(event.origins[0].depth)
+        #
+        # plot 2d globe map
+        n_points = 100
+        ref_lo, ref_la = -76, 9
+        # select lons and lats so that -130<lo<-30 and -30<la<30
+        selected_idxs = (lons>-75)*(lons<-30)*(las>-20)*(las<15)
+        selected_lons = lons[selected_idxs]
+        selected_las  = las[selected_idxs]
+        #n_gc = 30
+        #i1i2 = np.random.randint(0, n_points, (n_gc, 2))
+        #print(i1i2.shape)
+        #class LowerThresholdGeodetic(ccrs.Geodetic):
+        #    @property
+        #    def threshold(self):
+        #        return 1e1
+        #class LowerThresholdPlateCarree(ccrs.Geodetic):
+        #    @property
+        #    def threshold(self):
+        #        return 1e1
+        prj1 = ccrs.PlateCarree(central_longitude=0)
+        prj3 = ccrs.Geodetic()
+        prj1.threshold = 0.001
+        # plot 2d globe map inter-receiver and inter-source
+        for marker, ref_marker, color, ref_color, fnm, sz in zip('^^', '**', ('#0d90e0', '#0d90e0'), ('#fc7200', '#fc7200'), ('2.png', '1.png'), (12, 8)):
+            fig = plt.figure(figsize=(20, 10))
+            ax = fig.add_subplot(1, 1, 1, projection=prj1)
+            ax.set_global()
+            ax.add_feature(cfeature.LAND, color='#cccccc', alpha=1.0)
+            ax.add_feature(cfeature.OCEAN, color='#ffffff', alpha=1.0)
+            if sz == 12:
+                ax.plot(lons, las, marker, markerfacecolor=color, transform=prj3, markeredgewidth=0, markeredgecolor='k', markersize=sz)
+                ax.plot(evlons, evlas, ref_marker, markerfacecolor=ref_color, transform=prj3, markeredgewidth=0, markeredgecolor='k', markersize=15)
+            ax.plot(ref_lo, ref_la, ref_marker, markerfacecolor=ref_color, transform=prj3, markeredgewidth=0, markeredgecolor='k', markersize=15)
+            # plot great circle paths
+            # generate a random list, each list element is a tuple of two integers, representing the indices of the two points
+            flag = True
+            for i1 in range(selected_lons.size):
+                lo1, la1 = selected_lons[i1], selected_las[i1]
+                for i2 in range(i1+1, selected_lons.size)[::2]:
+                    lo2, la2 = selected_lons[i2], selected_las[i2]
+                    if flag:
+                        ax.plot([lo1, lo2], [la1, la2], '--', color='k', transform=ccrs.Geodetic(), linewidth=2, zorder=0)
+                        ax.plot([lo1, lo2], [la1, la2], marker, markerfacecolor=color, transform=prj3, markeredgewidth=0, markeredgecolor='k', markersize=10)
+                        if sz == 8:
+                            flag = False
+            ax.axis('off')
+            plt.savefig(fnm, bbox_inches = 'tight', pad_inches = 0, dpi=300, transparent=True)
+            plt.close()
+        #
+        p.subplot(0, 0)
+        plot_globe3d(p, globe, style='1.png', alpha=1, land='#999999', ocean='#ffffff'  ) #('plane', (normal, origin, invert) )
+        p.camera_position = [(7164.4456150185315, -32959.49111285338, -3463.2338387224036), (0.0, 0.0, 0.0), (0.011160759659876018, -0.10209381453235096, 0.9947121646376144)]
+        p.subplot(0, 1)
+        plot_globe3d(p, globe, style='2.png', alpha=1, land='#999999', ocean='#ffffff'  ) #('plane', (normal, origin, invert) )
+        p.camera_position = [(7164.4456150185315, -32959.49111285338, -3463.2338387224036), (0.0, 0.0, 0.0), (0.011160759659876018, -0.10209381453235096, 0.9947121646376144)]
+        #
+        p.show(screenshot='correlation2.png')
+        print(p.camera_position)
+        pass
+    @staticmethod
+    def benchmark4():
+        """
+        Plot global inter-receiver and inter-source geometries.
+        """
+        p = pv.Plotter(notebook=0, shape=(1, 2), border=False, window_size=(3500, 2000) )
+        p.set_background('white')
+        #
+        center = (0, 0, 0)
+        R0 = 6371.0
+        globe = globe3d(R0, center)
+        # use obspy to download station longitude and latitudes of a network 'II'
+        from obspy.clients.fdsn import Client
+        client = Client("IRIS")
+        inventory = client.get_stations(network='II,IU,G', level='station')
+        lons, las = [], []
+        for network in inventory:
+            for station in network:
+                lons.append(station.longitude)
+                las.append(station.latitude)
+        lons = np.array(lons)
+        las = np.array(las)
+        cat = client.get_events(starttime="2010-01-01", endtime="2015-01-02", minmagnitude=6.0)
+        evlons, evlas, evdeps = [], [], []
+        for event in cat:
+            evlons.append(event.origins[0].longitude)
+            evlas.append(event.origins[0].latitude)
+            evdeps.append(event.origins[0].depth)
+        #
+        # plot 2d globe map
+        n_points = 100
+        ref_lo, ref_la = -76, 9
+        # select lons and lats so that -130<lo<-30 and -30<la<30
+        selected_idxs = (lons>-75)*(lons<-30)*(las>-20)*(las<15)
+        selected_lons = lons[selected_idxs]
+        selected_las  = las[selected_idxs]
+        #n_gc = 30
+        #i1i2 = np.random.randint(0, n_points, (n_gc, 2))
+        #print(i1i2.shape)
+        #class LowerThresholdGeodetic(ccrs.Geodetic):
+        #    @property
+        #    def threshold(self):
+        #        return 1e1
+        #class LowerThresholdPlateCarree(ccrs.Geodetic):
+        #    @property
+        #    def threshold(self):
+        #        return 1e1
+        prj1 = ccrs.PlateCarree(central_longitude=0)
+        prj3 = ccrs.Geodetic()
+        prj1.threshold = 0.001
+        # plot 2d globe map inter-receiver and inter-source
+        for marker, ref_marker, color, ref_color, fnm, sz in zip('**', '^^', ('#fc7200', '#fc7200'), ('#0d90e0', '#0d90e0'), ('2.png', '1.png'), (12, 8)):
+            fig = plt.figure(figsize=(20, 10))
+            ax = fig.add_subplot(1, 1, 1, projection=prj1)
+            ax.set_global()
+            ax.add_feature(cfeature.LAND, color='#cccccc', alpha=1.0)
+            ax.add_feature(cfeature.OCEAN, color='#ffffff', alpha=1.0)
+            if sz == 12:
+                ax.plot(lons, las, marker, markerfacecolor=color, transform=prj3, markeredgewidth=0, markeredgecolor='k', markersize=15)
+                ax.plot(evlons, evlas, ref_marker, markerfacecolor=ref_color, transform=prj3, markeredgewidth=0, markeredgecolor='k', markersize=10)
+            ax.plot(ref_lo, ref_la, ref_marker, markerfacecolor=ref_color, transform=prj3, markeredgewidth=0, markeredgecolor='k', markersize=10)
+            # plot great circle paths
+            # generate a random list, each list element is a tuple of two integers, representing the indices of the two points
+            flag = True
+            for i1 in range(selected_lons.size):
+                lo1, la1 = selected_lons[i1], selected_las[i1]
+                for i2 in range(i1+1, selected_lons.size)[::2]:
+                    lo2, la2 = selected_lons[i2], selected_las[i2]
+                    if flag:
+                        ax.plot([lo1, lo2], [la1, la2], '--', color='k', transform=ccrs.Geodetic(), linewidth=2, zorder=0)
+                        ax.plot([lo1, lo2], [la1, la2], marker, markerfacecolor=color, transform=prj3, markeredgewidth=0, markeredgecolor='k', markersize=15)
+                        if sz == 8:
+                            flag = False
+            ax.axis('off')
+            plt.savefig(fnm, bbox_inches = 'tight', pad_inches = 0, dpi=300, transparent=True)
+            plt.close()
+        #
+        p.subplot(0, 0)
+        plot_globe3d(p, globe, style='1.png', alpha=1, land='#999999', ocean='#ffffff'  ) #('plane', (normal, origin, invert) )
+        p.camera_position = [(7164.4456150185315, -32959.49111285338, -3463.2338387224036), (0.0, 0.0, 0.0), (0.011160759659876018, -0.10209381453235096, 0.9947121646376144)]
+        p.subplot(0, 1)
+        plot_globe3d(p, globe, style='2.png', alpha=1, land='#999999', ocean='#ffffff'  ) #('plane', (normal, origin, invert) )
+        p.camera_position = [(7164.4456150185315, -32959.49111285338, -3463.2338387224036), (0.0, 0.0, 0.0), (0.011160759659876018, -0.10209381453235096, 0.9947121646376144)]
+        #
+        p.show(screenshot='correlation4.png')
+        print(p.camera_position)
+        pass
 def Earth_radial_model(mod='ak135', key='vp'):
     """
     key: any of 'vp', 'vs', 'density', 'qp', 'qs'.
@@ -315,6 +560,7 @@ def plot_mosaic_map(figname, cmap='gray'):
 #############################################################################################################################################################################################
 def plot_globe3d(p, globe, style='simple', coastline=False, land=None, ocean=None, culling=None, alpha=1.0, color='gray', clip=None):
     """
+    style: 'simple', 'fancy1', 'fancy2', 'Mars', 'Cat1', 'Mosaic', 'Mosaic_copper', or '.png' filename.
     """
     ## first part of the sphere
     #sphere = pv.Sphere(radius=radius, center=(0, 0, 0), theta_resolution=60, phi_resolution=30, start_theta=0, end_theta=359.99999999, direction=(0, 0, -1) )
@@ -350,6 +596,20 @@ def plot_globe3d(p, globe, style='simple', coastline=False, land=None, ocean=Non
         sphere.t_coords[:,1] = 0.5+ np.arcsin(z/radius)*PI_INV
 
         p.add_mesh(sphere, texture=tex2, show_edges=False, opacity=alpha, smooth_shading=True, lighting=True, culling=culling)
+    elif '.png' in style:
+        tex = pv.read_texture(style)
+        PI2_INV = 1.0/(2 * np.pi)
+        PI_INV  = 2.0*PI2_INV
+        sphere.t_coords = np.zeros((sphere.points.shape[0], 2))
+
+        x, y, z = np.copy(sphere.points[:, 0]), np.copy(sphere.points[:, 1]), np.copy(sphere.points[:, 2])
+        cx, cy, cz = center
+        x -= cx
+        y -= cy
+        z -= cz
+        sphere.t_coords[:,0] = 0.5+(np.arctan2(y, x)*PI2_INV) % 1.0
+        sphere.t_coords[:,1] = 0.5+ np.arcsin(z/radius)*PI_INV
+        p.add_mesh(sphere, texture=tex, show_edges=False, opacity=alpha, smooth_shading=True, lighting=True, culling=culling)
     else:
         p.add_mesh(sphere, show_edges=False, opacity=alpha, color=color, smooth_shading=True, lighting=True, culling=culling)
     #sphere = pv.Sphere(radius=100, center=(radius, 0, 0), theta_resolution=180, phi_resolution=90)
@@ -680,6 +940,8 @@ class beachball_3d:
                 contours = grid_scalar.contour([0.0] )
                 p.add_mesh(contours, show_edges=True, opacity=1.0, color='k')
 if __name__ == '__main__':
+    globe3d.benchmark4()
+    sys.exit(0)
     globe3d.benchmark()
     sys.exit(0)
     p = pv.Plotter(notebook=0, shape=(1, 1), border=False, window_size=(1700, 1000) )

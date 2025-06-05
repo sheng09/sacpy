@@ -129,7 +129,7 @@ def plotStation(ax, model, stdp_list, stlo_list, color = '#E5E5E5', markersize=1
         ax.annotate('', xy=(stlo, station_radius), xycoords='data',
                     xytext=(stlo, station_radius + radius * 0.01), textcoords='data',
                     arrowprops=arrowprops, clip_on=False, zorder=zorder)
-def plotEq(ax, model, eqdp_list, eqlo_list, marker='*', color ='#FEF200', markersize=12, alpha= 1.0, zorder=200):
+def plotEq(ax, model, eqdp_list, eqlo_list, marker='*', color ='#FEF200', markersize=12, alpha= 1.0, zorder=200, markeredgewidth=0.5, markeredgecolor='#aaaaaa', ):
     """
     Plot Earthquake.
 
@@ -142,7 +142,7 @@ def plotEq(ax, model, eqdp_list, eqlo_list, marker='*', color ='#FEF200', marker
     eqlo_list = np.deg2rad(eqlo_list)
     ax.plot(eqlo_list, eq_radius,
             marker=marker, color=color, markersize=markersize, zorder=zorder, linestyle='None',
-            markeredgewidth=0.5, markeredgecolor='0.3', alpha= alpha,
+            markeredgewidth=markeredgewidth, markeredgecolor=markeredgecolor, alpha= alpha,
             clip_on=False)
 def add_arrow(ax, xs, ys, loc_xs=None, loc_ys=None, loc_ratio=None,
                 color='C0', headlength=5, headwidth=4, alpha=1.0,
