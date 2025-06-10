@@ -2120,6 +2120,8 @@ def event_mseed2h5(input, h5_fnm, inventory,
     with Timer(tag='trim_rtr_bp_resample', verbose=False, summary=time_summary):
         starttime = UTCDateTime(starttime)
         endtime   = UTCDateTime(endtime)
+        max_delta    = 0.5/freq_band[1]
+        st = Stream(traces=[tr for tr in st if ( tr.stats.delta < max_delta) ]  ) # remove too-low DELTA traces concerning later bandpass filter
         st = Stream(traces=[tr for tr in st if ( len(tr.data)>=3 and (tr.stats.endtime-tr.stats.starttime)>=min_single_length_sec ) ]  )
         st.trim(starttime, endtime)
         st = Stream(traces=[tr for tr in st if ( len(tr.data)>=3 and (tr.stats.endtime-tr.stats.starttime)>=min_single_length_sec ) ]  )
