@@ -657,6 +657,9 @@ class CS_InterRcv:
             log_print( 2, 'Filename on this rank:             ', h5_ofnm)
         ############################################################################################################
         self.time_summary  = TimeSummary(accumulative=True)
+    def __del__(self):
+        if self.intermediate_out_h5fid is not None:
+            self.intermediate_out_h5fid.close()
     def add(self, zne_mat_f32, stlo_rad, stla_rad, evlo_rad, evla_rad, event_name=None, local_time_summary=None):
         """
         local_time_summary: a TimeSummary object to record the time consumption for this function.
