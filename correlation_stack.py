@@ -88,12 +88,11 @@ def zne2znert(zne_mat, znert_mat, stlo_rad, stla_rad, evlo_rad, evla_rad):
         znert_mat[ista*5+4] = e*s - n*c
 
 @jit(nopython=True, nogil=True)
-def gcd_daz_selection(n, lo_rad, la_rad, ptlo_rad, ptla_rad, gcd_range_rad, daz_range_rad, selection_mat_nn):
+def gcd_selection(n, lo_rad, la_rad, ptlo_rad, ptla_rad, gcd_range_rad, gcd_selection_mat_nn):
     """
-    Compute a NxN matrix with values of 1 or 0 for selecting the pairs of stations or not.
-    1 for selecting and 0 for discarding.
+    Compute a NxN matrix with values of 1 or 0 for selecting the pairs of stations or not. 1 for selecting and 0 for discarding.
     The ijth component of the matrix is 1 or 0 to select or discard the pair formed by the ith and jth records.
-    The returen matrix is symmetric.
+    The returned matrix is symmetric.
     #
     Parameters:
         n:        the length of lo_rad or la_rad used for computation.
@@ -110,46 +109,75 @@ def gcd_daz_selection(n, lo_rad, la_rad, ptlo_rad, ptla_rad, gcd_range_rad, daz_
                   This means the event latitude for inter-station correlations,
                   and the station latitude for inter-source correlations.
         gcd_range_rad: the minimum and maximum great circle distance in radian
-        daz_range_rad: the minimum and maximum azimuth difference in radian
-        selection_mat_nn: the output selection matrix
+        gcd_selection_mat_nn: the output selection matrix for gcd-based selection
     """
     dont_select_gcd = (gcd_range_rad.size == 0)
-    dont_select_daz = (daz_range_rad.size == 0)
-    if dont_select_gcd and dont_select_daz:
-        selection_mat_nn.fill(1)
+    if dont_select_gcd:
+        gcd_selection_mat_nn.fill(1)
         return
-    ####
-    selection_mat_nn.fill(1)
-    single_row = np.zeros(n, dtype=selection_mat_nn.dtype)
     #### select gcd
-    if not dont_select_gcd:
-        gcd_range_rad = np.reshape(gcd_range_rad, (-1, 2) )
-        for ista1 in range(n-1):
-            lo1, la1 = lo_rad[ista1], la_rad[ista1]
-            ista2 = ista1+1
-            gcd = np.abs( point_distance_to_great_circle_plane_rad(ptlo_rad, ptla_rad, lo1, la1, lo_rad[ista2:], la_rad[ista2:] ) )
-            single_row.fill(0)
-            for (gcd_min, gcd_max) in gcd_range_rad:
-                inside = (gcd_min<=gcd) & (gcd<=gcd_max)
-                single_row[ista2:] |= inside      # the value before ista2 is always zero!
-            selection_mat_nn[ista1] &= single_row # second, modify each row. The lower triangle including the diagonal is always zero
-    ### select daz
-    if not dont_select_daz:
-        daz_range_rad = np.reshape(daz_range_rad, (-1, 2) )
-        az = azimuth_rad(ptlo_rad, ptla_rad, lo_rad, la_rad)
-        for ista1 in range(n-1):
-            lo1, la1, az1 = lo_rad[ista1], la_rad[ista1], az[ista1]
-            ista2 = ista1+1
-            daz = np.abs( az1-az[ista2:] ) % PI
-            daz = np.minimum(daz, PI-daz)
-            single_row.fill(0)
-            for (daz_min, daz_max) in daz_range_rad:
-                inside = (daz_min<=daz) & (daz<=daz_max)
-                single_row[ista2:] |= inside      # the value before ista2 is always zero!
-            selection_mat_nn[ista1] &= single_row # third, modify each row. The lower triangle including the diagonal is always zero
+    gcd_selection_mat_nn.fill(0)
+    single_row = np.zeros(n, dtype=gcd_selection_mat_nn.dtype)
+    ####
+    gcd_range_rad = np.reshape(gcd_range_rad, (-1, 2) )
+    for ista1 in range(n-1):
+        lo1, la1 = lo_rad[ista1], la_rad[ista1]
+        ista2 = ista1+1
+        gcd = np.abs( point_distance_to_great_circle_plane_rad(ptlo_rad, ptla_rad, lo1, la1, lo_rad[ista2:], la_rad[ista2:] ) )
+        single_row.fill(0)
+        for (gcd_min, gcd_max) in gcd_range_rad:
+            inside = (gcd_min<=gcd) & (gcd<=gcd_max)
+            single_row[ista2:] |= inside      # the value before ista2 is always zero!
+        gcd_selection_mat_nn[ista1] = single_row # second, modify each row. The lower triangle including the diagonal is always zero
+    np.fill_diagonal(gcd_selection_mat_nn, 1) # the diagonal (auto correlation) is always zero
+    gcd_selection_mat_nn |= gcd_selection_mat_nn.T # make it symmetric
+@jit(nopython=True, nogil=True)
+def daz_selection(n, lo_rad, la_rad, ptlo_rad, ptla_rad, daz_range_rad, daz_selection_mat_nn):
+    """
+    Compute a NxN matrix with values of 1 or 0 for selecting the pairs of stations or not. 1 for selecting and 0 for discarding.
+    The ijth component of the matrix is 1 or 0 to select or discard the pair formed by the ith and jth records.
+    The returned matrix is symmetric.
+    #
+    Parameters:
+        n:        the length of lo_rad or la_rad used for computation.
+        lo_rad:   an ndarray for the longitudes in radian.
+                  This means the station longitudes for inter-station correlations,
+                  and the event longitudes for inter-source correlations.
+        la_rad:   an ndarray for the latitudes in radian.
+                  This means the station latitudes for inter-station correlations,
+                  and the event latitudes for inter-source correlations.
+        ptlo_rad: a single value for the longitude of the point in radian.
+                  This means the event longitude for inter-station correlations,
+                  and the station longitude for inter-source correlations.
+        ptla_rad: a single value for the latitude of the point in radian
+                  This means the event latitude for inter-station correlations,
+                  and the station latitude for inter-source correlations.
+        daz_range_rad: the minimum and maximum azimuth difference in radian
+        daz_selection_mat_nn: the output selection matrix
+    """
+    dont_select_daz = (daz_range_rad.size == 0)
+    if dont_select_daz:
+        daz_selection_mat_nn.fill(1)
+        return
+    #### select daz
+    daz_selection_mat_nn.fill(0)
+    single_row = np.zeros(n, dtype=daz_selection_mat_nn.dtype)
+    ####
+    daz_range_rad = np.reshape(daz_range_rad, (-1, 2) )
+    az = azimuth_rad(ptlo_rad, ptla_rad, lo_rad, la_rad)
+    for ista1 in range(n-1):
+        az1 = az[ista1]
+        ista2 = ista1+1
+        daz = np.abs( az1-az[ista2:] ) % PI
+        daz = np.minimum(daz, PI-daz)
+        single_row.fill(0)
+        for (daz_min, daz_max) in daz_range_rad:
+            inside = (daz_min<=daz) & (daz<=daz_max)
+            single_row[ista2:] |= inside      # the value before ista2 is always zero!
+        daz_selection_mat_nn[ista1] = single_row # third, modify each row. The lower triangle including the diagonal is always zero
     ###
-    np.fill_diagonal(selection_mat_nn, 1) # the diagonal (auto correlation) is always zero
-    selection_mat_nn |= selection_mat_nn.T # make it symmetric
+    np.fill_diagonal(daz_selection_mat_nn, 1) # the diagonal (auto correlation) is always zero
+    daz_selection_mat_nn |= daz_selection_mat_nn.T # make it symmetric
 @jit(nopython=True, nogil=True)
 def gc_center_selection(n, lo_rad, la_rad, ptlo_rad, ptla_rad,
                         gc_center_rect_boxes_rad, gc_center_circles_rad,
@@ -319,7 +347,7 @@ def cc_stack(ch1, ch2, znert_mat_spec_c64, lo_rad, la_rad, stack_mat_spec_c64, s
     stack_mat_spec_c64: the output stack matrix in spectral domain in complex64 dtype.
     stack_count:        the output stack count matrix in int32/int64 dtype.
     stack_index_mat_nn: the stack index matrix. It can be returned from `get_stack_index_mat(...)`.
-    selection_mat_nn:   the selection matrix. It can be returned from `gcd_daz_selection_rad(...)`.
+    selection_mat_nn:   the selection matrix. It can be returned from `gcd_selection_rad(...)` and `daz_selection_rad(...)` .
     """
     mat_spec = znert_mat_spec_c64
     flag_IR = (ch1==1 or ch1==2 or ch2==1 or ch2==2)
@@ -482,6 +510,7 @@ class CS_InterRcv:
                  daz_range=None, gcd_range=None,
                  gc_center_rect_boxes=None, gc_center_circles=None, critical_distance_deg=0.1,
                  speedup_critical_frequency_band=None, speedup_critical_level=0.01,
+                 intermediate_outfnm_prefix=None,
                  log_print=None, mpi_comm=None):
         """
         ch_pair_type: a pair of int.
@@ -619,10 +648,16 @@ class CS_InterRcv:
             self.whiten_speedup_spectra_index_range = (-1, -1) # -1 in fwhiten_f32 for disabling speedup
             log_print( 1, 'Spectral whitening speedup OFF or not applicable')
         ############################################################################################################
+        # Optional: turn on intermediate output
+        self.intermediate_out_h5fid = None
+        if intermediate_outfnm_prefix is not None:
+            h5_ofnm = '%s%03d.h5' % (intermediate_outfnm_prefix, mpi_comm.Get_rank() )
+            self.intermediate_out_h5fid = h5_File(h5_ofnm, 'w')
+            log_print( 1, 'Turn on intermediate output.')
+            log_print( 2, 'Filename on this rank:             ', h5_ofnm)
+        ############################################################################################################
         self.time_summary  = TimeSummary(accumulative=True)
-    def add(self, zne_mat_f32, stlo_rad, stla_rad, evlo_rad, evla_rad, infostr=None, local_time_summary=None,
-            flag_save_pair_selection_matrix=False,
-            intermediate_outfnm_prefix='./'):
+    def add(self, zne_mat_f32, stlo_rad, stla_rad, evlo_rad, evla_rad, event_name=None, local_time_summary=None):
         """
         local_time_summary: a TimeSummary object to record the time consumption for this function.
                             If `None`, a internal empty TimeSummary object will be created.
@@ -630,19 +665,13 @@ class CS_InterRcv:
                             Note, all time summary by the `local_time_summary` will be added
                             to `self.time_summary`.  So be careful for avoiding repeatedly
                             adding the same time summary multiple times.
-        intermediate_outfnm_prefix:      the filename prefix for output intermediate data during running this function.
-        flag_save_pair_selection_matrix: if True, the correlation-pair selection matrix will be saved and write to file.
-                                         The saved matrix is an NxN square and symmetric matrix with 1 for selecting
-                                         and 0 for discarding. It will be linked to the input `stlo_rad, stla_rad`.
-                                         The ijth component of the matrix is 1 or 0 to select or discard the pair
-                                         formed by the ith and jth stations.
         """
         if local_time_summary is None:
             local_time_summary = TimeSummary(accumulative=True)
         ############################################################################################################
         #### log
         log_print = self.logger
-        log_print(-1, 'Adding... %s' % infostr, flush=True)
+        log_print(-1, 'Adding... %s' % event_name, flush=True)
         log_print( 1, 'Function variables:')
         log_print( 2, 'zne_mat_f32: ', zne_mat_f32.shape, zne_mat_f32.dtype)
         log_print( 2, 'stlo:        ', stlo_rad.shape, stlo_rad.dtype)
@@ -706,20 +735,30 @@ class CS_InterRcv:
             del znert_mat_f32
         ############################################################################################################
         ccpairs_selection_mat = np.ones( (stlo_rad.size, stlo_rad.size), dtype=np.int8)
-        gcd_daz_selection_mat = None
+        gcd_selection_mat = None
+        daz_selection_mat = None
         gc_center_selection_mat = None
         dict_output_inter_mediate_data = dict()
         ############################################################################################################
         #### selection w.r.t. to gcd and daz
         with Timer(tag='gcd_daz_select', verbose=False, summary=local_time_summary):
-            if (self.gcd_range_rad.size>0) or (self.daz_range_rad.size>0):
-                log_print(1, 'Selecting wr.t. gcd and daz ranges...')
-                gcd_daz_selection_mat = np.zeros( (stlo_rad.size, stlo_rad.size), dtype=np.int8)
-                gcd_daz_selection(stlo_rad.size, stlo_rad, stla_rad, evlo_rad[0], evla_rad[0],
-                                  self.gcd_range_rad, self.daz_range_rad, gcd_daz_selection_mat)
-                dict_output_inter_mediate_data['gcd_daz_selection_mat'] = gcd_daz_selection_mat
-                ccpairs_selection_mat &= gcd_daz_selection_mat ##### merge this selection to the functional selection matrix
-                log_print(2, 'gcd_daz_selection_mat: ', gcd_daz_selection_mat.shape, gcd_daz_selection_mat.dtype)
+            if (self.gcd_range_rad.size>0):
+                log_print(1, 'Selecting wr.t. gcd ranges...')
+                gcd_selection_mat = np.zeros( (stlo_rad.size, stlo_rad.size), dtype=np.int8)
+                gcd_selection(stlo_rad.size, stlo_rad, stla_rad, evlo_rad[0], evla_rad[0], self.gcd_range_rad, gcd_selection_mat)
+                ccpairs_selection_mat &= gcd_selection_mat
+                #
+                dict_output_inter_mediate_data['gcd_selection_mat'] = gcd_selection_mat
+                log_print(2, 'gcd_selection_mat: ', gcd_selection_mat.shape, gcd_selection_mat.dtype)
+                log_print(2, 'Finished.')
+            if (self.daz_range_rad.size>0):
+                log_print(1, 'Selecting wr.t. daz ranges...')
+                daz_selection_mat = np.zeros( (stlo_rad.size, stlo_rad.size), dtype=np.int8)
+                daz_selection(stlo_rad.size, stlo_rad, stla_rad, evlo_rad[0], evla_rad[0], self.daz_range_rad, daz_selection_mat)
+                ccpairs_selection_mat &= daz_selection_mat
+                #
+                dict_output_inter_mediate_data['daz_selection_mat'] = daz_selection_mat
+                log_print(2, 'daz_selection_mat: ', daz_selection_mat.shape, daz_selection_mat.dtype)
                 log_print(2, 'Finished.')
         ############################################################################################################
         #### selection w.r.t. great circle center locations
@@ -748,7 +787,7 @@ class CS_InterRcv:
         #### stack index
         with Timer(tag='get_stack_index', verbose=False, summary=local_time_summary):
             log_print(1, 'Computing the stack index...')
-            stack_index_mat_nn = np.zeros( (stlo_rad.size, stlo_rad.size), dtype=np.uint32)
+            stack_index_mat_nn = np.zeros( (stlo_rad.size, stlo_rad.size), dtype=np.uint16)
             dist_min, dist_step = self.stack_bins.centers[0], self.stack_bins.step
             get_stack_index_mat(stlo_rad.size, stlo_rad, stla_rad, dist_min, dist_step, stack_index_mat_nn)
             dict_output_inter_mediate_data['stack_index_mat_nn'] = stack_index_mat_nn
@@ -757,16 +796,25 @@ class CS_InterRcv:
         ############################################################################################################
         #### Output the intermediate data
         with Timer(tag='o_inter', verbose=False, summary=local_time_summary):
-            if flag_save_pair_selection_matrix and intermediate_outfnm_prefix:
-                log_print(1, 'Saving intermediate data to .npz files...')
-                dict_output_inter_mediate_data['stlo_rad'] = stlo_rad
-                dict_output_inter_mediate_data['stla_rad'] = stla_rad
-                dict_output_inter_mediate_data['evlo_rad'] = evlo_rad
-                dict_output_inter_mediate_data['evla_rad'] = evla_rad
-                fnm = '%sselection_mat.npz' % intermediate_outfnm_prefix
-                np.savez(fnm, **dict_output_inter_mediate_data)
-                log_print(2, 'Saved!', fnm)
-            del gcd_daz_selection_mat
+            if self.intermediate_out_h5fid is not None:
+                grp = self.intermediate_out_h5fid.create_group(event_name)
+                grp.create_dataset('stlo_rad', data=stlo_rad, dtype=np.float32)
+                grp.create_dataset('stla_rad', data=stla_rad, dtype=np.float32)
+                grp.create_dataset('evlo_rad', data=evlo_rad, dtype=np.float32)
+                grp.create_dataset('evla_rad', data=evla_rad, dtype=np.float32)
+                for key in sorted(dict_output_inter_mediate_data.keys()):
+                    dat = dict_output_inter_mediate_data[key]
+                    grp.create_dataset(key, data=dat, dtype=dat.dtype)
+                if self.gcd_range_rad.size>0:
+                    grp.attrs['gcd_range_rad'] = np.reshape(self.gcd_range_rad, (-1, 2) )
+                if self.daz_range_rad.size>0:
+                    grp.attrs['daz_range_rad'] = np.reshape(self.daz_range_rad, (-1, 2) )
+                if (self.gc_center_rect_boxes_rad.size>0) or (self.gc_center_circles_rad.size>0):
+                    grp.attrs['gc_center_rect_boxes_rad'] = np.reshape(self.gc_center_rect_boxes_rad, (-1, 4) )
+                    grp.attrs['gc_center_circles_rad']    = np.reshape(self.gc_center_circles_rad,    (-1, 3) )
+                log_print(1, 'Intermediate data saved!')
+            del gcd_selection_mat
+            del daz_selection_mat
             del gc_center_selection_mat
         ############################################################################################################
         #### cc & stack
