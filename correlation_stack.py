@@ -805,16 +805,24 @@ class CS_InterRcv:
                 grp.create_dataset('stla_rad', data=stla_rad, dtype=np.float32)
                 grp.create_dataset('evlo_rad', data=evlo_rad, dtype=np.float32)
                 grp.create_dataset('evla_rad', data=evla_rad, dtype=np.float32)
-                for key in sorted(dict_output_inter_mediate_data.keys()):
-                    dat = dict_output_inter_mediate_data[key]
-                    grp.create_dataset(key, data=dat, dtype=dat.dtype)
                 if self.gcd_range_rad.size>0:
-                    grp.attrs['gcd_range_rad'] = np.reshape(self.gcd_range_rad, (-1, 2) )
+                    grp.create_dataset('gcd_selection_mat', data=np.packbits(gcd_selection_mat.flatten() ) )
+                    grp['gcd_selection_mat'].attrs['shape'] = gcd_selection_mat.shape
+                    grp['gcd_selection_mat'].attrs['gcd_range_rad'] = np.reshape(self.gcd_range_rad, (-1, 2) )
                 if self.daz_range_rad.size>0:
-                    grp.attrs['daz_range_rad'] = np.reshape(self.daz_range_rad, (-1, 2) )
+                    grp.create_dataset('daz_selection_mat', data=np.packbits(daz_selection_mat.flatten() ) )
+                    grp['daz_selection_mat'].attrs['shape'] = daz_selection_mat.shape
+                    grp['daz_selection_mat'].attrs['daz_range_rad'] = np.reshape(self.daz_range_rad, (-1, 2) )
                 if (self.gc_center_rect_boxes_rad.size>0) or (self.gc_center_circles_rad.size>0):
-                    grp.attrs['gc_center_rect_boxes_rad'] = np.reshape(self.gc_center_rect_boxes_rad, (-1, 4) )
-                    grp.attrs['gc_center_circles_rad']    = np.reshape(self.gc_center_circles_rad,    (-1, 3) )
+                    grp.create_dataset('gc_center_selection_mat', data=np.packbits(gc_center_selection_mat.flatten() ) )
+                    grp['gc_center_selection_mat'].attrs['shape'] = gc_center_selection_mat.shape
+                    grp['gc_center_selection_mat'].attrs['gc_center_rect_boxes_rad'] = np.reshape(self.gc_center_rect_boxes_rad, (-1, 4) )
+                    grp['gc_center_selection_mat'].attrs['gc_center_circles_rad']    = np.reshape(self.gc_center_circles_rad,    (-1, 3) )
+                if np.sum(ccpairs_selection_mat==0) > 0:
+                    grp.create_dataset('ccpairs_selection_mat', data=np.packbits(ccpairs_selection_mat.flatten() ) )
+                    grp['ccpairs_selection_mat'].attrs['shape'] = ccpairs_selection_mat.shape
+                # stack_index_mat_nn values are not binary, hence CANNOT support packbits(...)
+                grp.create_dataset('stack_index_mat_nn', data=stack_index_mat_nn)
                 log_print(1, 'Intermediate data saved!')
             del gcd_selection_mat
             del daz_selection_mat
