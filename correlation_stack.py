@@ -471,6 +471,8 @@ def rd_proc_correlogram(h5file, filter_band=(0.02, 0.06666), taper_sec=50, taper
         return stack_mat, stack_count, stack_bin_centers, (cc_t1, cc_t2, delta)
     pass
 def plot_correlogram(stack_mat, stack_count, stack_bin_centers, cc_time_range,
+                     plot_im=True, plot_waveforms=False,
+                     waveform_color='k', waveform_time_shifts=None, waveform_alpha=1.0, waveform_ls='-', waveform_lw=0.5,
                      vmin=-0.6, vmax=0.6, cmap='gray', bar_color='#999999',
                      ax=None, hax=None, **kwargs):
     """
@@ -481,8 +483,26 @@ def plot_correlogram(stack_mat, stack_count, stack_bin_centers, cc_time_range,
     cc_t1, cc_t2 = cc_time_range
     x0, x1 = stack_bin_centers[0], stack_bin_centers[-1]
     dx     = stack_bin_centers[1]-stack_bin_centers[0]
-    ax.imshow(stack_mat.transpose(), aspect='auto', extent=[x0-dx*0.5, x1+dx*0.5, cc_t1, cc_t2],
-              origin='lower', vmin=vmin, vmax=vmax, cmap=cmap, **kwargs)
+    if plot_im:
+        ax.imshow(stack_mat.transpose(), aspect='auto', extent=[x0-dx*0.5, x1+dx*0.5, cc_t1, cc_t2],
+                origin='lower', vmin=vmin, vmax=vmax, cmap=cmap, **kwargs)
+    if plot_waveforms:
+        nt = stack_mat.shape[1]
+        delta = (cc_t2-cc_t1)/(nt-1)
+        ts = np.arange(nt)*delta + cc_t1
+        for irow, (time_series) in enumerate(stack_mat):
+            loc = stack_bin_centers[irow]
+            xs = time_series
+            v  = xs.max()
+            if v > 0.0:
+                xs = xs * ((vmax*dx)/v)
+            xs = xs+loc
+            ys = ts
+            if waveform_time_shifts is not None:
+                shift = waveform_time_shifts[irow]
+                ys = ys + shift
+            ax.plot(xs, ys, color=waveform_color, ls=waveform_ls, lw=waveform_lw, alpha=waveform_alpha)
+        pass
     if hax is not None:
         hax.bar(stack_bin_centers, stack_count, dx, color=bar_color)
         hax.set_xlim( (x0, x1) )

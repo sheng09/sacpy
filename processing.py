@@ -487,8 +487,7 @@ def fwhiten_f32(xs, delta, winlen, water_level_ratio= 1.0e-5, taper_halfsize=0, 
     taper_halfsize:    taper halfsize in each end after the division.
     """
     fftsize = xs.size
-    if fftsize % 2 != 0: # EVET points make faster FFT than ODD points
-        fftsize = fftsize + 1
+    fftsize += fftsize % 2 # make sure the fftsize is even
     spec = rfft(xs, fftsize)
 
     if speedup_i2 >= 1: ## for acceleration purpose
