@@ -105,6 +105,8 @@ def haversine(lon1, lat1, lon2, lat2):
     s1 = np.sin(dlat*0.5)
     s2 = np.sin(dlon*0.5)
     a =  s1*s1 + np.cos(lat1) * np.cos(lat2) * s2 * s2
+    a = np.minimum(1.0, a) # clip to avoid numerical issues
+    # Note: s1*s1>=0, s2*s2>=0, cos(lat)>=0 (because -90<=lat<=90), so that automatically a>=0
     c = np.rad2deg( 2.0 * np.arcsin(np.sqrt(a))  )
     return c # degree
 @jit(nopython=True, nogil=True)
@@ -118,6 +120,8 @@ def haversine_rad(lon1, lat1, lon2, lat2):
     s1 = np.sin(dlat*0.5)
     s2 = np.sin(dlon*0.5)
     a =  s1*s1 + np.cos(lat1) * np.cos(lat2) * s2 * s2
+    a = np.minimum(1.0, a) # clip to avoid numerical issues
+    # Note: s1*s1>=0, s2*s2>=0, cos(lat)>=0 (because -90<=lat<=90), so that automatically a>=0
     c = 2.0 * np.arcsin(np.sqrt(a))
     return c # rad
 
