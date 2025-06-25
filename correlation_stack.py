@@ -592,7 +592,7 @@ class CS_InterRcv:
         ############################################################################################################
         # time and spectral settings
         idx0 = 0
-        if cut_time_range: # derive nt from cut_time_range
+        if cut_time_range is not None: # derive nt from cut_time_range
             nt = int(np.ceil((cut_time_range[1]-cut_time_range[0])/delta) )+1
             idx0 = int(cut_time_range[0]/delta)
         nt = nt+nt%2
@@ -700,7 +700,7 @@ class CS_InterRcv:
         log_print( 2, 'stlo:        ', stlo_rad.shape, stlo_rad.dtype)
         log_print( 2, 'stla:        ', stla_rad.shape, stla_rad.dtype)
         log_print( 2, 'evlo:        ', evlo_rad.shape, evlo_rad.dtype)
-        log_print( 2, 'evla:        ', evla_rad.shape, evla_rad.dtype)
+        log_print( 2, 'evla:        ', evla_rad.shape, evla_rad.dtype, flush=True)
         ############################################################################################################
         #### get ZNERT if necessary, the RT here refers to event-receiver R and T (ERR, ERT)
         with Timer(tag='zne2znert', verbose=False, summary=local_time_summary):
@@ -710,9 +710,9 @@ class CS_InterRcv:
             idx1 = min(idx1, zne_mat_f32.shape[1])
             znert_mat_f32 = np.zeros( (zne_mat_f32.shape[0]//3*5, idx1-idx0), dtype=np.float32)
             zne2znert(zne_mat_f32[:, idx0:idx1], znert_mat_f32, stlo_rad, stla_rad, evlo_rad, evla_rad)
-            log_print(2, 'Finished.')
-            log_print(2, 'znert_mat_f32: ', znert_mat_f32.shape, znert_mat_f32.dtype)
             del zne_mat_f32
+            log_print(2, 'Finished.')
+            log_print(2, 'znert_mat_f32: ', znert_mat_f32.shape, znert_mat_f32.dtype, flush=True)
         ############################################################################################################
         #### whiten the input data in time series
         if self.wtlen:
@@ -721,7 +721,7 @@ class CS_InterRcv:
                 for xs in znert_mat_f32:
                     if xs.max() > xs.min():
                         tnorm_f32(xs,   self.delta, self.wtlen, self.wt_f1, self.wt_f2, 1.0e-5, self.whiten_taper_halfsize)
-                log_print(2, 'Finished.')
+                log_print(2, 'Finished.', flush=True)
         if self.wflen:
             with Timer(tag='wf', verbose=False, summary=local_time_summary):
                 su_wf_i1, su_wf_i2 = self.whiten_speedup_spectra_index_range # default is (-1, -1) to disable speedup
@@ -729,7 +729,7 @@ class CS_InterRcv:
                 for xs in znert_mat_f32:
                     if xs.max() > xs.min():
                         fwhiten_f32(xs, self.delta, self.wflen, 1.0e-5, self.whiten_taper_halfsize, su_wf_i1, su_wf_i2)
-                log_print(2, 'Finished.')
+                log_print(2, 'Finished.', flush=True)
         ############################################################################################################
         #### remove Nan of Inf
         not_valid = lambda xs: np.any( np.isnan(xs) ) or np.any( np.isinf(xs) ) or (np.max(xs) == np.min(xs) )
@@ -743,7 +743,7 @@ class CS_InterRcv:
                 znert_mat_f32[ista*5+2, :] = 0.0
                 znert_mat_f32[ista*5+3, :] = 0.0
                 znert_mat_f32[ista*5+4, :] = 0.0
-            log_print(2, 'Finished.')
+            log_print(2, 'Finished.', flush=True)
         ############################################################################################################
         #### fft
         with Timer(tag='fft', verbose=False, summary=local_time_summary):
@@ -753,9 +753,9 @@ class CS_InterRcv:
             spectra_c64 = np.zeros( (nrow, i2-i1), dtype=np.complex64)
             for irow in range(nrow): # do fft one by one may save some memory
                 spectra_c64[irow] = rfft(znert_mat_f32[irow], self.cc_fftsize)[i1:i2]
-            log_print(2, 'Finished.')
-            log_print(2, 'spectra_c64: ', spectra_c64.shape, spectra_c64.dtype)
             del znert_mat_f32
+            log_print(2, 'Finished.')
+            log_print(2, 'spectra_c64: ', spectra_c64.shape, spectra_c64.dtype, flush=True)
         ############################################################################################################
         ccpairs_selection_mat = np.ones( (stlo_rad.size, stlo_rad.size), dtype=np.int8)
         gcd_selection_mat = None
@@ -773,7 +773,7 @@ class CS_InterRcv:
                 #
                 dict_output_inter_mediate_data['gcd_selection_mat'] = gcd_selection_mat
                 log_print(2, 'gcd_selection_mat: ', gcd_selection_mat.shape, gcd_selection_mat.dtype)
-                log_print(2, 'Finished.')
+                log_print(2, 'Finished.', flush=True)
             if (self.daz_range_rad.size>0):
                 log_print(1, 'Selecting wr.t. daz ranges...')
                 daz_selection_mat = np.zeros( (stlo_rad.size, stlo_rad.size), dtype=np.int8)
@@ -782,7 +782,7 @@ class CS_InterRcv:
                 #
                 dict_output_inter_mediate_data['daz_selection_mat'] = daz_selection_mat
                 log_print(2, 'daz_selection_mat: ', daz_selection_mat.shape, daz_selection_mat.dtype)
-                log_print(2, 'Finished.')
+                log_print(2, 'Finished.', flush=True)
         ############################################################################################################
         #### selection w.r.t. great circle center locations
         with Timer(tag='gc_center_select', verbose=False, summary=local_time_summary):
@@ -795,7 +795,7 @@ class CS_InterRcv:
                 dict_output_inter_mediate_data['gc_center_selection_mat'] = gc_center_selection_mat
                 ccpairs_selection_mat &= gc_center_selection_mat ##### merge this selection to the functional selection matrix
                 log_print(2, 'gc_center_selection_mat: ', gc_center_selection_mat.shape, gc_center_selection_mat.dtype)
-                log_print(2, 'Finished.')
+                log_print(2, 'Finished.', flush=True)
         ############################################################################################################
         #### Finish the correlation selection
         with Timer(tag='cc_pair_select', verbose=False, summary=local_time_summary):
@@ -805,7 +805,7 @@ class CS_InterRcv:
                 ccpairs_selection_mat[:,ista] = 0
             dict_output_inter_mediate_data['ccpairs_selection_mat'] = ccpairs_selection_mat
             log_print(2, 'ccpairs_selection_mat: ', ccpairs_selection_mat.shape, ccpairs_selection_mat.dtype)
-            log_print(2, 'Finished.')
+            log_print(2, 'Finished.', flush=True)
         ############################################################################################################
         #### stack index
         with Timer(tag='get_stack_index', verbose=False, summary=local_time_summary):
@@ -815,7 +815,7 @@ class CS_InterRcv:
             get_stack_index_mat(stlo_rad.size, stlo_rad, stla_rad, dist_min, dist_step, stack_index_mat_nn)
             dict_output_inter_mediate_data['stack_index_mat_nn'] = stack_index_mat_nn
             log_print(2, 'stack_index_mat_nn: ', stack_index_mat_nn.shape, stack_index_mat_nn.dtype)
-            log_print(2, 'Finished.')
+            log_print(2, 'Finished.', flush=True)
         ############################################################################################################
         #### Output the intermediate data
         with Timer(tag='o_inter', verbose=False, summary=local_time_summary):
@@ -843,7 +843,7 @@ class CS_InterRcv:
                     grp['ccpairs_selection_mat'].attrs['shape'] = ccpairs_selection_mat.shape
                 # stack_index_mat_nn values are not binary, hence CANNOT support packbits(...)
                 grp.create_dataset('stack_index_mat_nn', data=stack_index_mat_nn)
-                log_print(1, 'Intermediate data saved!')
+                log_print(1, 'Intermediate data saved!', flush=True)
             del gcd_selection_mat
             del daz_selection_mat
             del gc_center_selection_mat
@@ -856,7 +856,7 @@ class CS_InterRcv:
             stack_mat_spec = self.stack_mat_spec
             #print(spectra_c64.dtype, stack_mat_spec.dtype, stack_count.dtype, stack_index_mat_nn.dtype, selection_mat.dtype, flush=True)
             cc_stack(ch1, ch2, spectra_c64, stlo_rad, stla_rad, stack_mat_spec, stack_count, stack_index_mat_nn, ccpairs_selection_mat)
-            log_print(2, 'Finished.')
+            log_print(2, 'Finished.', flush=True)
         ############################################################################################################
         #t_total = time_time() - t0
         #t_other = t_total*1000 - local_time_summary.total_t() # miliseconds
