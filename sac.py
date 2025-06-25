@@ -118,6 +118,7 @@ Whitening
 import matplotlib.pyplot as plt
 from copy import deepcopy
 import numpy as np
+import scipy
 from struct import unpack, pack
 import sys
 from glob import glob
@@ -127,7 +128,7 @@ import pickle
 try:
     from pyfftw.interfaces.numpy_fft import rfft, irfft
 except:
-    from numpy.fft import rfft, irfft
+    from scipy.fft import rfft, irfft
 from sacpy.geomath import haversine, azimuth
 from sacpy.processing import iirfilter_f32, taper, detrend, cut, tnorm_f32, fwhiten_f32, cc_delay
 from obspy.signal.interpolation import lanczos_interpolation
@@ -963,13 +964,13 @@ class sactrace:
         return (spectrum, df)
         """
         if zeropad == 0:
-            return np.fft.rfft(self.dat), 1.0/(self['npts']*self['delta'])
+            return scipy.fft.rfft(self.dat), 1.0/(self['npts']*self['delta'])
         else:
             new_length = int(2**(np.ceil(np.log(self['npts'], 2))))
             if zeropad == 1:
-                return np.fft.rfft(self.dat, new_length), 1.0/(new_length*self['delta'])
+                return scipy.fft.rfft(self.dat, new_length), 1.0/(new_length*self['delta'])
             elif zeropad == 2:
-                return np.fft.rfft(self.dat, new_length*2), 0.5/(new_length*self['delta'])
+                return scipy.fft.rfft(self.dat, new_length*2), 0.5/(new_length*self['delta'])
             else:
                 print('Unsupported argv(zeropad) for sactrace.rfft()')
     ###
@@ -982,13 +983,13 @@ class sactrace:
         return (spectrum, df)
         """
         if zeropad == 0:
-            return np.fft.fft(self.dat), 1.0/(self['npts']*self['delta'])
+            return scipy.fft.fft(self.dat), 1.0/(self['npts']*self['delta'])
         else:
             new_length = int(2**(np.ceil(np.log(self['npts'], 2))))
             if zeropad == 1:
-                return np.fft.fft(self.dat, new_length), 1.0/(new_length*self['delta'])
+                return scipy.fft.fft(self.dat, new_length), 1.0/(new_length*self['delta'])
             elif zeropad == 2:
-                return np.fft.fft(self.dat, new_length*2), 0.5/(new_length*self['delta'])
+                return scipy.fft.fft(self.dat, new_length*2), 0.5/(new_length*self['delta'])
             else:
                 print('Unsupported argv(zeropad) for sactrace.fft()')
     ###

@@ -78,11 +78,12 @@ Inplace whitening
 
 from matplotlib.pyplot import polar
 import numpy as np
+import scipy
 #from pyfftw.interfaces.cache import enable as pyfftw_cache_enable
 try:
     from pyfftw.interfaces.numpy_fft import rfft, irfft
 except:
-    from numpy.fft import rfft, irfft
+    from scipy.fft import rfft, irfft
 from numba import jit
 from numba.core.typing import cffi_utils as cffi_support
 
@@ -699,7 +700,7 @@ if __name__ == "__main__":
         iirfilter_f32(ys, dt, 0, 2, band[0], band[1], 2, 2)
         xfs = rfft(xs, fftsize)
         yfs = rfft(ys, fftsize)
-        fs = np.fft.rfftfreq(fftsize, d=dt)
+        fs = scipy.fft.rfftfreq(fftsize, d=dt)
         ###
         s1, s2 = fs[i1], fs[i2]
         ###

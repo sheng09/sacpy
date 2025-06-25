@@ -6,7 +6,10 @@ This module implement the calculation of cross correlation and stacking.
 from mpi4py import MPI
 import numpy as np
 from numba import jit
-from scipy.fft import rfft, irfft
+#from scipy.fft import rfft, irfft
+import pyfftw
+import pyfftw.interfaces.cache as pyffftw_interfaces_cache
+from pyfftw.interfaces.numpy_fft import rfft, irfft
 from time import time as time_time
 from h5py import File as h5_File
 import matplotlib.pyplot as plt
@@ -63,6 +66,14 @@ def zne2znert(zne_mat, znert_mat, stlo_rad, stla_rad, evlo_rad, evla_rad):
     Convert the ZNE matrix to ZNERT matrix. The RT here refers to event-receiver R and T.
     In other words, the input matrix has rows of ZNEZNEZNE... and the output matrix has rows of ZNERTZNERTZNERT...
     #
+    Note: (1) the `znert_mat` should be allocated by users before running this function.
+          (2) the `znert_mat` should have the number of rows: zne_mat's nrow/3*5.
+                znert_mat.nrow = zne_mat.nrow/3*5
+          (3) the `znert_mat` should have the number of columns equal or greater than zne_mat's ncol.
+                znert_mat.ncol >= zne_mat.ncol
+              zeros will be padded to the right for `znert_mat` if znert_mat.ncol > zne_mat.ncol.
+                znert_mat[:, znert_mat.ncol: ] = 0
+    #
     Parameters:
         zne_mat:   the input ZNE matrix with rows of ZNEZNEZNE...
         znert_mat: the ouput ZNERT matrix with rows of ZNERTZNERTZNERT...
@@ -74,18 +85,19 @@ def zne2znert(zne_mat, znert_mat, stlo_rad, stla_rad, evlo_rad, evla_rad):
     baz = azimuth_rad(stlo_rad, stla_rad, evlo_rad, evla_rad)
     ang = -HALF_PI-baz # baz to anti-clockwise angle from east
     cs, ss = np.cos(ang), np.sin(ang)
-    n = zne_mat.shape[0]//3
-    for ista in range(n):
+    nsta = zne_mat.shape[0]//3
+    ncol = zne_mat.shape[1]
+    for ista in range(nsta):
         c, s = cs[ista], ss[ista]
         z = zne_mat[ista*3]
         n = zne_mat[ista*3+1]
         e = zne_mat[ista*3+2]
         #
-        znert_mat[ista*5]   = z
-        znert_mat[ista*5+1] = n
-        znert_mat[ista*5+2] = e
-        znert_mat[ista*5+3] = e*c + n*s
-        znert_mat[ista*5+4] = e*s - n*c
+        znert_mat[ista*5,   :ncol] = z
+        znert_mat[ista*5+1, :ncol] = n
+        znert_mat[ista*5+2, :ncol] = e
+        znert_mat[ista*5+3, :ncol] = e*c + n*s
+        znert_mat[ista*5+4, :ncol] = e*s - n*c
 
 @jit(nopython=True, nogil=True)
 def gcd_selection(n, lo_rad, la_rad, ptlo_rad, ptla_rad, gcd_range_rad, gcd_selection_mat_nn):
@@ -596,6 +608,12 @@ class CS_InterRcv:
             nt = int(np.ceil((cut_time_range[1]-cut_time_range[0])/delta) )+1
             idx0 = int(cut_time_range[0]/delta)
         nt = nt+nt%2
+        #
+        alignment_bytes = 1024 #pyfftw.simd_alignment #  or just use 64 or 128 or big 2^n bytes
+        n_bytes = nt*4                  # 4 bytes corresponds to float32
+        n_bytes = n_bytes + (alignment_bytes - (n_bytes % alignment_bytes) ) # align the number for columns in order
+        nt = n_bytes // 4  # convert to number of float32
+        #
         self.cut_idx_range  = (idx0, idx0+nt)
         self.cut_time_range = ( idx0*delta, (idx0+nt-1)*delta )
         ####
@@ -610,6 +628,7 @@ class CS_InterRcv:
         log_print( 2, 'adjusted cut_time_range: [%.2f, %.2f]' % (self.cut_time_range[0], self.cut_time_range[1]) )
         log_print( 2, 'adjusted cut_idx_range:  [%d, %d)' % (self.cut_idx_range[0], self.cut_idx_range[1]) )
         log_print( 2, 'nt:                      ', self.nt)
+        log_print( 2, 'alignment_bytes:         ', alignment_bytes)
         log_print( 2, 'cc_fftsize:              ', self.cc_fftsize)
         ############################################################################################################
         # obtain cc_nf for cross correlatino with optional speed up
@@ -631,7 +650,6 @@ class CS_InterRcv:
             log_print( 2, 'cc_nf:                         ', cc_nf)
         ############################################################################################################
         # stack buffers
-        #self.stack_mat      = np.zeros( (self.stack_bins.centers.size, self.cc_fftsize-1),  dtype=np.float32)
         self.stack_mat_spec = np.zeros( (self.stack_bins.centers.size, cc_nf ), dtype=np.complex64)
         self.stack_count    = np.zeros(  self.stack_bins.centers.size, dtype=np.int32)
         log_print( 1, 'Correlation spectra stack buffer:')
@@ -667,6 +685,17 @@ class CS_InterRcv:
         else:
             self.whiten_speedup_spectra_index_range = (-1, -1) # -1 in fwhiten_f32 for disabling speedup
             log_print( 1, 'Spectral whitening speedup OFF or not applicable')
+        ############################################################################################################
+        # pyFFTW interface buffers and FFTW obj
+        self.pyfftw_buf_time = pyfftw.zeros_aligned(self.nt, dtype=np.float32) # the `self.nt` is already aligned as in __init__(...)
+        self.pyfftw_buf_spec = pyfftw.zeros_aligned(self.cc_fftsize//2+1, dtype=np.complex64)
+        self.pyfftw_rfft_obj = pyfftw.builders.rfft(self.pyfftw_buf_time, n=self.cc_fftsize,
+                                                    planner_effort='FFTW_PATIENT',
+                                                    overwrite_input=True, auto_align_input=True, avoid_copy=False) #)
+        log_print( 1, 'pyFFTW interface buffers and FFTW obj:')
+        log_print( 2, 'pyfftw_buf_time: ', self.pyfftw_buf_time.shape, self.pyfftw_buf_time.dtype)
+        log_print( 2, 'pyfftw_buf_spec: ', self.pyfftw_buf_spec.shape, self.pyfftw_buf_spec.dtype)
+        log_print( 2, 'pyfftw_rfft_obj: ', self.pyfftw_rfft_obj, flush=True)
         ############################################################################################################
         # Optional: turn on intermediate output
         self.intermediate_out_h5fid = None
@@ -708,7 +737,10 @@ class CS_InterRcv:
             idx0, idx1 = self.cut_idx_range
             idx0 = max(idx0, 0)
             idx1 = min(idx1, zne_mat_f32.shape[1])
-            znert_mat_f32 = np.zeros( (zne_mat_f32.shape[0]//3*5, idx1-idx0), dtype=np.float32)
+            znert_mat_f32  = pyfftw.zeros_aligned((zne_mat_f32.shape[0]//3*5, self.nt), dtype=np.float32)
+            # Note: `self.nt == self.cut_idx_range[1]-self.cut_idx_range[0]`
+            # So that, the `znert_mat_f32` always have the number of columns as `self.nt` which is used to configure `self.cc_fftsize`.
+            # The `self.nt` is also adjust as in `__init__(...)` so that each row of znert_mat_f32 is aligned.
             zne2znert(zne_mat_f32[:, idx0:idx1], znert_mat_f32, stlo_rad, stla_rad, evlo_rad, evla_rad)
             del zne_mat_f32
             log_print(2, 'Finished.')
@@ -750,9 +782,15 @@ class CS_InterRcv:
             log_print(1, 'FFTing...')
             nrow = znert_mat_f32.shape[0]
             i1, i2 = self.cc_speedup_spectra_index_range
-            spectra_c64 = np.zeros( (nrow, i2-i1), dtype=np.complex64)
-            for irow in range(nrow): # do fft one by one may save some memory
-                spectra_c64[irow] = rfft(znert_mat_f32[irow], self.cc_fftsize)[i1:i2]
+            spectra_c64 = pyfftw.zeros_aligned((nrow, i2-i1), dtype=np.complex64)
+            ###pyffftw_interfaces_cache.enable()
+            ###for irow in range(nrow): # do fft one by one may save some memory
+            ###    spectra_c64[irow] = rfft(znert_mat_f32[irow], self.cc_fftsize)[i1:i2]
+            buf_spec = self.pyfftw_buf_spec
+            rfft_obj = self.pyfftw_rfft_obj
+            for irow in range(nrow):
+                rfft_obj(znert_mat_f32[irow], buf_spec, normalise_idft=True)
+                spectra_c64[irow] = buf_spec[i1:i2]
             del znert_mat_f32
             log_print(2, 'Finished.')
             log_print(2, 'spectra_c64: ', spectra_c64.shape, spectra_c64.dtype, flush=True)
@@ -878,8 +916,6 @@ class CS_InterRcv:
             stack_count = self.stack_count
             stack_mat_spec = self.stack_mat_spec
             ####
-            #stack_mat = np.fft.irfft(stack_mat_spec, cc_fftsize, axis=1).astype(np.float32)
-            #stack_mat = irfft(stack_mat_spec, cc_fftsize, axis=1)
             i1, i2 = self.cc_speedup_spectra_index_range
             full_stack_mat_spec = np.zeros( (stack_mat_spec.shape[0], i2), dtype=np.complex64)
             full_stack_mat_spec[:, i1:i2] = stack_mat_spec
