@@ -6,10 +6,14 @@ This module implement the calculation of cross correlation and stacking.
 from mpi4py import MPI
 import numpy as np
 from numba import jit
-#from scipy.fft import rfft, irfft
-import pyfftw
-import pyfftw.interfaces.cache as pyffftw_interfaces_cache
-from pyfftw.interfaces.numpy_fft import rfft, irfft
+FLAG_PYFFTW_USED = True
+try:
+    import pyfftwfdfdfd
+    import pyfftw.interfaces.cache as pyffftw_interfaces_cache
+    from pyfftw.interfaces.numpy_fft import rfft, irfft
+except:
+    from scipy.fft import rfft, irfft
+    FLAG_PYFFTW_USED = False
 from time import time as time_time
 from h5py import File as h5_File
 import matplotlib.pyplot as plt
@@ -607,27 +611,31 @@ class CS_InterRcv:
         if cut_time_range is not None: # derive nt from cut_time_range
             nt = int(np.ceil((cut_time_range[1]-cut_time_range[0])/delta) )+1
             idx0 = int(cut_time_range[0]/delta)
-        nt = nt+nt%2
         #
-        alignment_bytes = 1024 #pyfftw.simd_alignment #  or just use 64 or 128 or big 2^n bytes
-        n_bytes = nt*4                  # 4 bytes corresponds to float32
+        self.nt4cut = nt
+        self.cut_idx_range = (idx0, idx0 + nt) # the effective one for cutting, which is related to `nt4cut` only
+        effective_cut_time_range = (idx0*delta, (idx0+nt-1)*delta) # useless parameter, but for logging only
+        #
+        # padding for (1) address alignment, and also (2) the length more like 2^n which is good for FFT algorithm
+        alignment_bytes = 1024  # pyfftw.simd_alignment #  or just use 64 or 128 or big 2^n bytes
+        n_bytes = nt*4          # 4 bytes corresponds to float32
         n_bytes = n_bytes + (alignment_bytes - (n_bytes % alignment_bytes) ) # align the number for columns in order
-        nt = n_bytes // 4  # convert to number of float32
+        self.nt4mem = n_bytes // 4  # only used for storing time series data
         #
-        self.cut_idx_range  = (idx0, idx0+nt)
-        self.cut_time_range = ( idx0*delta, (idx0+nt-1)*delta )
         ####
-        self.nt = nt
         self.delta = delta
-        self.cc_fftsize = self.nt*2
+        self.nt4fft  = self.nt4mem
+        self.cc_fftsize = self.nt4fft*2
         self.stack_mat = None
         self.cc_time_range = None
         log_print( 1, 'Time domain settings:' )
         log_print( 2, 'delta:                   ', self.delta)
-        log_print( 2, 'original cut_time_range: [%.2f, %.2f]' % (cut_time_range[0], cut_time_range[1]) )
-        log_print( 2, 'adjusted cut_time_range: [%.2f, %.2f]' % (self.cut_time_range[0], self.cut_time_range[1]) )
-        log_print( 2, 'adjusted cut_idx_range:  [%d, %d)' % (self.cut_idx_range[0], self.cut_idx_range[1]) )
-        log_print( 2, 'nt:                      ', self.nt)
+        log_print( 2, 'input cut_time_range:     [%.2f, %.2f]' % (cut_time_range[0], cut_time_range[1]) )
+        log_print( 2, 'effective cut_time_range: [%.2f, %.2f]' % (effective_cut_time_range[0], effective_cut_time_range[1]) )
+        log_print( 2, 'effective cut_idx_range:  [%d, %d)' % (self.cut_idx_range[0], self.cut_idx_range[1]) )
+        log_print( 2, 'nt4cut:   ', self.nt4cut)
+        log_print( 2, 'nt4mem:   ', self.nt4mem)
+        log_print( 2, 'nt4fft:   ', self.nt4fft)
         log_print( 2, 'alignment_bytes:         ', alignment_bytes)
         log_print( 2, 'cc_fftsize:              ', self.cc_fftsize)
         ############################################################################################################
@@ -675,7 +683,7 @@ class CS_InterRcv:
                 f1 = 0
             if f2 > 0.5/self.delta:
                 f2 = 0.5/self.delta
-            i1, i2 = get_rfft_spectra_bound(self.nt, self.delta, (f1, f2), speedup_critical_level)
+            i1, i2 = get_rfft_spectra_bound(self.nt4cut, self.delta, (f1, f2), speedup_critical_level)
             ####
             self.whiten_speedup_spectra_index_range = (i1, i2)
             log_print( 1, 'Spectral whitening speedup ON')
@@ -687,15 +695,16 @@ class CS_InterRcv:
             log_print( 1, 'Spectral whitening speedup OFF or not applicable')
         ############################################################################################################
         # pyFFTW interface buffers and FFTW obj
-        self.pyfftw_buf_time = pyfftw.zeros_aligned(self.nt, dtype=np.float32) # the `self.nt` is already aligned as in __init__(...)
-        self.pyfftw_buf_spec = pyfftw.zeros_aligned(self.cc_fftsize//2+1, dtype=np.complex64)
-        self.pyfftw_rfft_obj = pyfftw.builders.rfft(self.pyfftw_buf_time, n=self.cc_fftsize,
-                                                    planner_effort='FFTW_PATIENT',
-                                                    overwrite_input=True, auto_align_input=True, avoid_copy=False) #)
-        log_print( 1, 'pyFFTW interface buffers and FFTW obj:')
-        log_print( 2, 'pyfftw_buf_time: ', self.pyfftw_buf_time.shape, self.pyfftw_buf_time.dtype)
-        log_print( 2, 'pyfftw_buf_spec: ', self.pyfftw_buf_spec.shape, self.pyfftw_buf_spec.dtype)
-        log_print( 2, 'pyfftw_rfft_obj: ', self.pyfftw_rfft_obj, flush=True)
+        if FLAG_PYFFTW_USED:
+            self.pyfftw_buf_time = pyfftw.zeros_aligned(self.nt4fft, dtype=np.float32) # the `self.nt4fft` is already aligned as in __init__(...)
+            self.pyfftw_buf_spec = pyfftw.zeros_aligned(self.cc_fftsize//2+1, dtype=np.complex64)
+            self.pyfftw_rfft_obj = pyfftw.builders.rfft(self.pyfftw_buf_time, n=self.cc_fftsize,
+                                                        planner_effort='FFTW_PATIENT',
+                                                        overwrite_input=True, auto_align_input=True, avoid_copy=False) #)
+            log_print( 1, 'pyFFTW interface buffers and FFTW obj:')
+            log_print( 2, 'pyfftw_buf_time: ', self.pyfftw_buf_time.shape, self.pyfftw_buf_time.dtype)
+            log_print( 2, 'pyfftw_buf_spec: ', self.pyfftw_buf_spec.shape, self.pyfftw_buf_spec.dtype)
+            log_print( 2, 'pyfftw_rfft_obj: ', self.pyfftw_rfft_obj, flush=True)
         ############################################################################################################
         # Optional: turn on intermediate output
         self.intermediate_out_h5fid = None
@@ -737,12 +746,24 @@ class CS_InterRcv:
             idx0, idx1 = self.cut_idx_range
             idx0 = max(idx0, 0)
             idx1 = min(idx1, zne_mat_f32.shape[1])
-            znert_mat_f32  = pyfftw.zeros_aligned((zne_mat_f32.shape[0]//3*5, self.nt), dtype=np.float32)
-            # Note: `self.nt == self.cut_idx_range[1]-self.cut_idx_range[0]`
-            # So that, the `znert_mat_f32` always have the number of columns as `self.nt` which is used to configure `self.cc_fftsize`.
-            # The `self.nt` is also adjust as in `__init__(...)` so that each row of znert_mat_f32 is aligned.
+            local_sz = idx1-idx0
+            if FLAG_PYFFTW_USED:
+                znert_mat_f32  = pyfftw.zeros_aligned((zne_mat_f32.shape[0]//3*5, self.nt4mem), dtype=np.float32)
+            else:
+                znert_mat_f32  = np.zeros(            (zne_mat_f32.shape[0]//3*5, self.nt4mem), dtype=np.float32)
+            ### Note: the nt4mem is different from nt4cut.
+            ### nt4mem is used for cc_fftsize and address-aligned memory allocation
+            ### nt4cut is for cutting the input time series.
+            ### nt4mem >= nt4cut, and zeros are padded for those additional slots in nt4mem compared to nt4cut.
+            ### nt4cut == self.cut_idx_range[1]-self.cut_idx_range[0]
+            ### nt4mem != self.cut_idx_range[1]-self.cut_idx_range[0]
             zne2znert(zne_mat_f32[:, idx0:idx1], znert_mat_f32, stlo_rad, stla_rad, evlo_rad, evla_rad)
             del zne_mat_f32
+            log_print(2, 'cut_idx here:  [%d, %d)' % (idx0, idx1) )
+            log_print(2, 'nt here:       ', local_sz)
+            log_print(2, 'cut_idx_range: [%d, %d)' % (self.cut_idx_range[0], self.cut_idx_range[1]) )
+            log_print(2, 'nt4cut:        ', self.nt4cut)
+            log_print(2, 'nt4fft:        ', self.nt4fft)
             log_print(2, 'Finished.')
             log_print(2, 'znert_mat_f32: ', znert_mat_f32.shape, znert_mat_f32.dtype, flush=True)
         ############################################################################################################
@@ -752,7 +773,7 @@ class CS_InterRcv:
                 log_print(1, 'Temporal normalization for the ZNERT matrix...')
                 for xs in znert_mat_f32:
                     if xs.max() > xs.min():
-                        tnorm_f32(xs,   self.delta, self.wtlen, self.wt_f1, self.wt_f2, 1.0e-5, self.whiten_taper_halfsize)
+                        tnorm_f32(xs[:local_sz],   self.delta, self.wtlen, self.wt_f1, self.wt_f2, 1.0e-5, self.whiten_taper_halfsize)
                 log_print(2, 'Finished.', flush=True)
         if self.wflen:
             with Timer(tag='wf', verbose=False, summary=local_time_summary):
@@ -760,7 +781,7 @@ class CS_InterRcv:
                 log_print(1, 'Spectral whitening for the ZNERT matrix...')
                 for xs in znert_mat_f32:
                     if xs.max() > xs.min():
-                        fwhiten_f32(xs, self.delta, self.wflen, 1.0e-5, self.whiten_taper_halfsize, su_wf_i1, su_wf_i2)
+                        fwhiten_f32(xs[:local_sz], self.delta, self.wflen, 1.0e-5, self.whiten_taper_halfsize, su_wf_i1, su_wf_i2)
                 log_print(2, 'Finished.', flush=True)
         ############################################################################################################
         #### remove Nan of Inf
@@ -782,15 +803,26 @@ class CS_InterRcv:
             log_print(1, 'FFTing...')
             nrow = znert_mat_f32.shape[0]
             i1, i2 = self.cc_speedup_spectra_index_range
-            spectra_c64 = pyfftw.zeros_aligned((nrow, i2-i1), dtype=np.complex64)
-            ###pyffftw_interfaces_cache.enable()
-            ###for irow in range(nrow): # do fft one by one may save some memory
-            ###    spectra_c64[irow] = rfft(znert_mat_f32[irow], self.cc_fftsize)[i1:i2]
-            buf_spec = self.pyfftw_buf_spec
-            rfft_obj = self.pyfftw_rfft_obj
-            for irow in range(nrow):
-                rfft_obj(znert_mat_f32[irow], buf_spec, normalise_idft=True)
-                spectra_c64[irow] = buf_spec[i1:i2]
+            if FLAG_PYFFTW_USED:
+                spectra_c64 = pyfftw.zeros_aligned((nrow, i2-i1), dtype=np.complex64)
+            else:
+                spectra_c64 = np.zeros(            (nrow, i2-i1), dtype=np.complex64)
+            ####
+            if FLAG_PYFFTW_USED:
+                ####method: pyfftw interface fft
+                ###pyffftw_interfaces_cache.enable()
+                ###for irow in range(nrow): # do fft one by one may save some memory
+                ###    spectra_c64[irow] = rfft(znert_mat_f32[irow], self.cc_fftsize)[i1:i2]
+                #method: pyfftw builder fft
+                buf_spec = self.pyfftw_buf_spec
+                rfft_obj = self.pyfftw_rfft_obj
+                for irow in range(nrow):
+                    rfft_obj(znert_mat_f32[irow], buf_spec, normalise_idft=True)
+                    spectra_c64[irow] = buf_spec[i1:i2]
+            else:
+                #method: scipy fft
+                for irow in range(nrow):
+                    spectra_c64[irow] = rfft(znert_mat_f32[irow], self.cc_fftsize)[i1:i2]# method: scipy.fft.rfft
             del znert_mat_f32
             log_print(2, 'Finished.')
             log_print(2, 'spectra_c64: ', spectra_c64.shape, spectra_c64.dtype, flush=True)
@@ -924,9 +956,8 @@ class CS_InterRcv:
         ############################################################################################################
         with Timer(tag='finish.roll', verbose=False, summary=self.time_summary):
             log_print(1, 'Roll...')
-            nt = self.nt
             delta = self.delta
-            rollsize = nt-1
+            rollsize = self.nt4fft-1
             stack_mat = np.roll(stack_mat, rollsize, axis=1)
             stack_mat = stack_mat[:,:-1] #get rid of the zero point
             cc_t1, cc_t2 = -rollsize*delta, rollsize*delta
