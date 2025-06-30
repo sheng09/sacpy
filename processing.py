@@ -79,10 +79,11 @@ Inplace whitening
 from matplotlib.pyplot import polar
 import numpy as np
 import scipy
-FLAG_PYFFTW_USED = True
+FLAG_PYFFTW_USED = False
 try:
     from pyfftw.interfaces.cache import enable as pyfftw_cache_enable
     from pyfftw.interfaces.scipy_fft import rfft, irfft
+    FLAG_PYFFTW_USED = True
 except:
     FLAG_PYFFTW_USED = False
     from scipy.fft import rfft, irfft
@@ -480,7 +481,8 @@ def tnorm_f32(xs, delta, winlen, f1, f2, water_level_ratio= 1.0e-5, taper_halfsi
 
     if taper_halfsize > 0:
         taper(xs, taper_halfsize)
-def fwhiten_f32(xs, delta, winlen, water_level_ratio= 1.0e-5, taper_halfsize=0, fftsize=-1, speedup_i1= -1, speedup_i2= -1, ):
+def fwhiten_f32(xs, delta, winlen, water_level_ratio= 1.0e-5, taper_halfsize=0,
+                speedup_i1= -1, speedup_i2= -1, fftsize=-1):
     """
     Inplace frequency whitening of input trace `xs` (a numpy.ndarray(dtype=np.float32) object).
 
@@ -495,10 +497,11 @@ def fwhiten_f32(xs, delta, winlen, water_level_ratio= 1.0e-5, taper_halfsize=0, 
     """
     if fftsize < xs.size:
         fftsize = xs.size
-    spec = rfft(xs, fftsize)
-
-    if speedup_i2 >= 1: ## for acceleration purpose
-        spec = spec[:speedup_i2]
+        spec = rfft(xs, fftsize)
+    else:
+        spec = rfft(xs, fftsize)
+        if speedup_i2 >= 1: ## for acceleration purpose
+            spec = spec[:speedup_i2]
 
     df =1.0/(fftsize*delta)
     wndsize = int(winlen/df)

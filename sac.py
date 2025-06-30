@@ -2068,7 +2068,7 @@ class c_sactrace:
     def tnorm(self, winlen, f1, f2, water_level_ratio= 1.0e-5, taper_halfsize=0):
         tnorm_f32(self.dat, self.hdr.delta, winlen, f1, f2, water_level_ratio, taper_halfsize)
     def fwhiten(self, winlen, water_level_ratio= 1.0e-5, taper_halfsize=0, speedup_i1= -1, speedup_i2= -1):
-        fwhiten_f32(self.dat, self.hdr.delta, winlen, water_level_ratio, taper_halfsize, speedup_i1, speedup_i2)
+        fwhiten_f32(self.dat, self.hdr.delta, winlen, water_level_ratio, taper_halfsize, speedup_i1=speedup_i1, speedup_i2=speedup_i2)
 ##################################################################################################################
 
 class scardec_stf:

@@ -6,11 +6,12 @@ This module implement the calculation of cross correlation and stacking.
 from mpi4py import MPI
 import numpy as np
 from numba import jit
-FLAG_PYFFTW_USED = True
+FLAG_PYFFTW_USED = False
 try:
     import pyfftw
     import pyfftw.interfaces.cache as pyffftw_interfaces_cache
-    from pyfftw.interfaces.numpy_fft import rfft, irfft
+    from pyfftw.interfaces.scipy_fft import rfft, irfft
+    FLAG_PYFFTW_USED = True
 except:
     from scipy.fft import rfft, irfft
     FLAG_PYFFTW_USED = False
@@ -632,7 +633,7 @@ class CS_InterRcv:
         #
         # padding for (1) address alignment, and also (2) the length more like 2^n which is good for FFT algorithm
         func_align = lambda n, b: n + ( (b - n%b ) % b)
-        alignment_bytes = 1024  # pyfftw.simd_alignment #  or just use 64 or 128 or big 2^n bytes
+        alignment_bytes = 2048  # pyfftw.simd_alignment #  or just use 64 or 128 or big 2^n bytes
         n_bytes = nt*4          # 4 bytes corresponds to float32
         n_bytes = func_align(n_bytes, alignment_bytes) # align the number for columns in order
         self.nt4mem = n_bytes // 4  # only used for storing time series data
@@ -801,10 +802,11 @@ class CS_InterRcv:
                 log_print(1, 'Spectral whitening for the ZNERT matrix...')
                 log_print(2, 'wf_fftsize:                        ', self.wf_fftsize )
                 log_print(2, 'whiten_speedup_spectra_index_range:', (su_wf_i1, su_wf_i2) )
+                wf_fftsize = self.wf_fftsize
                 for xs in znert_mat_f32:
                     if xs.max() > xs.min():
                         fwhiten_f32(xs[:local_sz], self.delta, self.wflen, 1.0e-5, self.whiten_taper_halfsize,
-                                    fftsize=self.wf_fftsize, speedup_i1=su_wf_i1, speedup_i2=su_wf_i2)
+                                    su_wf_i1, su_wf_i2, wf_fftsize )
                 log_print(2, 'Finished.', flush=True)
         ############################################################################################################
         #### remove Nan of Inf
