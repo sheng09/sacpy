@@ -8,7 +8,7 @@ import numpy as np
 from numba import jit
 FLAG_PYFFTW_USED = True
 try:
-    import pyfftwfdfdfd
+    import pyfftw
     import pyfftw.interfaces.cache as pyffftw_interfaces_cache
     from pyfftw.interfaces.numpy_fft import rfft, irfft
 except:
@@ -607,6 +607,20 @@ class CS_InterRcv:
         log_print( 2, 'critical_distance(rad):   ', self.critical_distance_rad)
         ############################################################################################################
         # time and spectral settings
+        #
+        # There are multiple tyoes of NT:
+        # 1. nt4cut, this corresponds the expected time series to be cut from the input data.
+        # 2. nt4mem, this corresponds to the memory allocated for the time series.
+        #            nt4mem is multiples of 1024 bytes, and it is also used for address alignment.
+        #.           nt4mem >=nt4cut
+        #.           nt4mem is ncol of znert_mat_f32 created in add(...).
+        # 3. nt4fft, this corresponds to the FFT size for the time series
+        #            Here we choose nt4fft = nt4mem, which is a close to 2^n but not 2^n.
+        #            nt4fft is used for cross-correlation computation. (use in fft and ifft: znert_mat_f32 <--> spectra_c64 )
+        # 4. the local nt within add(...) when input data.
+        #            local nt <= nt4cut
+        #
+        #
         idx0 = 0
         if cut_time_range is not None: # derive nt from cut_time_range
             nt = int(np.ceil((cut_time_range[1]-cut_time_range[0])/delta) )+1
@@ -617,9 +631,10 @@ class CS_InterRcv:
         effective_cut_time_range = (idx0*delta, (idx0+nt-1)*delta) # useless parameter, but for logging only
         #
         # padding for (1) address alignment, and also (2) the length more like 2^n which is good for FFT algorithm
+        func_align = lambda n, b: n + ( (b - n%b ) % b)
         alignment_bytes = 1024  # pyfftw.simd_alignment #  or just use 64 or 128 or big 2^n bytes
         n_bytes = nt*4          # 4 bytes corresponds to float32
-        n_bytes = n_bytes + (alignment_bytes - (n_bytes % alignment_bytes) ) # align the number for columns in order
+        n_bytes = func_align(n_bytes, alignment_bytes) # align the number for columns in order
         self.nt4mem = n_bytes // 4  # only used for storing time series data
         #
         ####
@@ -646,7 +661,7 @@ class CS_InterRcv:
             ####
             self.cc_speedup_spectra_index_range = (i1, i2)
             cc_nf = i2-i1
-            log_print( 1, 'Correlation speed up ON')
+            log_print( 1, 'Correlation speedup ON')
             log_print( 2, 'critical_frequency_band:       ', speedup_critical_frequency_band)
             log_print( 2, 'critical_level:                ', speedup_critical_level)
             log_print( 2, 'cc_speedup_spectra_index_range:', self.cc_speedup_spectra_index_range)
@@ -676,6 +691,7 @@ class CS_InterRcv:
         log_print( 2, 'whiten_taper_halfsize: ', self.whiten_taper_halfsize, flush=True)
         ############################################################################################################
         # Optional: turn on spectral whitening speedup
+        self.wf_fftsize = func_align(self.nt4cut, 2) # this may need more tests
         if (speedup_critical_frequency_band is not None) and (speedup_critical_level is not None) and (self.wtlen is not None):
             f1, f2 = speedup_critical_frequency_band
             f1, f2 = f1-wflen, f2+wflen
@@ -683,16 +699,19 @@ class CS_InterRcv:
                 f1 = 0
             if f2 > 0.5/self.delta:
                 f2 = 0.5/self.delta
-            i1, i2 = get_rfft_spectra_bound(self.nt4cut, self.delta, (f1, f2), speedup_critical_level)
+            i1, i2 = get_rfft_spectra_bound(self.wf_fftsize, self.delta, (f1, f2), speedup_critical_level)
             ####
             self.whiten_speedup_spectra_index_range = (i1, i2)
             log_print( 1, 'Spectral whitening speedup ON')
+            log_print( 2, 'wf_fftsize:                        ', self.wf_fftsize )
             log_print( 2, 'critical_frequency_band:           ', (f1, f2) )
             log_print( 2, 'critical_level:                    ', speedup_critical_level)
             log_print( 2, 'whiten_speedup_spectra_index_range:', self.whiten_speedup_spectra_index_range)
         else:
             self.whiten_speedup_spectra_index_range = (-1, -1) # -1 in fwhiten_f32 for disabling speedup
             log_print( 1, 'Spectral whitening speedup OFF or not applicable')
+            log_print( 2, 'wf_fftsize:                        ', self.wf_fftsize )
+            log_print( 2, 'whiten_speedup_spectra_index_range:', self.whiten_speedup_spectra_index_range)
         ############################################################################################################
         # pyFFTW interface buffers and FFTW obj
         if FLAG_PYFFTW_USED:
@@ -701,7 +720,8 @@ class CS_InterRcv:
             self.pyfftw_rfft_obj = pyfftw.builders.rfft(self.pyfftw_buf_time, n=self.cc_fftsize,
                                                         planner_effort='FFTW_PATIENT',
                                                         overwrite_input=True, auto_align_input=True, avoid_copy=False) #)
-            log_print( 1, 'pyFFTW interface buffers and FFTW obj:')
+            log_print( 1, 'pyFFTW ON')
+            log_print( 2, 'pyFFTW interface buffers and FFTW obj:')
             log_print( 2, 'pyfftw_buf_time: ', self.pyfftw_buf_time.shape, self.pyfftw_buf_time.dtype)
             log_print( 2, 'pyfftw_buf_spec: ', self.pyfftw_buf_spec.shape, self.pyfftw_buf_spec.dtype)
             log_print( 2, 'pyfftw_rfft_obj: ', self.pyfftw_rfft_obj, flush=True)
@@ -779,9 +799,12 @@ class CS_InterRcv:
             with Timer(tag='wf', verbose=False, summary=local_time_summary):
                 su_wf_i1, su_wf_i2 = self.whiten_speedup_spectra_index_range # default is (-1, -1) to disable speedup
                 log_print(1, 'Spectral whitening for the ZNERT matrix...')
+                log_print(2, 'wf_fftsize:                        ', self.wf_fftsize )
+                log_print(2, 'whiten_speedup_spectra_index_range:', (su_wf_i1, su_wf_i2) )
                 for xs in znert_mat_f32:
                     if xs.max() > xs.min():
-                        fwhiten_f32(xs[:local_sz], self.delta, self.wflen, 1.0e-5, self.whiten_taper_halfsize, su_wf_i1, su_wf_i2)
+                        fwhiten_f32(xs[:local_sz], self.delta, self.wflen, 1.0e-5, self.whiten_taper_halfsize,
+                                    fftsize=self.wf_fftsize, speedup_i1=su_wf_i1, speedup_i2=su_wf_i2)
                 log_print(2, 'Finished.', flush=True)
         ############################################################################################################
         #### remove Nan of Inf

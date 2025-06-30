@@ -79,10 +79,12 @@ Inplace whitening
 from matplotlib.pyplot import polar
 import numpy as np
 import scipy
-#from pyfftw.interfaces.cache import enable as pyfftw_cache_enable
+FLAG_PYFFTW_USED = True
 try:
-    from pyfftw.interfaces.numpy_fft import rfft, irfft
+    from pyfftw.interfaces.cache import enable as pyfftw_cache_enable
+    from pyfftw.interfaces.scipy_fft import rfft, irfft
 except:
+    FLAG_PYFFTW_USED = False
     from scipy.fft import rfft, irfft
 from numba import jit
 from numba.core.typing import cffi_utils as cffi_support
@@ -478,7 +480,7 @@ def tnorm_f32(xs, delta, winlen, f1, f2, water_level_ratio= 1.0e-5, taper_halfsi
 
     if taper_halfsize > 0:
         taper(xs, taper_halfsize)
-def fwhiten_f32(xs, delta, winlen, water_level_ratio= 1.0e-5, taper_halfsize=0, speedup_i1= -1, speedup_i2= -1):
+def fwhiten_f32(xs, delta, winlen, water_level_ratio= 1.0e-5, taper_halfsize=0, fftsize=-1, speedup_i1= -1, speedup_i2= -1, ):
     """
     Inplace frequency whitening of input trace `xs` (a numpy.ndarray(dtype=np.float32) object).
 
@@ -486,9 +488,13 @@ def fwhiten_f32(xs, delta, winlen, water_level_ratio= 1.0e-5, taper_halfsize=0, 
     winlen:            window size in Hz.
     water_level_ratio: default is 1.0e-5.
     taper_halfsize:    taper halfsize in each end after the division.
+
+    fftsize:    specific fftsize (default is -1 to use xs.size instead)
+    speedup_i1: the low index range of the spectrum corresponding to fftsize. (default value is -1 to disable speedup)
+    speedup_i2: the up ... ...                                                (default is -1 to disable speedup)
     """
-    fftsize = xs.size
-    fftsize += fftsize % 2 # make sure the fftsize is even
+    if fftsize < xs.size:
+        fftsize = xs.size
     spec = rfft(xs, fftsize)
 
     if speedup_i2 >= 1: ## for acceleration purpose
