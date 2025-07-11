@@ -1149,6 +1149,111 @@ def valid_seismic_phases(phase_names):
     ######################################################
     return sorted(set(valid_phases))
 
+######################################################################################################################################################################
+# Search for a correlation feature given an area in t-x domain for it
+######################################################################################################################################################################
+
+def __curve_intersects_area(xs, ys, area_xs, area_ys):
+    """
+    Check if a curve intersects an area.
+    Parameters:
+        xs:     a list of x-coordinates of the curve.
+        ys:     a list of y-coordinates of the curve.
+        area_xs: a list of x-coordinates of the area.
+        area_ys: a list of y-coordinates of the area.
+    """
+    ##############################################################################################################
+    def do_lines_intersect(p1, p2, q1, q2):
+        def orientation(p, q, r):
+            val = (q[1] - p[1]) * (r[0] - q[0]) - (q[0] - p[0]) * (r[1] - q[1])
+            if val == 0:
+                return 0
+            return 1 if val > 0 else 2
+
+        def on_segment(p, q, r):
+            if min(p[0], r[0]) <= q[0] <= max(p[0], r[0]) and min(p[1], r[1]) <= q[1] <= max(p[1], r[1]):
+                return True
+            return False
+
+        o1 = orientation(p1, p2, q1)
+        o2 = orientation(p1, p2, q2)
+        o3 = orientation(q1, q2, p1)
+        o4 = orientation(q1, q2, p2)
+
+        if o1 != o2 and o3 != o4:
+            return True
+
+        if o1 == 0 and on_segment(p1, q1, p2):
+            return True
+        if o2 == 0 and on_segment(p1, q2, p2):
+            return True
+        if o3 == 0 and on_segment(q1, p1, q2):
+            return True
+        if o4 == 0 and on_segment(q1, p2, q2):
+            return True
+
+        return False
+    ##############################################################################################################
+    def is_point_in_polygon(point, polygon):
+        x, y = point
+        n = len(polygon)
+        inside = False
+
+        p1x, p1y = polygon[0]
+        for i in range(n + 1):
+            p2x, p2y = polygon[i % n]
+            if y > min(p1y, p2y):
+                if y <= max(p1y, p2y):
+                    if x <= max(p1x, p2x):
+                        if p1y != p2y:
+                            xinters = (y - p1y) * (p2x - p1x) / (p2y - p1y) + p1x
+                        if p1x == p2x or x <= xinters:
+                            inside = not inside
+            p1x, p1y = p2x, p2y
+
+        return inside
+    ##############################################################################################################
+    polygon = list(zip(area_xs, area_ys))
+    intersecting_segments = []
+    for i in range(len(xs) - 1):
+        p1 = (xs[i], ys[i])
+        p2 = (xs[i + 1], ys[i + 1])
+        for j in range(len(polygon)):
+            q1 = polygon[j]
+            q2 = polygon[(j + 1) % len(polygon)]
+            if do_lines_intersect(p1, p2, q1, q2):
+                intersecting_segments.append((p1, p2))
+                break
+        if is_point_in_polygon(p1, polygon):
+            intersecting_segments.append((p1, p2))
+    return intersecting_segments
+def search4cc(feature_lst, area_xs, area_ts, select_positive_slowness=True):
+    """
+    Search for possible correlation features with their x-t curves intersect with the given area in t-x domain.
+    Parameters:
+        feature_lst: a list of correlation feature data, the return from `get_all_interrcv_ccs(...)`
+        area_xs:     a list of x-coordinates in degree defining the area in a correlogram.
+        area_ts:     a list of t-coordinates in second defining the area in a correlogram
+                     (Note, the area_xs and area_ts do not need to be closed).
+    Return:
+        found_feature_lst: a list of correlation feature data with their x-t curves intersect with the given area.
+                           An empty list will be returned if no feature is found.
+    """
+    found_feature_lst = list()
+    for single_feature in feature_lst:
+        ts = np.abs(single_feature['time'])
+        xs = single_feature['distance']
+        intersecting_segments = __curve_intersects_area(xs, ts, area_xs, area_ts)
+        if len(intersecting_segments)> 0:
+            dx = np.array( [it[1][0]-it[0][0] for it in intersecting_segments] )
+            dy = np.array( [it[1][1]-it[0][1] for it in intersecting_segments] )
+            tmp = dy/dx
+            tmp = tmp[np.isfinite(tmp)]
+            flag = tmp.sum() >= 0
+            if flag == select_positive_slowness:
+                found_feature_lst.append(single_feature)
+    return found_feature_lst
+
 
 if __name__ == "__main__":
     __global_verbose= False
