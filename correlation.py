@@ -859,7 +859,7 @@ def get_all_cc_names():
     return sorted(ccs)
 #Compute a list of inter-receiver correlation feature dataset for their ray parameters, correlation times, inter-receiver distances and ...
 def get_all_interrcv_ccs(cc_feature_names=None, evdp_km=25.0, model_name=__default_model_name, log=sys.stdout, selection_ratio=None, save_to_pickle_file=None,
-                         rcvdp1_km=0.0, rcvdp2_km=0.0):
+                         rcvdp1_km=0.0, rcvdp2_km=0.0, keep_feature_names=False):
     """
     Return a list of inter-receiver correlation feature dataset for their ray parameters, correlation times, inter-receiver distances and ...
     #
@@ -886,6 +886,10 @@ def get_all_interrcv_ccs(cc_feature_names=None, evdp_km=25.0, model_name=__defau
         save_to_pickle_file: the file path to save the results in a pickle file.
         rcvdp1_km:           the receiver depth of the 1st receiver in km (default is 0.0).
         rcvdp2_km:           the receiver depth of the 2nd receiver in km (default is 0.0).
+        keep_feature_names:  a Boolean value to keep using the `cc_feature_names` other than encoded/deduced names in the computation, the latter can
+                             accelerate the computation.
+                             For example, PKP-PcP will be replaced wit SKS-ScS during the computation if `keep_feature_names=False`.
+                             Default is `False`.
 
         #Note: currently, the `rcvdp1_km` and `rcvdp2_km` must be 0.0.
     #
@@ -928,15 +932,16 @@ def get_all_interrcv_ccs(cc_feature_names=None, evdp_km=25.0, model_name=__defau
         step = int(len(local_cc_feature_names)*selection_ratio)
         local_cc_feature_names = local_cc_feature_names[::step]
     #############################################################################################
-    # valid&encode&decode the feature names
-    app = AppCCFeatureNameEncoder()
-    temp = set()
-    for it in local_cc_feature_names:
-        try:
-            temp.add( app.decode( app.encode(it) ) )
-        except:
-            pass
-    local_cc_feature_names = sorted(temp)
+    if not keep_feature_names: # valid&encode&decode the feature names
+        app = AppCCFeatureNameEncoder()
+        temp = set()
+        for it in local_cc_feature_names:
+            try:
+                temp.add( app.decode( app.encode(it) ) )
+            except:
+                pass
+        local_cc_feature_names = sorted(temp)
+    print(cc_feature_names, local_cc_feature_names)
     #############################################################################################
     results = list()
     n = len(local_cc_feature_names)
@@ -1396,9 +1401,46 @@ if __name__ == "__main__":
         x = '_encoded_MANTLE_P@1'
         y = decode_cc_feature_name(x)
         print(y)
-    if True:
+    if False:
         x = '_encoded_OC_P@-1+S@1'
         y = decode_cc_feature_name(x)
         print(y)
     pass
     pass
+    if True:
+        # test
+        tmp = dict()
+        tmp['PcP*']       = get_all_interrcv_ccs(['PcP*'],    evdp_km=0.0, model_name='ak135', log=None, keep_feature_names=True)[0]
+        tmp['PKP*']       = get_all_interrcv_ccs(['PKP*'],    evdp_km=0.0, model_name='ak135', log=None, keep_feature_names=True)[0]
+        tmp['PKIKP*']     = get_all_interrcv_ccs(['PKIKP*'],  evdp_km=0.0, model_name='ak135', log=None, keep_feature_names=True)[0]
+        tmp['PKiKP*']     = get_all_interrcv_ccs(['PKiKP*'],  evdp_km=0.0, model_name='ak135', log=None, keep_feature_names=True)[0]
+        tmp['PKP-PcP']    = get_all_interrcv_ccs(['PKP-PcP'], evdp_km=0.0, model_name='ak135', log=None, keep_feature_names=True)[0]
+
+        fig, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(12, 4) )
+        for key, val in tmp.items():
+            xs = val['distance']
+            ts = val['time']
+            ps = val['ray_param']
+            idxs = np.argsort(ps)[::-1]
+            ps = ps[idxs]
+            xs = xs[idxs]
+            ts = ts[idxs]
+            ax1.plot(xs, ts, label=key)
+            ax1.set_xlabel('Distance (deg)')
+            ax1.set_ylabel('Time (s)')
+            ax2.plot(xs, ps, label=key)
+            ax2.set_xlabel('Distance (deg)')
+            ax2.set_ylabel('Ray parameter (s/km)')
+            ax3.plot(ts, ps, label=key)
+            ax3.set_xlabel('Time (s)')
+            ax3.set_ylabel('Ray parameter (s/km)')
+
+        ax1.legend()
+        ax1.set_title('X-T')
+        ax2.legend()
+        ax2.set_title('P-X')
+        ax3.legend()
+        ax3.set_title('P-T')
+        for ax in (ax1, ax2, ax3):
+            ax.grid()
+        plt.show()
