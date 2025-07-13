@@ -213,6 +213,64 @@ def split_raypath(model, phase_name, depths, path):
         segment = ray_leg, [dimen[i1:i2+1] for dimen in path]
         segs.append( segment )
     return segs
+def split_pxt_legs(ps, xs, lst_of_lst=None):
+    """
+    Split the p-x-[l1-l-...] (slowness-distance-[l1-l2-...]) into several legs so that within each leg all x (distance) are monotonic.
+    This is for taking care of the multi-pathing phenomenon (different waves travel different paths to the same receiver) (e.g., PKPab and PKPbc).
+    #
+    ps, xs:     1D arrays of slowness, distance and time. (Do not need to be sorted.)
+    lst_of_lst: a list of lists, and this parameter is optional.
+                e.g., [l1, l2, l3,...] each li has the same length as ps and xs and will be split into several segments according to the legs.
+    #
+    Return:     a list of legs: [leg1, leg2,... legi,...], and each legi is a tuple (ps, xs, lst_of_lst) or (ps, xs) if lst_of_lst is None.
+    #
+    E.g.,
+    >>> # values below are meaningless, just for showing non-monotonic xs
+    >>> ps = [100, 105, 110, 105, 100]
+    >>> xs = [10,   20,  30,  20,  10] # !!! Note here the xs is not monotonic
+    >>> ts = [200, 210, 220, 210, 200]
+    >>> sth = [None, None, None, None, None] # some other data
+    >>> legs = split_pxt_legs(ps, xs, [ts, sth])
+    """
+    ### check inputs
+    if len(ps) != len(xs):
+        raise ValueError("ps and xs should have the same length.")
+    if lst_of_lst is not None:
+        for it in lst_of_lst:
+            if len(it) != len(ps):
+                raise ValueError("Each list in lst_of_lst should have the same length as ps and xs!")
+    ### sort with respect to ps
+    idx_sort = np.argsort(ps)[::-1]
+    ps = np.array(ps)[idx_sort]
+    xs = np.array(xs)[idx_sort]
+    if lst_of_lst is not None:
+        lst_of_lst = [ [lst[it] for it in idx_sort] for lst in lst_of_lst]
+    ### if there are just two data points (which means a single leg), then return a single leg
+    if len(ps) == 2:
+        if lst_of_lst is not None:
+            return [(ps, xs, lst_of_lst)]
+        else:
+            return [(ps, xs)]
+    ### split legs
+    dx = np.diff(xs)
+    for ind in range(1, len(dx)): # take care of the zeros in dx
+        if dx[ind] == 0:
+            dx[ind] = dx[ind-1]  # if two xs are the same, use the previous one
+    tmp = dx[:-1] * dx[1:]
+    idxs_minial_maximal = [0]
+    idxs_minial_maximal.extend( np.where( tmp < 0 )[0]+1 )
+    idxs_minial_maximal.append(len(xs)-1)
+    legs = list()
+    for i0, i1 in zip(idxs_minial_maximal[:-1], idxs_minial_maximal[1:]):
+        leg_xs = xs[i0:i1+1]
+        leg_ps = ps[i0:i1+1]
+        if lst_of_lst is not None:
+            leg_lst_of_lst = [lst[i0:i1+1] for lst in lst_of_lst]
+            legs.append( (leg_ps, leg_xs, leg_lst_of_lst) )
+        else:
+            legs.append( (leg_ps, leg_xs) )
+    return legs
+
 class geo_arrival:
     """
     geo_arrival
@@ -324,45 +382,84 @@ class geo_arrival:
         plt.show()
 
 if __name__ == '__main__':
-    # obtain arrivals with obspy.taup
-    import obspy.taup as taup
-    mod = taup.TauPyModel('ak135')
-    evlo, evdp = 100.0, 50.0
-    stlo, stdp = 160.0, 0.0
-    arr, arr_PcP, arr_ScP = mod.get_ray_paths(evdp, stlo-evlo, ['P', 'PcP', 'ScSSKiKP'] )
-    #
-    # form `geo_arrival` object, and access information
-    import sacpy.taupplotlib as taupplotlib
-    geo_arr = taupplotlib.geo_arrival(evdp, evlo, stdp, stlo, arr, mod)
-    print( geo_arr.ray_param_sec_km )
-    print( geo_arr.ray_param_sec_degree )
-    print(arr.ray_param)
-    print(arr.ray_param_sec_degree)
-    #
-    # plot raypaths for P
-    fig, ax = plt.subplots(subplot_kw=dict(projection='polar'), figsize=(10, 10) )
-    lons, rs = geo_arr.get_raypath()
-    ax.plot(lons, rs, 'k-', alpha=0.8, label='P')
-    # add arrows to P path
-    taupplotlib.add_arrow(ax, lons, rs, loc_ys=[5500], color='k' ) # for radius=5500
-    #
-    # plot raypaths for PcP
-    geo_arr_PcP = geo_arrival(evdp, evlo, stdp, stlo, arr_PcP, mod)
-    lons, rs = geo_arr_PcP.get_raypath()
-    ax.plot(lons, rs, 'r--', label='PcP')
-    # add arrows to PcP path
-    taupplotlib.add_arrow(ax, lons, rs, loc_ratio=(0.3, 0.7), color='r' )
-    #
-    # plot raypath segments for ScP
-    geo_arr_ScP = geo_arrival(evdp, evlo, stdp, stlo, arr_ScP, mod)
-    for leg, (lons, rs) in geo_arr_ScP.get_split_raypath():
-        print(leg)
-        ax.plot(lons, rs, label=leg)
-    #
-    ax.legend(loc='lower left')
-    # plot events, receivers and pretty earth
-    plotEq(ax, mod, [evdp], [evlo], marker='*', markersize=30)
-    plotStation(ax, mod, [stdp], [stlo], color='C4', markersize=30)
-    plotPrettyEarth(ax, mod, distlabel=False, mode='vp')
-    plt.show()
+    if True:
+        mod = taup.TauPyModel('ak135')
+        d = np.arange(0, 180.1, 1)
+        tmp = [mod.get_ray_paths(0, it, ['PKP'] ) for it in d]
+        tmp = [it for it in tmp if it is not None]
+        tmp2 = tmp[0]
+        for it in tmp[1:]:
+            tmp2.extend(it)
+        #
+        xs = np.array([it.distance for it in tmp2])
+        ts = np.array([it.time for it in tmp2])
+        ps = np.array([it.ray_param for it in tmp2])
+        #
+        lst_of_legs = split_pxt_legs(ps, xs, [ts, tmp2])
+        #
+        fig = plt.figure(figsize=(16, 4))
+        grd = fig.add_gridspec(1, 4)
+        ax1 = fig.add_subplot(grd[0, 0], projection='polar')
+        ax2 = fig.add_subplot(grd[0, 1])
+        ax3 = fig.add_subplot(grd[0, 2])
+        ax4 = fig.add_subplot(grd[0, 3])
+        #
+        for idx_leg, leg in enumerate(lst_of_legs[:]):
+            clr = mpl.cm.tab10.colors[idx_leg % 10]
+            leg_ps, leg_xs, (leg_ts, arrs) = leg
+            geo_arrs = [geo_arrival(0, 0, 0, it.purist_distance, it, mod) for it in arrs]
+            print(geo_arrs[0].name )
+            for it in geo_arrs[::2]:
+                lons, rs = it.get_raypath()
+                ax1.plot(lons, rs, color=clr, alpha=0.8)
+            ax2.plot(leg_xs, leg_ts, color=clr)
+            ax3.plot(leg_xs, leg_ps, color=clr)
+            ax4.plot(leg_ts, leg_ps, color=clr)
+        plotPrettyEarth(ax1, mod, distlabel=False, mode='core')
+        #
+        plt.show()
+
+
+    if False:
+        # obtain arrivals with obspy.taup
+        import obspy.taup as taup
+        mod = taup.TauPyModel('ak135')
+        evlo, evdp = 100.0, 50.0
+        stlo, stdp = 160.0, 0.0
+        arr, arr_PcP, arr_ScP = mod.get_ray_paths(evdp, stlo-evlo, ['P', 'PcP', 'ScSSKiKP'] )
+        #
+        # form `geo_arrival` object, and access information
+        import sacpy.taupplotlib as taupplotlib
+        geo_arr = taupplotlib.geo_arrival(evdp, evlo, stdp, stlo, arr, mod)
+        print( geo_arr.ray_param_sec_km )
+        print( geo_arr.ray_param_sec_degree )
+        print(arr.ray_param)
+        print(arr.ray_param_sec_degree)
+        #
+        # plot raypaths for P
+        fig, ax = plt.subplots(subplot_kw=dict(projection='polar'), figsize=(10, 10) )
+        lons, rs = geo_arr.get_raypath()
+        ax.plot(lons, rs, 'k-', alpha=0.8, label='P')
+        # add arrows to P path
+        taupplotlib.add_arrow(ax, lons, rs, loc_ys=[5500], color='k' ) # for radius=5500
+        #
+        # plot raypaths for PcP
+        geo_arr_PcP = geo_arrival(evdp, evlo, stdp, stlo, arr_PcP, mod)
+        lons, rs = geo_arr_PcP.get_raypath()
+        ax.plot(lons, rs, 'r--', label='PcP')
+        # add arrows to PcP path
+        taupplotlib.add_arrow(ax, lons, rs, loc_ratio=(0.3, 0.7), color='r' )
+        #
+        # plot raypath segments for ScP
+        geo_arr_ScP = geo_arrival(evdp, evlo, stdp, stlo, arr_ScP, mod)
+        for leg, (lons, rs) in geo_arr_ScP.get_split_raypath():
+            print(leg)
+            ax.plot(lons, rs, label=leg)
+        #
+        ax.legend(loc='lower left')
+        # plot events, receivers and pretty earth
+        plotEq(ax, mod, [evdp], [evlo], marker='*', markersize=30)
+        plotStation(ax, mod, [stdp], [stlo], color='C4', markersize=30)
+        plotPrettyEarth(ax, mod, distlabel=False, mode='vp')
+        plt.show()
     #

@@ -42,6 +42,7 @@ Example:
 from obspy import taup
 from numpy import arange, array, linspace, interp, where, abs, diff, where, round, sum
 from .utils import Timer, CacheRun
+from .taupplotlib import split_pxt_legs
 from obspy.taup.seismic_phase import SeismicPhase
 from obspy.taup import taup_create
 from matplotlib import pyplot as plt
@@ -113,22 +114,29 @@ def __example_use_SeismicPhase_shoot_ray():
     """
     This function showcase how to use the `SeismicPhase.shoot_ray(...)` method by providing a ray parameter.
     """
-    evdp_km  = 0
+    evdp_km  = 500
     rcvdp_km = 300
     phase = 'PKIKP'
-    rp = 1.3
+    rp = 80.0
     # invokering the `SeismicPhase` method
     tau_mod = taup.TauPyModel('ak135').model                     # get TauModel object
     tau_mod_corr = tau_mod.depth_correct(evdp_km)                # correct/split the source and receiver depth
     tau_mod_corr = tau_mod_corr.split_branch(rcvdp_km)
     seismic_phase = SeismicPhase(phase, tau_mod_corr, rcvdp_km)  # generate a seismic phase object
-    arr2 = seismic_phase.shoot_ray(0, rp)                        # shoot the ray, please note, the first parameter is assigned to returned `Arrival.distance`!
-    print(arr2.purist_distance, arr2.time, arr2.ray_param)       # use `Arrival.purist_distance` to access the real epicentral distance!
+    arr = seismic_phase.shoot_ray(0, rp)                        # shoot the ray, please note, the first parameter is assigned to returned `Arrival.distance`!
+    arr = seismic_phase.calc_path_from_arrival(arr)                    # get the raypath
+    arr.distance = round_degree_180(arr.purist_distance)  # round the distance to 180 degree
+    print(arr.distance, arr.purist_distance, arr.time, arr.ray_param)       # use `Arrival.purist_distance` to access the real epicentral distance!
     # now, we compare with obspy's get_travel_times(...)         # Note, the `Arrival.distance` can be above 360 degree, which is the real traveled distance!
     mod = taup.TauPyModel('ak135')
-    arr = mod.get_travel_times(evdp_km, arr2.purist_distance, [phase], receiver_depth_in_km=rcvdp_km, ray_param_tol=0.000001)[0]
-    print(arr.purist_distance, arr.time, arr.ray_param)
-    rp = arr.ray_param
+    arr2 = mod.get_ray_paths(evdp_km, arr.purist_distance, [phase], receiver_depth_in_km=rcvdp_km, ray_param_tol=0.000001)[0]
+    print(arr2.distance, arr2.purist_distance, arr2.time, arr2.ray_param)
+    #
+    from obspy.taup.tau import Arrivals
+    arr.name = 'shooted ray\nfor %s' % arr.name
+    arr2.name = 'obspy.get_ray_paths\nfor %s' % arr2.name
+    arrs = Arrivals([arr, arr2], model=tau_mod)
+    arrs.plot_rays(show=True, legend=True)
 
 
 
@@ -859,7 +867,7 @@ def get_all_cc_names():
     return sorted(ccs)
 #Compute a list of inter-receiver correlation feature dataset for their ray parameters, correlation times, inter-receiver distances and ...
 def get_all_interrcv_ccs(cc_feature_names=None, evdp_km=25.0, model_name=__default_model_name, log=sys.stdout, selection_ratio=None, save_to_pickle_file=None,
-                         rcvdp1_km=0.0, rcvdp2_km=0.0, keep_feature_names=False):
+                         rcvdp1_km=0.0, rcvdp2_km=0.0, keep_feature_names=False, split_legs=False):
     """
     Return a list of inter-receiver correlation feature dataset for their ray parameters, correlation times, inter-receiver distances and ...
     #
@@ -890,16 +898,24 @@ def get_all_interrcv_ccs(cc_feature_names=None, evdp_km=25.0, model_name=__defau
                              accelerate the computation.
                              For example, PKP-PcP will be replaced wit SKS-ScS during the computation if `keep_feature_names=False`.
                              Default is `False`.
-
+        split_legs:          a Boolean value to split the p-x-t (slowness-distance-time) curves into legs, and within
+                             each leg, the ray parameters and distances are monotonic.
+                             This is for taking care of the multi-pathing phenomenon (different waves travel different paths
+                             to the same receiver) (e.g., PKPab and PKPbc).
+                             If `True`, each element of the returned list will have a key 'legs' which is explained below.
         #Note: currently, the `rcvdp1_km` and `rcvdp2_km` must be 0.0.
     #
     Return: results
-        results: a list of dictionary objects, each dictionary object contains the following keys:
+        results: a list of dictionary objects, each one correspond to a correlation feature and contains the following keys:
                  'name':             the name of the correlation feature.
                  'ray_param':        an array of ray parameters in sec/radian.
                  'time':             an array of correlation times in second.
                  'purist_distance':  an array of purist distances in degree.
                  'distance':         an array of distances in degree (the `round_degree_180(purist_distances
+                 'legs':(optinal)    a list of legs [leg0, leg2,..., legi,...], and each legi is a dictionary object
+                                     that contains the keys: 'ray_param', 'time', 'purist_distance', 'distance',
+                                     so that for each leg, the ray_param and distance are monotonic.
+                                     This is only available if `cut_legs=True`.
     """
     #############################################################################################
     if rcvdp1_km!=0.0 or rcvdp2_km!=0.0:
@@ -966,8 +982,12 @@ def get_all_interrcv_ccs(cc_feature_names=None, evdp_km=25.0, model_name=__defau
                     ak = rps, cc_time, cc_purist_distance, cc_distance 
             if ak:
                 rps, time, pdist, dist = ak
-                results.append( {   'name': feature_name, 'ray_param': rps, 'time': time, 
-                                    'purist_distance': pdist, 'distance': dist } )
+                single_feature = {  'name': feature_name, 'ray_param': rps, 'time': time,
+                                    'purist_distance': pdist, 'distance': dist }
+                if split_legs:
+                    legs = split_pxt_legs(rps, dist, (time, pdist) )
+                    single_feature['legs']  = [{'ray_param': it_rps, 'time': it_time, 'purist_distance': it_pdist, 'distance': it_dist } for (it_rps, it_dist, (it_time, it_pdist) ) in legs]
+                results.append( single_feature )
     #############################################################################################
     if save_to_pickle_file:
         direc = '/'.join(save_to_pickle_file.split('/')[:-1])
@@ -1408,6 +1428,7 @@ if __name__ == "__main__":
     pass
     pass
     if True:
+        __example_use_SeismicPhase_shoot_ray()
         # test
         tmp = dict()
         tmp['PcP*']       = get_all_interrcv_ccs(['PcP*'],    evdp_km=0.0, model_name='ak135', log=None, keep_feature_names=True)[0]
