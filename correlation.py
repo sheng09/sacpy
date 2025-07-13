@@ -957,7 +957,7 @@ def get_all_interrcv_ccs(cc_feature_names=None, evdp_km=25.0, model_name=__defau
             except:
                 pass
         local_cc_feature_names = sorted(temp)
-    print(cc_feature_names, local_cc_feature_names)
+    #print(cc_feature_names, local_cc_feature_names)
     #############################################################################################
     results = list()
     n = len(local_cc_feature_names)
