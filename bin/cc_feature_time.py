@@ -7,7 +7,7 @@ import matplotlib.colors as mcolors
 import matplotlib.cm as cm
 import sacpy.correlation as correlation
 from sacpy.correlation import get_all_interrcv_ccs
-from taupplotlib import plotStation, plotPrettyEarth, plot_raypath_geo_arrivals, colored_line, geo_arrival
+from sacpy.taupplotlib import plotStation, plotPrettyEarth, plot_raypath_geo_arrivals, colored_line, geo_arrival
 import numpy as np
 from obspy import taup
 from sacpy.utils import Timer

@@ -55,6 +55,8 @@ import numpy as np
 
 __global_verbose= False
 __default_model_name = 'ak135'
+__threshold_distance = 0.2
+__max_interation = 50
 
 """
 **HOW TO USE obspy's SeismicPhase class**
@@ -559,7 +561,7 @@ def compress_human_cc_feature_name(human_feature_name, debug=False):
 # Compute a list of all possible ray parameters, correlation times, inter-receiver distance,... for a correlation feature.
 @CacheRun('%s/bin/dataset/cc_feature_time.h5' % sacpy.__path__[0] )
 def get_ccs(tau_model1_corrected, tau_model2_corrected, phase1_name, phase2_name, rcvdp1_km, rcvdp2_km,
-            threshold_distance=0.1, max_interation=None, enable_h5update=True, model_tag=__default_model_name):
+            threshold_distance=__threshold_distance, max_interation=__max_interation, enable_h5update=True, model_tag=__default_model_name):
     """
     Compute all possible ray parameters, correlation times, and inter-receiver distance for a correlation feature.
     #
@@ -680,7 +682,7 @@ def get_ccs(tau_model1_corrected, tau_model2_corrected, phase1_name, phase2_name
     return rps, cc_time, trvt1, trvt2, cc_purist_distance, cc_distance, purist_distance1, purist_distance2
 # Given a list of inter-receiver distances, compute all possible ray parameters and correlation times,... for a correlation feature.
 def get_ccs_from_cc_dist(cc_distances_deg, tau_model1_corrected, tau_model2_corrected,
-    phase1_name, phase2_name, rcvdp1_km, rcvdp2_km, threshold_distance=0.1, max_interation=None):
+    phase1_name, phase2_name, rcvdp1_km, rcvdp2_km, threshold_distance=__threshold_distance, max_interation=__max_interation):
     """
     Compute all possible ray parameters and correlation times given a list of inter-receiver distances for a correlation feature.
     This cannot obtain the correlation feature to obtain the result that exactly matches the input `cc_distances_deg`.
@@ -867,7 +869,8 @@ def get_all_cc_names():
     return sorted(ccs)
 #Compute a list of inter-receiver correlation feature dataset for their ray parameters, correlation times, inter-receiver distances and ...
 def get_all_interrcv_ccs(cc_feature_names=None, evdp_km=25.0, model_name=__default_model_name, log=sys.stdout, selection_ratio=None, save_to_pickle_file=None,
-                         rcvdp1_km=0.0, rcvdp2_km=0.0, keep_feature_names=False, compute_geo_arrivals=False, split_legs=False, threshold_distance=0.2):
+                         rcvdp1_km=0.0, rcvdp2_km=0.0, keep_feature_names=False, compute_geo_arrivals=False, split_legs=False,
+                         threshold_distance=__threshold_distance, max_interation=__max_interation):
     """
     Return a list of inter-receiver correlation feature dataset for their ray parameters, correlation times, inter-receiver distances and ...
     #
@@ -984,7 +987,7 @@ def get_all_interrcv_ccs(cc_feature_names=None, evdp_km=25.0, model_name=__defau
             if '*' in feature_name: # for 'X*'
                 phase = feature_name[:-1]
                 rps, trvt, purist_distance, distance = get_arrivals(modc_seismic_phase, phase, rcvdp2_km, None,
-                                                                    threshold_distance, 100, enable_h5update=True,
+                                                                    threshold_distance, max_interation, enable_h5update=True,
                                                                     model_tag=model_tag)
                 if rps.size>0:
                     #ak = rps, trvt, purist_distance, distance
@@ -999,7 +1002,7 @@ def get_all_interrcv_ccs(cc_feature_names=None, evdp_km=25.0, model_name=__defau
             elif '-' in feature_name: # for 'X-Y'
                 phase1, phase2= feature_name.split('-')
                 tmp = get_ccs(modc1, modc2, phase1, phase2, rcvdp1_km, rcvdp2_km,
-                              threshold_distance, 100, True,
+                              threshold_distance, max_interation, True,
                               model_tag=model_tag)
                 rps, cc_time, trvt1, trvt2, cc_purist_distance, cc_distance, purist_distance1, purist_distance2  = tmp
                 if rps.size>0:
@@ -1060,7 +1063,7 @@ def get_all_interrcv_ccs(cc_feature_names=None, evdp_km=25.0, model_name=__defau
 ######################################################################################################################################################################
 # Get a list of dense-distance arrivals sorted with respect to ray parameter for a given ray parameter range
 @CacheRun('%s/bin/dataset/cc_feature_time.h5' % sacpy.__path__[0] )
-def get_arrivals(tau_model_corrected, phase_name, rcvdp_km, ray_param_range=None, threshold_distance=0.3, max_interation=None,
+def get_arrivals(tau_model_corrected, phase_name, rcvdp_km, ray_param_range=None, threshold_distance=__threshold_distance, max_interation=__max_interation,
                  enable_h5update=True, model_tag = __default_model_name):
     """
     Compute a list of seismic arrival data sorted with respect to ray parameter for a given ray parameter range.
