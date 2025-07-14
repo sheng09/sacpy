@@ -149,7 +149,7 @@ class cc_feature_time:
                             continue
                         xs = [it.distance for it in lst]
                         ts = [it.time for it in lst]
-                        ps = [it.ray_param_sec_degree for it in lst]
+                        ps = np.abs( [it.ray_param_sec_degree for it in lst] )
                         colored_line(xs, ts, c=ps, ax=ax4, lw=2, vmin=pmin, vmax=pmax, cmap='plasma')
                         colored_line(xs, ps, c=ps, ax=ax5, lw=2, vmin=pmin, vmax=pmax, cmap='plasma')
                         colored_line(ts, ps, c=ps, ax=ax6, lw=2, vmin=pmin, vmax=pmax, cmap='plasma')
