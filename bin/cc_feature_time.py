@@ -84,6 +84,8 @@ class cc_feature_time:
                 ax5 = fig.add_subplot(grd[1, 1])
                 ax6 = fig.add_subplot(grd[1, 2])
                 cax = fig.add_subplot(grd[1, 3])
+            if pxt_data is None or feature_name[-1]=='*': # plot the ray paths for the cross-term
+                ax3.axis('off')
             ############################
             if pxt_data is not None: # plot for the rps obtained above
                 rps, cc_d, cc_time = [np.array(lst) for lst in pxt_data]
@@ -91,15 +93,18 @@ class cc_feature_time:
                 ax5.scatter(cc_d,    rps*(np.pi/180), c='r', zorder=100)
                 ax6.scatter(cc_time, rps*(np.pi/180), c='r', zorder=100)
                 phase_names = [feature_name[:-1]] if feature_name[-1] == '*' else feature_name.split('-')
-                for ax, phase_name in zip( (ax1, ax2),  phase_names):
+                for ax, phase_name, lw, clr in zip( (ax1, ax2),  phase_names, (6, 2), ('r', 'k')):
                     for it_p in rps:
                         geo_ar = geo_arrival(self.rcv1dp_km, 0.0, self.rcv2dp_km, phase_name=phase_name, ray_param=it_p, model=taup.TauPyModel(self.model_name) )
                         geo_ar.plot_raypath(ax=ax, color='r', zorder=100)
+                        if '-' in feature_name:
+                            geo_ar.plot_raypath(ax=ax3, zorder=100, alpha=0.8, plot_pretty_earth=True, lw=lw, color=clr)
+                            ax3.set_title(feature_name)
                         ax4.scatter(geo_ar.distance, geo_ar.time,                 c='r', zorder=100)
                         ax5.scatter(geo_ar.distance, geo_ar.ray_param_sec_degree, c='r', zorder=100)
                         ax6.scatter(geo_ar.time, geo_ar.ray_param_sec_degree,     c='r', zorder=100)
             ############################
-            if True: # plot for all possible obtained from get_all_interrcv_ccs(...)
+            if True: # plot p-x-t obtained from get_all_interrcv_ccs(...) for the entire ray parameter range
                 element = vol_lst[0]
                 ps = element['ray_param'] * (np.pi/180) # from s/radian to s/deg
                 xs = element['distance']
@@ -129,17 +134,20 @@ class cc_feature_time:
                     ax5.text(xs[0], ps[0], feature_name, clip_on=False)
                     ax6.text(ts[0], ps[0], feature_name, clip_on=False)
             ############################
-            if True: # plot body waves for the cross-term
+            if True: # plot body waves for the cross-term for the entire ray parameter range
                 if feature_name[-1] == '*':
                     ax2.axis('off')
                     ax3.axis('off')
                     phase_name = feature_name[:-1]
                     ax1.set_title(feature_name)
-                    plot_raypath_geo_arrivals(element['geo_arr'][::5], c=ps[::5], ax=ax1, plot_pretty_earth=True, vmin=pmin, vmax=pmax, cmap='plasma')
+                    mean_diff = np.mean( np.abs(np.diff([it.purist_distance for it in element['geo_arr']] ) ) )
+                    step = max(1, int(5/mean_diff))
+                    plot_raypath_geo_arrivals(element['geo_arr'][::step], c=ps[::step], ax=ax1, plot_pretty_earth=True, vmin=pmin, vmax=pmax, cmap='plasma')
                 elif '-' in feature_name:
-                    ax3.axis('off')
-                    plot_raypath_geo_arrivals(element['geo_arr'][::5], c=ps[::5], ax=ax1, plot_pretty_earth=True, vmin=pmin, vmax=pmax, cmap='plasma')
-                    plot_raypath_geo_arrivals(element['geo_arr2'][::5], c=ps[::5], ax=ax2, plot_pretty_earth=True, vmin=pmin, vmax=pmax, cmap='plasma')
+                    mean_diff = np.mean( np.abs(np.diff([it.purist_distance for it in element['geo_arr']] ) ) )
+                    step = max(1, int(5/mean_diff))
+                    plot_raypath_geo_arrivals(element['geo_arr'][::step], c=ps[::step], ax=ax1, plot_pretty_earth=True, vmin=pmin, vmax=pmax, cmap='plasma')
+                    plot_raypath_geo_arrivals(element['geo_arr2'][::step], c=ps[::step], ax=ax2, plot_pretty_earth=True, vmin=pmin, vmax=pmax, cmap='plasma')
                     phase1_name, phase2_name = feature_name.split('-')
                     ax1.set_title(phase1_name)
                     ax2.set_title(phase2_name)

@@ -137,6 +137,11 @@ def plotPrettyEarth(ax, model, distlabel=False, mode=None):
     distlabel: False/True for degree label;
     mode: can be: None, 'core', 'vp', 'vs', 'density'.
     """
+    if hasattr(ax, 'pretty_earth_mode'):
+        if ax.pretty_earth_mode == mode:
+            return
+    ax.pretty_earth_mode = mode
+    #############
     ax.set_theta_zero_location('E')
     #ax.grid(False)
     radius = model.model.radius_of_planet
@@ -377,7 +382,7 @@ def plot_raypath_geo_arrivals(lst_of_geo_arrivals, c='C0', ax=None,
     #####
     for single_geo_arrival, clr in zip(lst_of_geo_arrivals, lst_of_clrs):
         single_geo_arrival.plot_raypath(ax=ax, color=clr, plot_arrow_at_radii=plot_arrow_at_radii,
-                                        plot_pretty_earth=False, radius_range=radius_range, **kwargs)
+                                        plot_pretty_earth=False, radius_range=radius_range, show=False, **kwargs)
     #####
     if plot_pretty_earth:
         plotPrettyEarth(ax, lst_of_geo_arrivals[0].taupy_model, distlabel=False, mode='vp')
@@ -479,8 +484,8 @@ class geo_arrival:
     >>> print(geo_arr.ray_param_sec_km, geo_arr2.ray_param_sec_km)
     >>> print(geo_arr.ray_param_sec_degree, geo_arr2.ray_param_sec_degree, arr.ray_param_sec_degree)
     >>> print(geo_arr.time, geo_arr2.time)
-    >>> ax = geo_arr.plot_raypath(plot_arrow_at_radii=[5500], plot_pretty_earth=False, color='k', lw=3, alpha=0.8, label='method1')
-    >>> ax = geo_arr2.plot_raypath(plot_arrow_at_radii=[5500], plot_pretty_earth=True, color='r', alpha=0.8, label='method2', ax=ax)
+    >>> ax = geo_arr.plot_raypath(plot_arrow_at_radii=[5500], plot_pretty_earth=False, color='k', lw=3, alpha=0.8, label='method1', show=False)
+    >>> ax = geo_arr2.plot_raypath(plot_arrow_at_radii=[5500], plot_pretty_earth=True, color='r', alpha=0.8, label='method2', ax=ax, show=False)
     >>> ax.legend()
     >>> plt.show()
     >>>
@@ -530,7 +535,7 @@ class geo_arrival:
             tau_mod_corr = tau_mod.depth_correct(evdp_km)                # correct/split the source and receiver depth
             tau_mod_corr = tau_mod_corr.split_branch(rcvdp_km)
             seismic_phase = SeismicPhase(phase, tau_mod_corr, rcvdp_km)  # generate a seismic phase object
-            arr = seismic_phase.shoot_ray(0, ray_param)       # shoot the ray, please note, the first parameter is assigned to returned `Arrival.distance`!
+            arr = seismic_phase.shoot_ray(0, float(ray_param))       # shoot the ray, please note, the first parameter is assigned to returned `Arrival.distance`!
             arr = seismic_phase.calc_path_from_arrival(arr)              # get the raypath
             arr.distance = arr.purist_distance % 360
             if arr.distance > 180:
@@ -554,7 +559,7 @@ class geo_arrival:
             lons *= -1.0
         lons += self.eqlo_rad
         return lons, rs
-    def plot_raypath(self, ax=None, plot_arrow_at_radii=None, plot_pretty_earth=False, split_ray_legs=False, radius_range=None, **kwargs):
+    def plot_raypath(self, ax=None, plot_arrow_at_radii=None, plot_pretty_earth=False, split_ray_legs=False, radius_range=None, show=False, **kwargs):
         """
         Plot the ray path.
         #
@@ -607,6 +612,9 @@ class geo_arrival:
         ax.set_ylim((0, self.taupy_model.model.radius_of_planet) )
         if plot_pretty_earth:
             plotPrettyEarth(ax, self.taupy_model, distlabel=False, mode='vp')
+        if show:
+            plotPrettyEarth(ax, self.taupy_model, distlabel=False, mode='vp')
+            plt.show()
         return ax
     def get_split_raypath(self):
         """
@@ -708,8 +716,8 @@ if __name__ == '__main__':
         print(geo_arr.ray_param_sec_km, geo_arr2.ray_param_sec_km)
         print(geo_arr.ray_param_sec_degree, geo_arr2.ray_param_sec_degree, arr.ray_param_sec_degree)
         print(geo_arr.time, geo_arr2.time)
-        ax = geo_arr.plot_raypath(plot_arrow_at_radii=[4000], plot_pretty_earth=False, color='k', ls='--', alpha=0.8, label='method1')
-        ax = geo_arr2.plot_raypath(plot_arrow_at_radii=[5500], plot_pretty_earth=True, color='r', alpha=0.8, label='method2', ax=ax)
+        ax = geo_arr.plot_raypath(plot_arrow_at_radii=[4000], plot_pretty_earth=False, color='k', ls='--', alpha=0.8, label='method1', show=False)
+        ax = geo_arr2.plot_raypath(plot_arrow_at_radii=[5500], plot_pretty_earth=True, color='r', alpha=0.8, label='method2', ax=ax, show=False)
         ax.legend()
         plt.show()
 
