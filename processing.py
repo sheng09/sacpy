@@ -544,7 +544,7 @@ def round_degree_180(deg):
 #############################################################################################################################
 # JIT array processing
 #############################################################################################################################
-#@jit(nopython=True, nogil=True)
+# Insert values into an array (maintaining its local monotonicity), and apply linear interpolation to other arrays for the inserted values.
 def insert_values(xcs, xs, *args):
     """
     Insert many `xc` into an array `xs`, so that the result `new_xs` must not have two successive points 
@@ -553,20 +553,31 @@ def insert_values(xcs, xs, *args):
     Also, insertion are conducted for each array of the `*args` with respect to the insertion of `xc`
     into `xs`. Linear interpolation method is taken for the insertion.
 
-    xcs: a single number or a list of numbers.
+    xcs:   a single number or a list of numbers.
+    xs:    an 1D array.
+    *args: more arrays that have the same size as `xs`. These arrays will be inserted with
+           at the same index (and using the linear interpolation method) as inserting `xs`.
+
+    Return:
+           new_xs, arg1, arg2, arg3,...
+
+    E.g.,
+    >>> x1 = [0, 1, 2, 3, 2, 1]
+    >>> y1 = x1+10
+    >>> z1 = x1*x1
+    >>> new_x1, new_y1, new_z1 = insert_values((1.5, 2.5), x1, y1, z1)
+    >>> print(new_x1)
+    >>> print(new_y1)
+    >>> print(new_z1)
     """
-    try:
-        junk = len(xcs)
-    except Exception:
-        xcs = [xcs]
+    xcs = np.array(xcs).flatten()
     #############################################################
+    xs   = list(xs)
+    args = [list(it) for it in args]
     for xc in xcs:
         junk = np.array(xs)-xc
         junk2 = junk[:-1]*junk[1:]
         idx_cross_left  = np.where(junk2<0)[0]
-        if idx_cross_left.size>0:
-            xs = list(xs)
-            args = [list(it) for it in args]
         for il in idx_cross_left[::-1]:
             ir = il+1
             xl, xr = xs[il], xs[ir]
@@ -580,19 +591,31 @@ def insert_values(xcs, xs, *args):
     results = [np.array(xs)]
     results.extend( [np.array(ys) for ys in args] )
     return tuple(results)
+# Split an array into many sub arrays given critical values, and split additional arrays at the same index.
 def split_arrays(xcs, xs, *args, edge='i', **kwargs):
     """
-    xcs: a single or a list of critical values to split the array `xs`.
+    Split an 1D array `xs` (and optionally additional arrays) at the critical values `xcs`,
+    and return a list of segments. Different methods will be used to take care of the
+    critical values. Please see below for `edge` parameter.
 
-    edge: an argument for how to process the xs values across the a xc.
+    xcs:  a single or a list of critical values to split the array `xs`.
+    xs:   an 1D array.
+    *arg: more arrays that have the same size as `xs`. These arrays will
+          be splitted at the same index (and using the same edge method) as splitting `xs`.
+    edge: an argument for how to process the xs values across the a `xc`.
           '+': extend one more outside the selected range.
           '-': do not extend ...
           'i': use linear interpolation to compute the values at the x_c.
           's': split the array using the exact appearnce of `x_c` in the `xs`.
-    e.g., 
+
+    Return:
+          list_of_x_arrays, list_of_y_arrays, list_of_z_arrays, ...
+          Each (e.g., `split_arrays`) is a list of arrays.
+
+    e.g.,
            >>> xs = [0,  1,  2,  3,  4,  5,  6,  5,  4,  3,  2,  1,  0]
            >>> ys = [10,21, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22]
-           >>> ys = [10,21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32]\
+           >>> zs = [10,21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32]
            >>>
            >>> x_segments, y_segments, z_segments = split_arrays(4.1, xs, ys, zs, edge='i' )
            >>> # or
