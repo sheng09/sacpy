@@ -42,7 +42,7 @@ Example:
 from obspy import taup
 from numpy import arange, array, linspace, interp, where, abs, diff, where, round, sum
 from .utils import Timer, CacheRun
-from .taupplotlib import split_pxt_legs
+from .taupplotlib import split_px_legs, geo_arrival, plot_raypath_geo_arrivals, colored_line
 from obspy.taup.seismic_phase import SeismicPhase
 from obspy.taup import taup_create
 from matplotlib import pyplot as plt
@@ -631,7 +631,7 @@ def get_ccs(tau_model1_corrected, tau_model2_corrected, phase1_name, phase2_name
     if min_rp > max_rp:
         return [array([]) for it in range(8) ]
     # Step 1 Init all arrivals #################################################
-    rps = list( linspace(min_rp, max_rp, 20) )
+    rps = list(np.linspace(min_rp, max_rp, 1+int((max_rp-min_rp)/10) ))
     arrs1 = [phase1.shoot_ray(0.0, it) for it in rps]
     arrs2 = [phase2.shoot_ray(0.0, it) for it in rps]
 
@@ -713,7 +713,7 @@ def get_ccs_from_cc_dist(cc_distances_deg, tau_model1_corrected, tau_model2_corr
         pd1_found:                an array of purist distances for the 1st seismic phase in degree.
         pd2_found:                an array of purist distances for the 2nd seismic phase in degree.
     """
-    rp1, trvt1, purist_distance1, junk = get_arrivals(tau_model1_corrected, phase1_name, rcvdp1_km, None, 0.5)
+    rp1, trvt1, purist_distance1, junk = get_arrivals(tau_model1_corrected, phase1_name, rcvdp1_km, None, 0.5) # rp1 and rp2 have already been sorted in increasing order
     rp2, trvt2, purist_distance2, junk = get_arrivals(tau_model2_corrected, phase2_name, rcvdp2_km, None, 0.5)
     min_rp = max(rp1.min(), rp2.min() )
     max_rp = min(rp1.max(), rp2.max() )
@@ -729,7 +729,7 @@ def get_ccs_from_cc_dist(cc_distances_deg, tau_model1_corrected, tau_model2_corr
     rps_found, cc_distance_found, cc_purist_distance_found, trvt1_found, trvt2_found = list(), list(), list(), list(), list()
     pd1_found, pd2_found = list(), list()
     for cc_distance in cc_distances_deg:
-        for _value in (-cc_distance, cc_distance):
+        for _value in np.unique((-cc_distance, cc_distance)):
             for overlap in range(n_round360_min, n_round360_max):
                 constant_diff = -_value-overlap*360
                 temp_dist = denser_pd_diff + constant_diff
@@ -867,7 +867,7 @@ def get_all_cc_names():
     return sorted(ccs)
 #Compute a list of inter-receiver correlation feature dataset for their ray parameters, correlation times, inter-receiver distances and ...
 def get_all_interrcv_ccs(cc_feature_names=None, evdp_km=25.0, model_name=__default_model_name, log=sys.stdout, selection_ratio=None, save_to_pickle_file=None,
-                         rcvdp1_km=0.0, rcvdp2_km=0.0, keep_feature_names=False, split_legs=False):
+                         rcvdp1_km=0.0, rcvdp2_km=0.0, keep_feature_names=False, compute_geo_arrivals=False, split_legs=False, threshold_distance=0.2):
     """
     Return a list of inter-receiver correlation feature dataset for their ray parameters, correlation times, inter-receiver distances and ...
     #
@@ -898,6 +898,8 @@ def get_all_interrcv_ccs(cc_feature_names=None, evdp_km=25.0, model_name=__defau
                              accelerate the computation.
                              For example, PKP-PcP will be replaced wit SKS-ScS during the computation if `keep_feature_names=False`.
                              Default is `False`.
+        compute_geo_arrivals:a Boolean value to compute `geo_arrival` objects for each p-x-t (slowness-distance-time) data point.
+                             If `True`, each element of the returned list will have a key 'geo_arr' (and 'geo_arr2') which are explained below.
         split_legs:          a Boolean value to split the p-x-t (slowness-distance-time) curves into legs, and within
                              each leg, the ray parameters and distances are monotonic.
                              This is for taking care of the multi-pathing phenomenon (different waves travel different paths
@@ -912,7 +914,20 @@ def get_all_interrcv_ccs(cc_feature_names=None, evdp_km=25.0, model_name=__defau
                  'time':             an array of correlation times in second.
                  'purist_distance':  an array of purist distances in degree.
                  'distance':         an array of distances in degree (the `round_degree_180(purist_distances
-                 'legs':(optinal)    a list of legs [leg0, leg2,..., legi,...], and each legi is a dictionary object
+                 'geo_arr'(optional): a list of geo_arrival objects.
+                   and
+                 'geo_arr2'(optional):a list of geo_arrival objects.
+                                      Each element of list is a geo_arrival object which corresponds to a p-x-t (slowness-distance-time)
+                                      data point.
+                                      Specifically, if the correlation feature is a body-wave-like feature (e.g., 'PcP*',  'ScS*'),
+                                      then only the key 'geo_arr' exist.
+                                      If the correlation feature is a body-wave cross-term (e.g., SKS-ScS, in the format of phase1-phase2),
+                                      then the bey 'geo_arr' and 'geo_arr2' exist, and 'geo_arr' corresponds to phase1 and 'geo_arr2'
+                                      corresponds to 'geo_arr2'. In other words, the list by the key 'geo_arr' consists of a list of
+                                      geo_arrival objects for phase1, and the list by the key 'geo_arr2' consists of a list of
+                                      geo_arrival objects for phase2.
+                                      These are only available if `compute_geo_arrivals=True`.
+                 'legs'(optinal):    a list of legs [leg0, leg2,..., legi,...], and each legi is a dictionary object
                                      that contains the keys: 'ray_param', 'time', 'purist_distance', 'distance',
                                      so that for each leg, the ray_param and distance are monotonic.
                                      This is only available if `cut_legs=True`.
@@ -927,14 +942,15 @@ def get_all_interrcv_ccs(cc_feature_names=None, evdp_km=25.0, model_name=__defau
         taup_create.build_taup_model(model_name, output_folder='./', verbose=False)
         model_tag = model_name.split('/')[-1].replace('.nd', '')
         temp = './%s.npz' % model_tag
-        original_tau_model = taup.TauPyModel(temp).model
+        original_taupy_model = taup.TauPyModel(temp)
     elif model_name[-4:] == '.npz':
-        original_tau_model = taup.TauPyModel(model_name).model
+        original_taupy_model = taup.TauPyModel(model_name)
         model_tag = model_name.split('/')[-1].replace('.npz', '')
     else:
-        original_tau_model = taup.TauPyModel(model_name).model
+        original_taupy_model = taup.TauPyModel(model_name)
         model_tag = model_name
     #############################################################################################
+    original_tau_model = original_taupy_model.model
     modc_seismic_phase = deepcopy(original_tau_model)
     modc1              = deepcopy(original_tau_model)
     modc2              = deepcopy(original_tau_model)
@@ -964,29 +980,58 @@ def get_all_interrcv_ccs(cc_feature_names=None, evdp_km=25.0, model_name=__defau
     for idx, feature_name in enumerate(local_cc_feature_names):
         tag = '[%d/%d]%s' % (idx+1, n, feature_name)
         with Timer(tag=tag, verbose=verbose, file=log):
-            ak = None
+            single_feature = dict()
             if '*' in feature_name: # for 'X*'
                 phase = feature_name[:-1]
                 rps, trvt, purist_distance, distance = get_arrivals(modc_seismic_phase, phase, rcvdp2_km, None,
-                                                                    0.5, 20, enable_h5update=True,
+                                                                    threshold_distance, 100, enable_h5update=True,
                                                                     model_tag=model_tag)
                 if rps.size>0:
-                    ak = rps, trvt, purist_distance, distance
+                    #ak = rps, trvt, purist_distance, distance
+                    single_feature = {  'body-wave-like': True,
+                                        'name': feature_name,
+                                        'ray_param': rps,
+                                        'time': trvt,
+                                        'purist_distance': purist_distance,
+                                        'distance': distance }
+                    if compute_geo_arrivals: ### compute the geo_arrival objects
+                        single_feature['geo_arr'] = [geo_arrival(rcvdp1_km, 0.0, rcvdp2_km, phase_name=phase, ray_param=it_rp, model=original_taupy_model) for it_rp  in rps]
             elif '-' in feature_name: # for 'X-Y'
                 phase1, phase2= feature_name.split('-')
                 tmp = get_ccs(modc1, modc2, phase1, phase2, rcvdp1_km, rcvdp2_km,
-                              0.5, 20, True,
+                              threshold_distance, 100, True,
                               model_tag=model_tag)
                 rps, cc_time, trvt1, trvt2, cc_purist_distance, cc_distance, purist_distance1, purist_distance2  = tmp
                 if rps.size>0:
-                    ak = rps, cc_time, cc_purist_distance, cc_distance 
-            if ak:
-                rps, time, pdist, dist = ak
-                single_feature = {  'name': feature_name, 'ray_param': rps, 'time': time,
-                                    'purist_distance': pdist, 'distance': dist }
+                    #ak = rps, cc_time, cc_purist_distance, cc_distance
+                    single_feature = {  'body-wave-like': False,
+                                        'name': feature_name,
+                                        'ray_param': rps,
+                                        'time': cc_time,
+                                        'purist_distance': cc_purist_distance,
+                                        'distance': cc_distance }
+                    if compute_geo_arrivals: ### compute the geo_arrival objects
+                        single_feature['geo_arr'] = [geo_arrival(evdp_km, 0.0, rcvdp1_km, phase_name=phase1, ray_param=it_rp, model=original_taupy_model) for it_rp  in rps]
+                        single_feature['geo_arr2'] = [geo_arrival(evdp_km, 0.0, rcvdp2_km, phase_name=phase2, ray_param=it_rp, model=original_taupy_model) for it_rp  in rps]
+            #### append the single feature to the results if it is not empty
+            if single_feature:
                 if split_legs:
-                    legs = split_pxt_legs(rps, dist, (time, pdist) )
-                    single_feature['legs']  = [{'ray_param': it_rps, 'time': it_time, 'purist_distance': it_pdist, 'distance': it_dist } for (it_rps, it_dist, (it_time, it_pdist) ) in legs]
+                    if not compute_geo_arrivals:
+                        legs = split_px_legs(   single_feature['ray_param'], single_feature['distance'], (single_feature['time'], single_feature['purist_distance'] ) )
+                        single_feature['legs']  = [{'ray_param': it_rps, 'time': it_time, 'purist_distance': it_pdist, 'distance': it_dist }
+                                                    for (it_rps, it_dist, (it_time, it_pdist) ) in legs]
+                    else:
+                        if single_feature['body-wave-like']:
+                            tmp_lst_of_lst = ( single_feature['time'], single_feature['purist_distance'], single_feature['geo_arr'] )
+                            legs = split_px_legs(   single_feature['ray_param'], single_feature['distance'],  tmp_lst_of_lst  )
+                            single_feature['legs']  = [{'ray_param': it_rps, 'time': it_time, 'purist_distance': it_pdist, 'distance': it_dist, 'geo_arr': it_geo_ar }
+                                                        for (it_rps, it_dist, (it_time, it_pdist, it_geo_ar) ) in legs]
+                        else:
+                            tmp_lst_of_lst = ( single_feature['time'], single_feature['purist_distance'], single_feature['geo_arr'], single_feature['geo_arr2'] )
+                            legs = split_px_legs(   single_feature['ray_param'], single_feature['distance'],  tmp_lst_of_lst  )
+                            single_feature['legs']  = [{'ray_param': it_rps, 'time': it_time, 'purist_distance': it_pdist, 'distance': it_dist, 'geo_arr': it_geo_ar, 'geo_arr2': it_geo_ar2 }
+                                                        for (it_rps, it_dist, (it_time, it_pdist, it_geo_ar, it_geo_ar2) ) in legs]
+                ###########################
                 results.append( single_feature )
     #############################################################################################
     if save_to_pickle_file:
@@ -1041,7 +1086,7 @@ def get_arrivals(tau_model_corrected, phase_name, rcvdp_km, ray_param_range=None
                              the `tau_model_corrected`. Default is `ak135`.
     #
     Return: (ray_params, trvts, purist_distances, distances)
-        ray_params:         a ndarray of ray parameters in sec/radian.
+        ray_params:         a ndarray of ray parameters in sec/radian. (already sorted in increasing order.)
         trvts:              a ndarray of travel times in second.
         purist_distances:   a ndarray of purist distances in degree.
         distances:          a ndarray of distances in degree. (the `round_degree_180(purist_distances)` )
@@ -1073,10 +1118,10 @@ def get_arrivals(tau_model_corrected, phase_name, rcvdp_km, ray_param_range=None
         min_ray_param, max_ray_param = phase.min_ray_param, phase.max_ray_param
     min_ray_param, max_ray_param = float(min_ray_param), float(max_ray_param)
     # Step 1 Init all arrivals #################################################
-    arrs = [ phase.shoot_ray(0.0, min_ray_param), phase.shoot_ray(0.0, max_ray_param) ]
+    rps  = list(np.linspace(min_ray_param, max_ray_param, 1+int((max_ray_param-min_ray_param)/10) ))
+    arrs = [ phase.shoot_ray(0.0, it) for it in rps ]
     purist_distance = [it.purist_distance for it in arrs]
     trvt = [it.time for it in arrs]
-    rps = [min_ray_param, max_ray_param]
     # Step 2 Denser arrivals ###################################################
     while True:
         with Timer(tag='denser arrivals in get_arrivals(...)', color='red', verbose=__global_verbose ):
@@ -1427,7 +1472,7 @@ if __name__ == "__main__":
         print(y)
     pass
     pass
-    if True:
+    if False:
         __example_use_SeismicPhase_shoot_ray()
         # test
         tmp = dict()
@@ -1464,4 +1509,43 @@ if __name__ == "__main__":
         ax3.set_title('P-T')
         for ax in (ax1, ax2, ax3):
             ax.grid()
+        plt.show()
+    if True:
+        tmp = dict()
+        tmp['PcP*']       = get_all_interrcv_ccs(['PcP*'],    evdp_km=0.0, model_name='ak135', log=None, keep_feature_names=True, split_legs=True, compute_geo_arrivals=True)[0]
+        tmp['PKP*']       = get_all_interrcv_ccs(['PKP*'],    evdp_km=0.0, model_name='ak135', log=None, keep_feature_names=True, split_legs=True, compute_geo_arrivals=True)[0]
+        tmp['PKP-PcP']    = get_all_interrcv_ccs(['PKP-PcP'], evdp_km=0.0, model_name='ak135', log=None, keep_feature_names=True, split_legs=True, compute_geo_arrivals=True)[0]
+        fig = plt.figure(figsize=(8, 8) )
+        ax1 = fig.add_subplot(221, projection='polar')
+        ax2 = fig.add_subplot(222)
+        ax3 = fig.add_subplot(223)
+        ax4 = fig.add_subplot(224)
+        #pmin = np.min( [element['ray_param'].min() for element in tmp.values()] )
+        #pmax = np.max( [element['ray_param'].max() for element in tmp.values()] )
+        pmin = tmp['PKP-PcP']['ray_param'].min()
+        pmax = tmp['PKP-PcP']['ray_param'].max()
+        for feature_name in sorted(tmp.keys()):
+            single_feature = tmp[feature_name]
+            xs = single_feature['distance']
+            ts = single_feature['time']
+            ps = single_feature['ray_param']
+            lst_geo_arrs = single_feature['geo_arr']
+            lst_geo_arrs2=  single_feature['geo_arr2'] if not single_feature['body-wave-like'] else list()
+            colored_line(xs, ts, ps, ax=ax2, label=feature_name, vmin=pmin, vmax=pmax, lw=3)
+            colored_line(ts, ps, ps, ax=ax3, label=feature_name, vmin=pmin, vmax=pmax, lw=3)
+            colored_line(xs, ps, ps, ax=ax4, label=feature_name, vmin=pmin, vmax=pmax, lw=3)
+            if '-' not in feature_name:
+                plot_raypath_geo_arrivals(lst_geo_arrs[::5], ax=ax1, c='gray')
+            else:
+                plot_raypath_geo_arrivals(lst_geo_arrs[::5], ax=ax1, c=ps[::5], vmin=pmin, vmax=pmax, radius_range=(0, 3479))
+                plot_raypath_geo_arrivals(lst_geo_arrs2[::5], ax=ax1, c=ps[::5], vmin=pmin, vmax=pmax, radius_range=(0, 3479))
+
+            #
+            #ax1.plot(np.deg2rad(xs), ts, label=feature_name)
+            #ax2.plot(xs, ps, label=feature_name)
+            #ax3.plot(ts, ps, label=feature_name)
+            #if 'geo_arr' in single_feature:
+            #    geo_arrivals = single_feature['geo_arr']
+            #    for geo_arr in geo_arrivals:
+            #        geo_arr.plot(ax=ax4, label=geo_arr.phase_name)
         plt.show()

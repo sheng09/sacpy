@@ -3,126 +3,176 @@
 import sys
 import getopt
 import matplotlib.pyplot as plt
+import matplotlib.colors as mcolors
+import matplotlib.cm as cm
 import sacpy.correlation as correlation
+from sacpy.correlation import get_all_interrcv_ccs
+from taupplotlib import plotStation, plotPrettyEarth, plot_raypath_geo_arrivals, colored_line, geo_arrival
 import numpy as np
 from obspy import taup
 from sacpy.utils import Timer
 
 class cc_feature_time:
-    def __init__(self, model_name, evdp_km, rcv1dp_km, rcv2dp_km, debug=False):
-        self.tau_mod = taup.TauPyModel(model_name).model
-        self.tau_modc1 = correlation.get_corrected_model(self.tau_mod, evdp_km, rcv1dp_km)
-        self.tau_modc2 = self.tau_modc1
-        if rcv1dp_km != rcv2dp_km:
-            self.tau_modc2 = correlation.get_corrected_model(self.tau_mod, evdp_km, rcv2dp_km)
-        self.rcv1dp, self.rcv2dp = rcv1dp_km, rcv2dp_km
+    def __init__(self, model_name, evdp_km, rcv1dp_km, rcv2dp_km, show, figname, debug=False):
+        self.model_name= model_name
+        self.evdp_km   = evdp_km
+        self.rcv1dp_km = rcv1dp_km
+        self.rcv2dp_km = rcv2dp_km
+        self.show      = show
+        self.figname   = figname
         self.debug = debug
-        pass
     def run(self, distances, feature_name, show=False, figname=None, print_result=True, dist_accuracy_deg=0.5, max_interation=10):
-        if '-' in cc_feature_name:
-            phase1, phase2 = cc_feature_name.split('-')
-            if distances is None:
-                rps, cc_time, trvt1, trvt2, cc_pd, cc_d, pd1, pd2 = correlation.get_ccs(self.tau_modc1, self.tau_modc2, phase1, phase2, self.rcv1dp, self.rcv2dp, dist_accuracy_deg, max_interation)
-            else:
-                rps, cc_time, trvt1, trvt2, cc_pd, cc_d, pd1, pd2 = correlation.get_ccs_from_cc_dist(distances, self.tau_modc1, self.tau_modc2, phase1, phase2, self.rcv1dp, self.rcv2dp, dist_accuracy_deg, max_interation)
+        ####
+        if distances is not None:
+            taupy_mod = taup.TauPyModel(self.model_name)
+            tau_mod   = taupy_mod.model
+            if '-' in feature_name:
+                tau_modc1 = correlation.get_corrected_model(tau_mod, self.evdp_km, self.rcv1dp_km)
+                tau_modc2 = correlation.get_corrected_model(tau_mod, self.evdp_km, self.rcv2dp_km) if rcv1dp_km != rcv2dp_km else tau_modc1
+                phase1, phase2 = feature_name.split('-')
+                rps, cc_time, trvt1, trvt2, cc_pd, cc_d, pd1, pd2 = correlation.get_ccs_from_cc_dist(distances, tau_modc1, tau_modc2, phase1, phase2, self.rcv1dp_km, self.rcv2dp_km, dist_accuracy_deg, max_interation)
+                #####
+                self.print_result(feature_name, rps*(np.pi/180), cc_time, trvt1, trvt2, cc_pd, cc_d, pd1, pd2)
+                self.plot(feature_name, pxt_data=(rps, cc_d, cc_time), vol_lst=None)
+            elif feature_name[-1] == '*':
+                arrs = list()
+                for d in distances:
+                    arrs.extend( taupy_mod.get_travel_times(self.rcv1dp_km, d, [ feature_name[:-1] ], receiver_depth_in_km=self.rcv2dp_km) )
+                rps     = np.array([it.ray_param for it in arrs], dtype=np.float64 )
+                cc_time = np.array([it.time for it in arrs], dtype=np.float64 )
+                cc_d    = np.array([it.distance for it in arrs], dtype=np.float64 )
+                pd      = np.array([it.purist_distance for it in arrs], dtype=np.float64 )
+                #
+                tmp     = np.argsort(rps)
+                rps, cc_time, cc_d, pd = rps[tmp], cc_time[tmp], cc_d[tmp], pd[tmp]
+                #
+                trvt1, cc_pd, pd1   = cc_time, pd, pd
+                trvt2   = np.zeros(rps.size, dtype=np.float64)
+                pd2     = trvt2 # all zeros
+                ####
+                self.print_result(feature_name, rps*(np.pi/180), cc_time, trvt1, trvt2, cc_pd, cc_d, pd1, pd2)
+                self.plot(feature_name, pxt_data=(rps, cc_d, cc_time), vol_lst=None)
         else:
-            name = cc_feature_name.replace('*', '')
-            rps, trvt1, cc_pd, cc_d = correlation.get_arrivals(self.tau_modc1, name, self.rcv1dp)
-            cc_time = trvt1
-            trvt2 = np.zeros(cc_time.size)
-            pd1 = cc_pd
-            pd2 = np.zeros(cc_time.size)
-        if self.verbose:
-            self.verbose(feature_name, rps, cc_time, trvt1, trvt2, cc_pd, cc_d, pd1, pd2)
-    def verbose(self, feature_name, ray_params, cc_time, trvt1, trvt2, cc_purist_distance, cc_distance, purist_distance1, purist_distance2):
+            vol_lst  = get_all_interrcv_ccs(   cc_feature_names=[feature_name], evdp_km=self.evdp_km, model_name=self.model_name,
+                                               rcvdp1_km=self.rcv1dp_km, rcvdp2_km=self.rcv2dp_km, keep_feature_names=True, compute_geo_arrivals=True, log=None )
+            if len(vol_lst) == 1:
+                rps     = vol_lst[0]['ray_param']
+                cc_time = vol_lst[0]['time']
+                cc_d    = vol_lst[0]['distance']
+                trvt1   = np.array([it.time for it in vol_lst[0]['geo_arr']], dtype=np.float64)
+                trvt2   = np.array([it.time for it in vol_lst[0]['geo_arr2']], dtype=np.float64) if '-' in feature_name else np.zeros(rps.size, dtype=np.float64)
+                pd1     = np.array([it.purist_distance for it in vol_lst[0]['geo_arr']], dtype=np.float64)
+                pd2     = np.array([it.purist_distance for it in vol_lst[0]['geo_arr2']], dtype=np.float64) if '-' in feature_name else np.zeros(rps.size, dtype=np.float64)
+                cc_pd   = pd1-pd2
+                ####
+                self.print_result(feature_name, rps*(np.pi/180), cc_time, trvt1, trvt2, cc_pd, cc_d, pd1, pd2)
+                self.plot(feature_name, pxt_data=None, vol_lst=vol_lst)
+    def plot(self, feature_name, pxt_data=None, vol_lst=None):
+        if (not self.show) and (not self.figname):
+            return
+        if vol_lst is None:
+            vol_lst  = get_all_interrcv_ccs(   cc_feature_names=[feature_name], evdp_km=self.evdp_km, model_name=self.model_name,
+                                               rcvdp1_km=self.rcv1dp_km, rcvdp2_km=self.rcv2dp_km, keep_feature_names=True, compute_geo_arrivals=True, log=None )
+        if len(vol_lst) > 0:
+            if True: # basemap
+                fig = plt.figure(figsize=(12, 7) )
+                grd = fig.add_gridspec(2, 4, wspace=0.35, width_ratios = (1, 1, 1, 0.03) )
+                ax1 = fig.add_subplot(grd[0, 0], projection='polar')
+                ax2 = fig.add_subplot(grd[0, 1], projection='polar')
+                ax3 = fig.add_subplot(grd[0, 2], projection='polar')
+                ax4 = fig.add_subplot(grd[1, 0])
+                ax5 = fig.add_subplot(grd[1, 1])
+                ax6 = fig.add_subplot(grd[1, 2])
+                cax = fig.add_subplot(grd[1, 3])
+            ############################
+            if pxt_data is not None: # plot for the rps obtained above
+                rps, cc_d, cc_time = [np.array(lst) for lst in pxt_data]
+                ax4.scatter(cc_d,    cc_time,         c='r', zorder=100)
+                ax5.scatter(cc_d,    rps*(np.pi/180), c='r', zorder=100)
+                ax6.scatter(cc_time, rps*(np.pi/180), c='r', zorder=100)
+                phase_names = [feature_name[:-1]] if feature_name[-1] == '*' else feature_name.split('-')
+                for ax, phase_name in zip( (ax1, ax2),  phase_names):
+                    for it_p in rps:
+                        geo_ar = geo_arrival(self.rcv1dp_km, 0.0, self.rcv2dp_km, phase_name=phase_name, ray_param=it_p, model=taup.TauPyModel(self.model_name) )
+                        geo_ar.plot_raypath(ax=ax, color='r', zorder=100)
+                        ax4.scatter(geo_ar.distance, geo_ar.time,                 c='r', zorder=100)
+                        ax5.scatter(geo_ar.distance, geo_ar.ray_param_sec_degree, c='r', zorder=100)
+                        ax6.scatter(geo_ar.time, geo_ar.ray_param_sec_degree,     c='r', zorder=100)
+            ############################
+            if True: # plot for all possible obtained from get_all_interrcv_ccs(...)
+                element = vol_lst[0]
+                ps = element['ray_param'] * (np.pi/180) # from s/radian to s/deg
+                xs = element['distance']
+                ts = element['time']
+                pmin, pmax = ps.min(), ps.max()
+                ############################
+                colored_line(xs, ts, c=ps, ax=ax4, lw=4, vmin=pmin, vmax=pmax, cmap='plasma')
+                colored_line(xs, ps, c=ps, ax=ax5, lw=4, vmin=pmin, vmax=pmax, cmap='plasma')
+                colored_line(ts, ps, c=ps, ax=ax6, lw=4, vmin=pmin, vmax=pmax, cmap='plasma')
+                # plot the colorbar with vmin and vmax in cax
+                norm = mcolors.Normalize(vmin=pmin, vmax=pmax)
+                cmap = plt.get_cmap('plasma')
+                sm = cm.ScalarMappable(norm=norm, cmap=cmap)
+                sm.set_array([])  # Dummy array for the ScalarMappable
+                plt.colorbar(sm, label=r'Slowness (s/$\degree$)', cax=cax)
+                if True: # adjust
+                    for ax in (ax4, ax5, ax6):
+                        ax.grid(True, ls='--', color='gray', lw=0.6)
+                        ax.set_xlabel(r'Distance ($\degree$)')
+                    ax4.set_ylabel('Time (s)')
+                    ax5.set_ylabel(r'Slowness (s/$\degree$)')
+                    ax6.set_ylabel(r'Slowness (s/$\degree$)')
+                    ax4.set_title('X-T')
+                    ax5.set_title('X-P')
+                    ax6.set_title('T-P')
+                    ax4.text(xs[0], ts[0], feature_name, clip_on=False)
+                    ax5.text(xs[0], ps[0], feature_name, clip_on=False)
+                    ax6.text(ts[0], ps[0], feature_name, clip_on=False)
+            ############################
+            if True: # plot body waves for the cross-term
+                if feature_name[-1] == '*':
+                    ax2.axis('off')
+                    ax3.axis('off')
+                    phase_name = feature_name[:-1]
+                    ax1.set_title(feature_name)
+                    plot_raypath_geo_arrivals(element['geo_arr'][::5], c=ps[::5], ax=ax1, plot_pretty_earth=True, vmin=pmin, vmax=pmax, cmap='plasma')
+                elif '-' in feature_name:
+                    ax3.axis('off')
+                    plot_raypath_geo_arrivals(element['geo_arr'][::5], c=ps[::5], ax=ax1, plot_pretty_earth=True, vmin=pmin, vmax=pmax, cmap='plasma')
+                    plot_raypath_geo_arrivals(element['geo_arr2'][::5], c=ps[::5], ax=ax2, plot_pretty_earth=True, vmin=pmin, vmax=pmax, cmap='plasma')
+                    phase1_name, phase2_name = feature_name.split('-')
+                    ax1.set_title(phase1_name)
+                    ax2.set_title(phase2_name)
+                    #####
+                    for lst in (element['geo_arr'], element['geo_arr2']): # plot ray path for the cross term
+                        if len(lst) <=0:
+                            continue
+                        xs = [it.distance for it in lst]
+                        ts = [it.time for it in lst]
+                        ps = [it.ray_param_sec_degree for it in lst]
+                        colored_line(xs, ts, c=ps, ax=ax4, lw=2, vmin=pmin, vmax=pmax, cmap='plasma')
+                        colored_line(xs, ps, c=ps, ax=ax5, lw=2, vmin=pmin, vmax=pmax, cmap='plasma')
+                        colored_line(ts, ps, c=ps, ax=ax6, lw=2, vmin=pmin, vmax=pmax, cmap='plasma')
+                        ax4.text(xs[0], ts[0], lst[0].name, clip_on=False)
+                        ax5.text(xs[0], ps[0], lst[0].name, clip_on=False)
+                        ax6.text(ts[0], ps[0], lst[0].name, clip_on=False)
+            if self.figname:
+                plt.savefig(self.figname, transparent=True, )
+            if self.show:
+                plt.show()
+    def print_result(self, feature_name, ray_params, cc_time, trvt1, trvt2, cc_purist_distance, cc_distance, purist_distance1, purist_distance2):
+        if not self.print_result:
+            return
         print('#############################################################################')
         print('################################# Result ####################################')
         print('#############################################################################')
-        print('cross-term inter-dist(deg)  dist1(deg)  dist2(deg)  ray_param(s/deg)  t1(s)  t2(s)  cc_time(s)')
+        print('#Name inter-dist(deg)  dist1(deg)  dist2(deg)  ray_param(s/deg)  t1(s)  t2(s)  cc_time(s)')
         #PcS-PcP 10.0 28.244999 38.244999 3.100130 770.354077 576.068671 194.285406
         distance1= correlation.round_degree_180(purist_distance1)
         distance2= correlation.round_degree_180(purist_distance2)
         for rp, ct, it1, it2, cpd, cd, d1, d2 in zip(ray_params, cc_time, trvt1, trvt2, cc_purist_distance, cc_distance, distance1, distance2):
             line = '%s %.3f %.3f %.3f %.6f %.3f %.3f %.3f' % (feature_name, cd, d1, d2, rp, it1, it2, ct)
             print(line)
-    def __plot(self, found, rp1, rp2, pd1, pd2, phase1, phase2, show=False, figname=None):
-        """
-        Not finished yet!!!
-        """
-        with Timer(tag='plot', color='C5', verbose=self.debug, summary=self.time_summary):
-            ##############################################################################################################
-            # Init axes
-            ##############################################################################################################
-            nsol = len(found)
-            fig = plt.figure(figsize=(11, 4*nsol) )
-            axmat = [[None, None] for junk in range(nsol)]
-            for isol in range(nsol):
-                axmat[isol][0] = plt.subplot(nsol, 2, isol*2+1, projection='polar')
-                axmat[isol][1] = plt.subplot(nsol, 2, isol*2+2)
-            #fig, axmat = plt.subplots(nsol, 2, figsize=(nsol*5.5, 8) )
-            #radius = self.mod.model.radius_of_planet
-            #for (ax1, ax2), it_found in zip(axmat, found):
-            #    r1, r2, s_found, rp_found, n_overlap, t1_found, t1_found, ct_found = it_found
-            #    clrs, lss = ('C0', 'k'), ('-', '--')
-            #    ##############################################################################################################
-            #    # Plot ray paths
-            #    ##############################################################################################################
-            #    for rcv, clr, ls, phase in zip((r1, r2), clrs, lss, (phase1, phase2)):
-            #        plotStation(ax1, self.mod, (0.0,), (rcv,), clr)
-            #        arrs = self.mod.get_ray_paths(0.0, s_found-rcv, [phase[::-1]]) # the phase name are inverted as we emit the waves from the source to the receiver
-            #        idx = argmin( [abs(it.ray_param_sec_degree-rp_found) for it in arrs] )
-            #        arr = arrs[idx]
-            #        lons = arr.path['dist'] + deg2rad(rcv)
-            #        rs   = radius-arr.path['depth']
-            #        ax1.plot(lons, rs, color=clr, linestyle=ls)
-            #    #plotEq(ax1, self.mod, (0.0,), (s_found,), markersize=16)
-            #    plotPrettyEarth(ax1, self.mod, True, 'core')
-            #    ##############################################################################################################
-            #    # Plot ray_param versus src_loc curves for the two seismic waves to show the intersection, the found source
-            #    ##############################################################################################################
-            #    s1 = r1+pd1
-            #    s2 = r2+pd2+n_overlap*360
-            #    for _rp, _s, clr, ls, phase in zip( (rp1, rp2), (s1, s2), clrs, lss, (phase1, phase2) ):
-            #        ax2.plot(_rp, _s, label=phase, color=clr, linestyle=ls)
-            #    ax2.plot(rp_found, s_found, 'o', color='k')
-            #    #
-            #    rp_min = min(rp1.min(), rp2.min() )
-            #    rp_max = max(rp1.max(), rp2.max() )
-            #    rp_min = rp_min-0.09*(rp_max-rp_min)
-            #    rp_max = rp_max+0.09*(rp_max-rp_min)
-            #    s_min = min(s1.min(), s2.min() )
-            #    s_max = max(s1.max(), s2.max() )
-            #    s_min = s_min - 0.09*(s_max-s_min)
-            #    s_max = s_max + 0.09*(s_max-s_min)
-            #    ax2.plot((rp_min, rp_max), (s_found, s_found), 'k:', linewidth=0.6)
-            #    s_found_valid = s_found%360
-            #    if s_found == s_found_valid:
-            #        ax2.text(rp_min, s_found, '%.2f$\degree$' % s_found  )
-            #    else:
-            #        ax2.text(rp_min, s_found, '%.2f$\degree$(%.2f$\degree$)' % (s_found_valid, s_found) )
-            #    #
-            #    ax2.plot((rp_found, rp_found), (s_min, s_max), 'k:', linewidth=0.6)
-            #    ax2.text(rp_found, s_min, '%.2f$\degree$/s' % rp_found  )
-            #    #
-            #    ax2.text(rp_min, s_min, '$T_{cc}=$%.2fsec' % ct_found )
-            #    #
-            #    ax2.set_xlim((rp_min, rp_max) )
-            #    ax2.set_xlabel('Ray parameter (s/$\degree$)')
-            #    yticks = ax2.get_yticks()
-            #    ax2.set_yticks(yticks)
-            #    ax2.set_yticklabels( [ '%d(%03d)' % (it%360, it) for it in yticks] )
-            #    ax2.set_ylabel('Source location ($\degree$)')
-            #    ax2.set_ylim((s_min, s_max) )
-            #axmat[0][1].legend(loc=(0.0, 1.01) )
-        #    ##############################################################################################################
-        #    # Finished
-        #    ##############################################################################################################
-        #    if figname!=None:
-        #        plt.savefig(figname, bbox_inches = 'tight', pad_inches = 0.2)
-        #if show:
-        #    plt.show()
-        plt.close()
-
 if __name__ == "__main__":
     # -F PcS-PcP -D 10 -E -30/0
     evdp_km = 0.0
@@ -160,7 +210,7 @@ if __name__ == "__main__":
         print('e.g.: %s -F PcS-PcP [-D 7.5,8.5,10,11,12,13] [-L out.png] [--accuracy=0.5] [--max_interation=5] [-S] [-V]' % (sys.argv[0]) )
         sys.exit(-1)
     with Timer(tag='#run main(...)', verbose=True):
-        app = cc_feature_time('ak135', evdp_km, rcv1dp_km, rcv2dp_km, debug=debug)
+        app = cc_feature_time('ak135', evdp_km, rcv1dp_km, rcv2dp_km, show=show, figname=figname, debug=debug)
         app.run(distances, cc_feature_name, show=show, figname=figname, print_result=True, dist_accuracy_deg=dist_accuracy, max_interation=max_interation)
       #self, distances, phase1, phase2, show=False, figname=None, print_result=True, dist_accuracy_deg=0.5, max_interation=10
     if debug:

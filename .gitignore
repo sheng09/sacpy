@@ -4,3 +4,13 @@ test_vol
 junk2
 junk*
 test
+dataset/global_maps/*png
+1.png
+2.png
+correlation.png
+correlation2.png
+correlation3.png
+correlation4.png
+test.ipynb
+test_speed/
+test_station_selection/
