@@ -624,7 +624,7 @@ class CS_InterRcv:
         #
         idx0 = 0
         if cut_time_range is not None: # derive nt from cut_time_range
-            nt = int(np.ceil((cut_time_range[1]-cut_time_range[0])/delta) )+1
+            nt = int(np.floor((cut_time_range[1]-cut_time_range[0])/delta) )+1
             idx0 = int(cut_time_range[0]/delta)
         #
         self.nt4cut = nt

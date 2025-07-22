@@ -8,7 +8,4 @@ __title__ = 'sacpy'
 __version__ = '0.0.2'
 __author__ = 'Sheng Wang'
 
-__all__ = ['sac', 'geomath', 'processing', 'sac_hdf5', 'seismicdata']
-
-
-
+__all__ = ['sac', 'geomath', 'processing',  'seismicdata', 'correlation_stack', 'correlation', 'plot2dEarth', 'plot3dEarth', 'taupplotlib', 'utils']

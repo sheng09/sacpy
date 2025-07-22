@@ -87,6 +87,7 @@ try:
 except:
     FLAG_PYFFTW_USED = False
     from scipy.fft import rfft, irfft
+import numba
 from numba import jit
 from numba.core.typing import cffi_utils as cffi_support
 
@@ -229,7 +230,7 @@ def floor_index(t, t0, delta):
     the start time `t0` and sampling time
     interval `delta`.
     """
-    return np.floor((t-t0)/delta).astype(np.int64)
+    return int(np.floor((t-t0)/delta) )
 @jit(nopython=True, nogil=True)
 def ceil_index(t, t0, delta):
     """
@@ -237,7 +238,7 @@ def ceil_index(t, t0, delta):
     the start time `t0` and sampling time
     interval `delta`.
     """
-    return np.ceil((t-t0)/delta).astype(np.int64)
+    return int(np.ceil((t-t0)/delta) )
 @jit(nopython=True, nogil=True)
 def round_index(t, t0, delta):
     """
@@ -245,7 +246,7 @@ def round_index(t, t0, delta):
     the start time `t0` and sampling time
     interval `delta`.
     """
-    return round((t-t0)/delta).astype(np.int64)
+    return int(np.round((t-t0)/delta) )
 
 @jit(nopython=True, nogil=True)
 def max_amp_index(xs, t0, delta, tref, tmin, tmax, polarity=1):
@@ -260,8 +261,8 @@ def max_amp_index(xs, t0, delta, tref, tmin, tmax, polarity=1):
 
     Return: index, time, amplitude
     """
-    i1 = round_index(tref+tmin, t0, delta)
-    i2 = round_index(tref+tmax, t0, delta)+1
+    i1 = ceil_index(tref+tmin, t0, delta)
+    i2 = floor_index(tref+tmax, t0, delta)+1
 
     i1 = i1 if i1>=0 else 0
     i2 = i2 if i2<=xs.size else xs.size
@@ -394,34 +395,38 @@ def get_rfft_spectra_bound(fftsize, delta, frequency_band, critical_level=0.01):
 # JIT linear normalization
 #############################################################################################################################
 @jit(nopython=True, nogil=True)
-def norm_array1d(xs, reference=-1):
+def norm_array1d(xs, percentile=-1, scale=1.0):
     """
     Inplace linear normalization of an 1D array `xs` of numpy.ndarray.
 
-    :param xs:        the 1D array to be normalized.
-    :param reference: a value. If -1, then the maximum value of the array will be used as the reference for normalization.
-                      If the value is between 0 and 1, then the vth percentile of the absolute amplitude is used as the reference.
+    :param xs:         the 1D array to be normalized.
+    :param percentile: a value. If -1, then the maximum value of the array will be used as the reference for normalization.
+                       If the value is between 0 and 1, then the vth percentile of the absolute amplitude is used as the reference.
+    :param scale:      a value to scale the normalized array. Default is 1.0.
     """
-    vmax = np.percentile(np.abs(xs), reference*100) if (0<reference<=1) else np.max(np.abs(xs))
+    vmax = np.percentile(np.abs(xs), percentile*100) if (0<percentile<=1) else np.max(np.abs(xs))
+    vmax *= scale
     if vmax <= 0.0:
         vmax = 1.0
     xs *= (1.0/vmax)
 @jit(nopython=True, nogil=True)
-def norm_mat2d(mat, row_wise=True, reference=-1):
+def norm_mat2d(mat, row_wise=True, percentile=-1, scale=1.0):
     """
     Inplace linear normalization of a 2D array `mat` of numpy.ndarray.
 
-    :param mat:      the 2D array to be normalized.
-    :param row_wise: if True (default), then each row will be normalized separately. If False, all rows will be scaled together.
-    :param reference: a value. If -1, then the maximum value of the array will be used as the reference for normalization.
-                      If the value is between 0 and 1, then the vth percentile of the absolute amplitude is used as the reference.
+    :param mat:        the 2D array to be normalized.
+    :param row_wise:   if True (default), then each row will be normalized separately. If False, all rows will be scaled together.
+    :param percentile: a value. If -1, then the maximum value of the array will be used as the reference for normalization.
+                       If the value is between 0 and 1, then the vth percentile of the absolute amplitude is used as the reference.
+    :param scale:      a value to scale the normalized array. Default is 1.0.
     """
     if row_wise:
         nrow = mat.shape[0]
         for irow in range(nrow):
-            norm_array1d(mat[irow], reference)
+            norm_array1d(mat[irow], percentile, scale)
     else:
-        vmax = np.percentile(np.abs(mat), reference*100) if (0<reference<=1) else np.max(np.abs(mat))
+        vmax = np.percentile(np.abs(mat), percentile*100) if (0<percentile<=1) else np.max(np.abs(mat))
+        vmax *= scale
         if vmax <= 0.0:
             vmax = 1.0
         mat *= (1.0/vmax)
@@ -447,8 +452,8 @@ def cut(xs, delta, t0, wnd_start, wnd_end):
     :param new_t0: the start of the time window to cut
     :param new_t1: the end of the time window to cut
     """
-    i0 = round_index(wnd_start, t0, delta)
-    i1 = round_index(wnd_end,   t0, delta) + 1
+    i0 = ceil_index(wnd_start, t0, delta)
+    i1 = floor_index(wnd_end,   t0, delta) + 1
     new_size = i1-i0
     new_xs = np.zeros(new_size, dtype=xs.dtype)
     new_t0 = i0*delta + t0
@@ -465,30 +470,47 @@ def cut(xs, delta, t0, wnd_start, wnd_end):
     #####################
     return new_xs, new_t0
 @jit(nopython=True, nogil=True)
-def cut2d(mat, delta, t0, wnd_start, wnd_end):
-    i0 = round_index(wnd_start, t0, delta)
-    i1 = round_index(wnd_end,   t0, delta) + 1
-    new_size = i1-i0
-    new_mat = np.zeros((mat.shape[0], new_size), dtype=mat.dtype)
-    new_t0 = i0*delta + t0
-    if i0 < 0 or i1 > mat.shape[1]:
-        return new_mat, new_t0
-    #####################
-    if i1 > mat.shape[1]:
-        i1 = mat.shape[1]
-    #####################
-    if i0<0:
-        new_mat[: , -i0:i1-i0] = mat[: , :i1]
+def cut2d(mat, delta, t0, wnd_start, wnd_end, dx, x0, x_start, x_end):
+    nrow, ncol = mat.shape
+    # the index in the old mat
+    irow0 = ceil_index(x_start, x0, dx)
+    irow1 = floor_index(x_end,   x0, dx) + 1
+    icol0 = ceil_index(wnd_start, t0, delta)
+    icol1 = floor_index(wnd_end,   t0, delta) + 1
+    new_x0 = irow0*dx + x0
+    new_t0 = icol0*delta + t0
+    ######################################################################################
+    new_mat = np.zeros((irow1-irow0, icol1-icol0), dtype=mat.dtype)
+    if nrow <= irow0 or irow1 <0 or ncol <= icol0 or icol1 < 0:
+        return new_mat, new_t0, new_x0
+    ######################################################################################
+    # need to do: new_mat[0:, 0:] = mat[irow0:irow1, icol0:icol1], however those indexes may be out of bound
+    if irow0 > 0:
+        new_irow0 = 0
     else:
-        new_mat[:, 0:i1-i0] = mat[:, i0:i1]
-    #####################
-    return new_mat, new_t0
+        new_irow0 = -irow0
+        irow0 = 0
+    if irow1 > nrow:
+        irow1 = nrow
+    new_irow1 = new_irow0+(irow1-irow0)
+    #
+    if icol0 > 0:
+        new_icol0 = 0
+    else:
+        new_icol0 = -icol0
+        icol0 = 0
+    if icol1 > ncol:
+        icol1 = ncol
+    new_icol1 = new_icol0+(icol1-icol0)
+    #
+    new_mat[new_irow0:new_irow1, new_icol0:new_icol1] = mat[irow0:irow1, icol0:icol1]
+    return new_mat, new_t0, new_x0
 
 
 #############################################################################################################################
 # Mask (not inplace)
 #############################################################################################################################
-def mask_time_window(xs, delta, t0, wnds, fill_value=0.0):
+def mask_time_window(xs, delta, t0, wnds, fill_value=0.0, taper_half_size=0, taper_order=1):
     """
     Mask (not inplace) a 1D array, keeping values that are within a time window.
 
@@ -496,14 +518,34 @@ def mask_time_window(xs, delta, t0, wnds, fill_value=0.0):
     :param delta:      the sampling time interval in seconds.
     :param t0:         the start time of the time series.
     :param wnds:       a list of time windows, and each window is (start, end).
+                       Do not worry if some winddows intersect, and they will be merged.
     :param fill_value: the value to fill for data points outside the time window.
+    :param taper_half_size: an int that declares the number of data points of the tapered region at each edge.
+                            If > 0, then a tukey taper will be applied to the cutted data points.
+                            Default is 0, which means no tapering.
+                            Please note, the taper will be applied to the data points that are within the time window.
+    :param taper_order:     the order of the taper, which means to apply the tukey taper for how many times. (Default is 1)
 
     :return:           a new 1D array with the same size as `xs`, but only values within the time window are kept.
     """
     wnds = np.array(wnds).reshape((-1, 2)) # make sure wnds is a 2D array
+    wnds = np.array( [it for it in wnds if it[0] < it[1] ]) # remove invalid windows
+    if wnds.size  <= 0:
+        raise ValueError("No valid time windows provided. Please check the input `wnds`.")
+    ####
+    wnds = wnds[np.argsort(wnds[:,0])]
+    tmp = [wnds[0,0], wnds[0,1]] # start with the first window
+    for v1, v2 in wnds[1:]:
+        if v1 > tmp[-1]:
+            tmp.append(v1)
+            tmp.append(v2)
+        else:
+            tmp[-1] = v2
+    wnds = np.array(tmp).reshape((-1, 2))
+    ####
     idxs = np.zeros(wnds.shape, dtype=np.int64)
-    idxs[:,0] = floor_index(wnds, t0, delta)[:,0]
-    idxs[:,1] = ceil_index(wnds, t0, delta)[:,1]+1
+    idxs[:,0] = np.ceil(  (wnds[:,0]-t0)/delta ).astype(np.int64)
+    idxs[:,1] = np.floor( (wnds[:,1]-t0)/delta ).astype(np.int64)+1
     idxs = np.where(idxs < 0, 0, idxs) # make sure idxs are not negative
     idxs = np.where(idxs > xs.size, xs.size, idxs) # make sure idxs are not larger than the size of xs
     #####
@@ -511,8 +553,10 @@ def mask_time_window(xs, delta, t0, wnds, fill_value=0.0):
     for i0, i1 in idxs:
         if i0 < i1:
             new_xs[i0:i1] = xs[i0:i1]
+            if (taper_half_size>0) and ((i1-i0)>(2*taper_half_size)):
+                taper(new_xs[i0:i1], taper_half_size, taper_order) # apply taper
     return new_xs
-def mask2d_time_window(mat, delta, t0, xs, wnd_curves, fill_value=0.0, wnd_curve_extrapolate=False, wnd_curve_interp1d_kind='linear'):
+def mask2d_time_window(mat, delta, t0, xs, wnd_curves, fill_value=0.0, wnd_curve_extrapolate=False, wnd_curve_interp1d_kind='linear', taper_half_size=0, taper_order=1):
     """
     Mask (not inplace) a 2D array, keeping values that are within areas defined by curves.
 
@@ -529,37 +573,33 @@ def mask2d_time_window(mat, delta, t0, xs, wnd_curves, fill_value=0.0, wnd_curve
     :param wnd_curve_interp1d_kind: The kind of interpolation for the curves.
                                     Default is 'linear'. Other options are 'nearest', 'zero', 'slinear', 'quadratic', 'cubic'.
                                     Check `scipy.interpolate.interp1d(...)` for more details about these options.
+    :param taper_half_size: an int that declares the number of data points of the tapered region at each edge.
+                            If > 0, then a tukey taper will be applied to the cutted data points.
+                            Default is 0, which means no tapering.
+                            Please note, the taper will be applied to the data points that are within the time window.
+    :param taper_order:     the order of the taper, which means to apply the tukey taper for how many times. (Default is 1)
 
     :return:           a new 2D array with the same shape as `mat`, but only values within areas defined by curves.
     """
     dict_interp1d_kind_min_size = {'zero': 1, 'slinear': 2, 'quadratic': 3, 'cubic': 4,  'linear': 2 }
     dict_min_size_interp1d_kind = {1: 'zero', 2: 'slinear', 3: 'quadratic', 4: 'cubic'}
     #######
-    nrow, ncol = mat.shape
-    index_funcs = (floor_index, ceil_index)
-    wnd_ts = np.zeros( (len(wnd_curves), xs.size), dtype=np.int64)
+    get_func = lambda _x, _y, _kind: scipy.interpolate.interp1d(_x, _y, kind=_kind, bounds_error=False, assume_sorted=False, fill_value=0.0) # Note, fill_value here is not the one in `mask_time_window(...)`!
+    if wnd_curve_extrapolate:
+        get_func = lambda _x, _y, _kind: scipy.interpolate.interp1d(_x, _y, kind=_kind, bounds_error=False, assume_sorted=False, fill_value='extrapolate')
+    #######
+    wnd_ts = np.zeros( (len(wnd_curves), xs.size), dtype=np.float64)
     for icurve, (curve_xs, curve_ts) in enumerate(wnd_curves):
         kind = wnd_curve_interp1d_kind
         if len(curve_xs) < dict_interp1d_kind_min_size[kind]:
             kind = dict_min_size_interp1d_kind[len(curve_xs)]
-        if wnd_curve_extrapolate:
-            func_interp = scipy.interpolate.interp1d(curve_xs, curve_ts, kind=kind, bounds_error=False, fill_value='extrapolate')
-        else:
-            func_interp = scipy.interpolate.interp1d(curve_xs, curve_ts, kind=kind, bounds_error=False, fill_value=0.0)
-        tmp = func_interp(xs)
-        func_get_index = index_funcs[icurve%2]
-        wnd_ts[icurve] = func_get_index(tmp, t0, delta)
-    wnd_ts = np.where(wnd_ts < 0, 0, wnd_ts) # make sure wnd_ts are not negative
-    wnd_ts = np.where(wnd_ts > ncol, ncol, wnd_ts) # make sure wnd_ts are not larger than the size of mat
-    #######
+        func_interp = get_func(curve_xs, curve_ts, kind)
+        wnd_ts[icurve] = func_interp(xs)
     wnd_ts = np.transpose(wnd_ts) # after transpose, each row of `wnd_ts` correspond to one row of mat (a time series)
     #######
     new_mat = np.full(mat.shape, fill_value, dtype=mat.dtype)
-    for irow in range(nrow):
-        idxs_mask = wnd_ts[irow]
-        for i0, i1 in zip(idxs_mask[::2], idxs_mask[1::2]):
-            if i0 < i1:
-                new_mat[irow, i0:i1] = mat[irow, i0:i1]
+    for irow in range(mat.shape[0]):
+        new_mat[irow] = mask_time_window(mat[irow], delta, t0, wnd_ts[irow], fill_value=fill_value, taper_half_size=taper_half_size, taper_order=taper_order)
     return new_mat
 
 
@@ -1008,7 +1048,7 @@ class TSFuncs:
             # 1. for shift_part1, we can simply change the `tstart` to wnd_start`, and without need to change the `data`.
             # dummy action
             # 2. for the shift_part2, we use fft method shift the data
-            zeropad = int(np.ceil( shift_part2/ dt)) # to avoid circular shift effects
+            zeropad = int(np.ceil( np.abs(shift_part2)/ dt)) # to avoid circular shift effects
             shifted = TSFuncs.rfft_time_shift(data, dt, shift_part2, zeropad=zeropad )
             if shifted.size >= new_size:
                 return shifted[:new_size]
@@ -1248,8 +1288,10 @@ class TSFuncs:
                 extent = (tstart-0.5*dt, tend+0.5*dt, xend+0.5*dx, xstart-0.5*dx) # pixel centers
             #########
             ax.imshow(mat, extent=extent, **kwargs)
-            ax.set_xlim((tstart, tend) )
-            ax.set_ylim((xstart, xend) )
+            if tend>tstart:
+                ax.set_xlim((tstart, tend) )
+            if xend>xstart:
+                ax.set_ylim((xstart, xend) )
             if label_col is not None:
                 ax.set_xlabel(label_col)
             if label_row is not None:
@@ -2255,8 +2297,8 @@ class TSFuncs:
             idx_max = np.argmax(corr)
         else:
             tdif_min, tdif_max = diff_lim
-            i0 = int(np.floor((tdif_min-(dat_start-ref_start))/dt)) - (1-nref)
-            i1 = int(np.ceil( (tdif_max-(dat_start-ref_start))/dt)) - (1-nref) + 1
+            i0 = int(np.ceil(  (tdif_min-(dat_start-ref_start))/dt)) - (1-nref)
+            i1 = int(np.floor( (tdif_max-(dat_start-ref_start))/dt)) - (1-nref) + 1
             i0 = max(i0, 0)
             i1 = min(i1, len(corr))
             idx_max = np.argmax(corr[i0:i1]) + i0
@@ -2359,16 +2401,17 @@ class TSFuncs:
         #for irow in range(nrow):
         #    mat[irow] = mask_time_window(mat[irow], dt, t0, mask_windows, fill_value=0.0)
         #### mask using curves
-        curve0 = (0, 1000), (0, 200)
-        curve1 = (0, 1000), (300, 300)
-        curve2 = (0, 500, 1000), (500, 600, 500)
+        curve0 = (0, 1000), (200, 200)
+        curve1 = (0, 1000), (300, 400)
+        curve2 = (0, 1000, 500), (500, 500, 600)
         curve4 = (0, 200, 300, 600, 700, 800), (600, 800, 900, 800, 780, 700)
         mask_curves = [ curve0, curve1, curve2, curve4 ]
-        mat = mask2d_time_window(mat, dt, t0, np.arange(nrow)*dx, mask_curves, 0.0)
+        mat = mask2d_time_window(mat, dt, t0, np.arange(nrow)*dx, mask_curves, 0.0, wnd_curve_extrapolate=True, wnd_curve_interp1d_kind='slinear', taper_half_size=30, taper_order=2)
         ####
         fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(12, 10))
-        TSFuncs.plot_mat2d(mat, dt, dx, ax1, tstart=t0, xstart=x0, cmap='viridis', vmin=-1.0, vmax=1.0, interpolation='None', aspect='auto', label_col='Time (s)', label_row='X', title='transpose=False', origin='lower')
-        TSFuncs.plot_mat2d(mat, dt, dx, ax2, tstart=t0, xstart=x0, cmap='viridis', vmin=-1.0, vmax=1.0, interpolation='None', aspect='auto', label_col='Time (s)', label_row='X', title='transpose=True',  origin='lower', orientation='vertical', )
+        print(np.min(mat), np.max(mat) )
+        TSFuncs.plot_mat2d(mat, dt, dx, ax1, tstart=t0, xstart=x0, cmap='viridis', interpolation='None', aspect='auto', label_col='Time (s)', label_row='X', title='transpose=False', origin='lower')
+        TSFuncs.plot_mat2d(mat, dt, dx, ax2, tstart=t0, xstart=x0, cmap='viridis', interpolation='None', aspect='auto', label_col='Time (s)', label_row='X', title='transpose=True',  origin='lower', orientation='vertical', )
         ####
         TSFuncs.plot_mat2d_waveforms(mat, dt, ax3, tstart=t0, xs=np.arange(nrow)*dx, color='k', ls='-', lw=0.8, label_col='Time (s)', label_row='X', title='transpose=False', scale=5, invert_yaxis=False)
         TSFuncs.plot_mat2d_waveforms(mat, dt, ax4, tstart=t0, xs=np.arange(nrow)*dx, color='k', ls='-', lw=0.8, label_col='Time (s)', label_row='X', title='transpose=True',  orientation='vertical', scale=5, invert_yaxis=False)
@@ -2396,7 +2439,9 @@ if __name__ == "__main__":
         #TSFuncs.benchmark4()
         #TSFuncs.benchmark5()
         #TSFuncs.benchmark6()
-        TSFuncs.benchmark7()
+        #TSFuncs.benchmark7()
+        print( type(round_index(0.5, 0.0, 0.1)), round_index(0.5, 0.0, 0.1))
+        print( type(round_index(np.array([0.5, 1.3]), 0.0, 0.1)), round_index(np.array([0.5, 1.3]), 0.0, 0.1))
     if False:
         x1 = [0, 1, 2, 3]
         x2 = insert_values((1.5, 2.5), x1)

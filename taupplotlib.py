@@ -504,7 +504,8 @@ class geo_arrival:
         arrival: an object of taup.tau.Arrivals, which is returned from get_ray_paths(...).
                  Could be `None` so that a new `Arrival` object will be generated using the provided
                  `phase_name` and `ray_param`.
-        model:   model used in taup. Default is taup.TauPyModel('ak135').
+        model:   or a string for the model name or filename, or an object used in obspy.taup.
+                 Default is taup.TauPyModel('ak135').
         phase_name:             name of the seismic phase, e.g., 'P', 'S', 'PcP', 'ScP', etc.
                                 Should be provided if `arrival` is not provided.
                                 Will be useless if `arrival` is provided.
@@ -524,6 +525,8 @@ class geo_arrival:
             self.stlo_rad = np.deg2rad( stlo )
             #
             self.arrival = arrival
+            if type(model) is str:
+                model = taup.TauPyModel(model)
             self.taupy_model = model
             self.ray_param = self.__get_rayp()
         elif phase_name is not None and ray_param is not None:
@@ -531,6 +534,8 @@ class geo_arrival:
             rcvdp_km = stdp
             phase    = phase_name
             #########
+            if type(model) is str:
+                model = taup.TauPyModel(model)
             tau_mod = model.model
             tau_mod_corr = tau_mod.depth_correct(evdp_km)                # correct/split the source and receiver depth
             tau_mod_corr = tau_mod_corr.split_branch(rcvdp_km)

@@ -917,23 +917,24 @@ def get_all_interrcv_ccs(cc_feature_names=None, evdp_km=25.0, model_name=__defau
                  'time':             an array of correlation times in second.
                  'purist_distance':  an array of purist distances in degree.
                  'distance':         an array of distances in degree (the `round_degree_180(purist_distances
-                 'geo_arr'(optional): a list of geo_arrival objects.
+                 'geo_arr'(optional): a list of geo_arrival objects. (only available if `compute_geo_arrivals=True`)
                    and
-                 'geo_arr2'(optional):a list of geo_arrival objects.
+                 'geo_arr2'(optional):(only available if `compute_geo_arrivals=True`)a list of geo_arrival objects.
                                       Each element of list is a geo_arrival object which corresponds to a p-x-t (slowness-distance-time)
                                       data point.
                                       Specifically, if the correlation feature is a body-wave-like feature (e.g., 'PcP*',  'ScS*'),
                                       then only the key 'geo_arr' exist.
                                       If the correlation feature is a body-wave cross-term (e.g., SKS-ScS, in the format of phase1-phase2),
-                                      then the bey 'geo_arr' and 'geo_arr2' exist, and 'geo_arr' corresponds to phase1 and 'geo_arr2'
+                                      then the keys 'geo_arr' and 'geo_arr2' exist, and 'geo_arr' corresponds to phase1 and 'geo_arr2'
                                       corresponds to 'geo_arr2'. In other words, the list by the key 'geo_arr' consists of a list of
                                       geo_arrival objects for phase1, and the list by the key 'geo_arr2' consists of a list of
                                       geo_arrival objects for phase2.
-                                      These are only available if `compute_geo_arrivals=True`.
-                 'legs'(optinal):    a list of legs [leg0, leg2,..., legi,...], and each legi is a dictionary object
-                                     that contains the keys: 'ray_param', 'time', 'purist_distance', 'distance',
-                                     so that for each leg, the ray_param and distance are monotonic.
-                                     This is only available if `cut_legs=True`.
+                 'legs'(optional):    (only available if `cut_legs=True`)
+                                      a list of legs [leg0, leg2,..., legi,...], and each legi is a dictionary object
+                                      that contains the keys: 'ray_param', 'time', 'purist_distance', 'distance',
+                                      'geo_arr' (optional), and 'geo_arr2' (optional),  so that for each leg, the
+                                      ray_param and distance are monotonic. The 'geo_arr' and 'geo_arr2' are avaliable
+                                      if `compute_geo_arrivals=True`.
     """
     #############################################################################################
     if rcvdp1_km!=0.0 or rcvdp2_km!=0.0:
