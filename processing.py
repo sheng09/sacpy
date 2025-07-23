@@ -2267,8 +2267,9 @@ class TSFuncs:
 
 
         :return: tshift
-            tshift: time difference between reference x and y, and in the same unit as dt.
-                    It means by shift the time series reference x rightwards by tshift, we can align the two time series.
+            tshift: time difference between reference `ref` and `dat`, and in the same unit as dt.
+                    It means by shift the time series reference `ref` rightwards by tshift, we can align the two time series.
+                    So positive tshift means `ref` is ahead of `dat`, and negative tshift means `ref` is behind `dat`.
         """
         if np.iscomplexobj(ref) or np.iscomplexobj(dat):
             raise ValueError("time_diff_cc(...) does not support complex time series.")
@@ -2333,17 +2334,17 @@ class TSFuncs:
     @staticmethod
     def benchmark6():
         ##############
-        x0, dt, nx = 0.0, 1, 30
+        x0, dt, nx = 0.0, 1, 100
         func_gen = RandFunc1DGenerator(x0, nx, dt, 0.0)
         func_gen.set_filter_noise_taper((0.001, 0.4*func_gen.fmax), 0.0, int(nx*0.5), 4 )
-        x = func_gen(more_noise_level=0.01)
+        x = func_gen(more_noise_level=0.0)
         ##############
-        y = func_gen(more_noise_level=0.01)
+        y = func_gen(more_noise_level=0.0)
         # 1. delay from time start
         shift_part1 = 3.3 #13.35134
         y0 = x0 + shift_part1
         # 2. delay from cut
-        cut_i0, cut_i1 = 5, -3
+        cut_i0, cut_i1 = 11, -13
         y0 += (cut_i0 * dt)
         y = y[cut_i0:cut_i1]
         # 3. delay from shift
@@ -2352,17 +2353,17 @@ class TSFuncs:
         #
         theroretical_tdiff = shift_part1 + shift_part3
         ##############
-        tdif, (corr_max, err_left, err_right, err_mean, corr_t0, corr_dt, corr) = TSFuncs.time_diff_cc(x, y, dt, ref_start=x0, dat_start=y0, pre_normlized=False, denser_time_ratio=2, diff_lim=(-10, 10), std_ratio=0.9, return_corr=True)
+        tdif, (corr_max, err_left, err_right, err_mean, corr_t0, corr_dt, corr) = TSFuncs.time_diff_cc(x, y, dt, ref_start=x0, dat_start=y0, pre_normlized=False, denser_time_ratio=10, diff_lim=(-10, 10), std_ratio=0.9)
         print(theroretical_tdiff, tdif, (err_left, err_right, err_mean), corr_max, )
         ##############
-        check_start = x0
-        check = TSFuncs.shift_and_cut_array1d(y, tstart=y0, dt=dt, time_shift=-tdif, new_tstart=x0, new_size=len(x), fill_value=np.nan)
+        check_start = y0
+        check = TSFuncs.shift_and_cut_array1d(x, tstart=x0, dt=dt, time_shift=tdif, new_tstart=check_start, new_size=len(x), fill_value=np.nan)
         fig, (ax, ax2) = plt.subplots(2, 1, figsize=(12, 6))
-        TSFuncs.plot_time_series(x,     dt, start=x0,          ax_real=ax, marker='s', markersize=0, lw=1, ls='-', color='k',  zorder=100, label='x')
-        TSFuncs.plot_time_series(y,     dt, start=y0,          ax_real=ax, marker='o', markersize=0, lw=1, ls='-', color='C1', zorder=100, label='y')
-        TSFuncs.plot_time_series(check, dt, start=check_start, ax_real=ax, marker='o', markersize=0, lw=1, ls='-', color='r',  zorder=100, label='shifted y')
+        TSFuncs.plot_time_series(x,     dt, start=x0,          ax_real=ax, marker='s', markersize=0, lw=3, ls='-', color='k',  zorder=100, label='x (ref)')
+        TSFuncs.plot_time_series(y,     dt, start=y0,          ax_real=ax, marker='o', markersize=0, lw=3, ls='-', color='C0', zorder=100, label='y')
+        TSFuncs.plot_time_series(check, dt, start=check_start, ax_real=ax, marker='o', markersize=0, lw=1, ls='--', color='r',  zorder=100, label='shifted x (ref)')
         ax.legend()
-        ax.set_title(f"Time difference between x and y is m:{tdif:.6f} t:{theroretical_tdiff:.6f} seconds")
+        ax.set_title(f"Time difference between x (ref) and y is m:{tdif:.6f} t:{theroretical_tdiff:.6f} seconds")
         ax.grid(True)
         ##############
         TSFuncs.plot_time_series(corr, corr_dt, start=corr_t0, ax_real=ax2, marker='o', markersize=0, lw=3, ls='-', color='k', zorder=100, label='corr')
@@ -2433,10 +2434,10 @@ if __name__ == "__main__":
         #TSFuncs.benchmark2_1()
         #TSFuncs.benchmark4()
         #TSFuncs.benchmark5()
-        #TSFuncs.benchmark6()
+        TSFuncs.benchmark6()
         #TSFuncs.benchmark7()
         print( type(round_index(0.5, 0.0, 0.1)), round_index(0.5, 0.0, 0.1))
-        print( type(round_index(np.array([0.5, 1.3]), 0.0, 0.1)), round_index(np.array([0.5, 1.3]), 0.0, 0.1))
+        #print( type(round_index(np.array([0.5, 1.3]), 0.0, 0.1)), round_index(np.array([0.5, 1.3]), 0.0, 0.1))
     if False:
         x1 = [0, 1, 2, 3]
         x2 = insert_values((1.5, 2.5), x1)
