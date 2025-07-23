@@ -2248,7 +2248,7 @@ class TSFuncs:
     """
     @staticmethod
     def time_diff_cc(ref, dat, dt, ref_start=0.0, dat_start=0.0, pre_normlized=False, denser_time_ratio=1,
-                     diff_lim=None, std_ratio=0.95, return_corr=False):
+                     diff_lim=None, std_ratio=0.95):
         """
         Measure time difference between two time series using cross correlation method.
         :param ref:         the reference time series.
@@ -2264,7 +2264,6 @@ class TSFuncs:
                             (default is None, which means no limit.)
         :param std_ratio:   (default is 0.95) the ratio of the maximum correlation value used to estimate the standard deviation
                             of the obtained time difference.
-        :paramreturn_corr:  (default is False) if True, return the correlation array and its time axis.
 
 
         :return: tshift
@@ -2328,13 +2327,9 @@ class TSFuncs:
         err_right = (index_err_right * dt)
         err_mean  = (-err_left + err_right)*0.5
         ####
-        corr_ts = None
-        if return_corr:
-            corr_ts = np.arange(-nref + 1, ndat) * dt + dat_start - ref_start
-        else:
-            corr = None
+        corr_tstart = (-nref + 1)* dt + dat_start - ref_start
         ####
-        return t_max, (corr_max, err_left, err_right, err_mean, corr_ts[0], dt, corr)
+        return t_max, (corr_max, err_left, err_right, err_mean, corr_tstart, dt, corr)
     @staticmethod
     def benchmark6():
         ##############

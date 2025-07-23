@@ -6,6 +6,7 @@ junk*
 test
 dataset/global_maps/*png
 bin/dataset/cc_feature_time.h5
+bin/dataset/cc_feature_time.h5.backup
 1.png
 2.png
 correlation.png
