@@ -312,6 +312,54 @@ def gc_center_selection(n, lo_rad, la_rad, ptlo_rad, ptla_rad,
         gc_center_selection_mat_nn[ista1, ista1:] = rect_mat_row[ista1:] # only modify the upper triangle including the diagonal
     #### make it symmetric
     gc_center_selection_mat_nn |= gc_center_selection_mat_nn.T
+def pair_loc_selection(n, lo_rad, la_rad, loc_rect_boxes_rad, pair_loc_selection_mat_nn):
+    """
+    Compute a NxN matrix with values of 1 or 0 for selecting the pairs of stations or not given
+    rectangle boxes for the selection.
+    A correlation pair between two stations will be discarded if any of the two stations is  outside any
+    rectangle boxes.
+    In other word, a station pair is selected if both of the two stations are inside at least one rectangle box!!!
+    #
+    Parameters:
+        n:        the length of lo_rad or la_rad used for computation.
+        lo_rad:   an ndarray for the longitudes in radian. (will be converted to [0, 2pi) range) (will not modify the input)
+                  This means the station longitudes for inter-station correlations,
+                  and the event longitudes for inter-source correlations.
+        la_rad:   an ndarray for the latitudes in radian. (must be within [-pi/2, pi/2] )
+                  This means the station latitudes for inter-station correlations,
+                  and the event latitudes for inter-source correlations.
+        loc_rect_boxes_rad: a 2D matrix, each row of which corresponds to a rectangle boxes for selecting correlation
+                            pairs. Each row is (lon_min_rad, lon_max_rad, lat_min_rad, lat_max_rad).
+                            #
+                            Also, a flattend 1D array can be used so that every 4 elements define a rectangle box.
+                            In other words, `loc_rect_boxes_rad = np.reshape(loc_rect_boxes_rad, (-1, 4))` will be
+                            called to reshape the input.
+                            #
+                            Also, an zero-length array can be used to disable the rectangle box selection.
+                            `loc_rect_boxes_rad = np.array([] )` or
+                            `loc_rect_boxes_rad = np.empty((0, 4))` works.
+                            !!!Note: Please conside (0 -> 2pi) for the longitude range.
+        pair_loc_selection_mat_nn: the buffer to output selection matrix for pair location selection. The matrix will be modified in-place.
+                                   It is an NxN with values of 1 or 0 for selecting the pairs of stations or not.
+                                   1 for selecting and 0 for discarding. The ijth component of the matrix is
+                                   1 or 0 to select or discard the pair formed by the ith and jth records.
+                                   The matrix is symmetric!
+    """
+    if loc_rect_boxes_rad.size == 0:
+        pair_loc_selection_mat_nn.fill(1)
+        return
+    #### in case of flattend arrays or zero-length arrays
+    loc_rect_boxes_rad = np.reshape(loc_rect_boxes_rad, (-1, 4) )
+    ####
+    PI2 = np.pi*2.0  # 360 degree
+    lo_rad = (lo_rad % PI2)
+    inside = np.zeros(n, dtype=np.int8)
+    for ( lo_min, lo_max, la_min, la_max ) in loc_rect_boxes_rad:
+        v = (lo_min <= lo_rad) & (lo_rad <= lo_max) & (la_min <= la_rad) & (la_rad <= la_max)
+        inside |= v
+    pair_loc_selection_mat_nn.fill(0)
+    pair_loc_selection_mat_nn[:] = inside
+    pair_loc_selection_mat_nn &= pair_loc_selection_mat_nn.T # make it symmetric
 __stack_bin_index = StackBins.stack_bin_index
 @jit(nopython=True, nogil=True)
 def get_stack_index_mat(n, lo_rad, la_rad, dist_min_deg, dist_step_deg, stack_index_mat_nn):
@@ -546,9 +594,10 @@ class CS_InterRcv:
                  wtlen=None, wt_f1=None, wt_f2=None, wflen=None, whiten_taper_halfsize=50,
                  daz_range=None, gcd_range=None,
                  gc_center_rect_boxes=None, gc_center_circles=None, critical_distance_deg=0.1,
+                 stlc_rect_boxes=None,
                  speedup_critical_frequency_band=None, speedup_critical_level=0.01,
                  intermediate_outfnm_prefix=None,
-                 log_print=None, mpi_comm=None):
+                 log_print=None, mpi_comm=None, dummy_cc=False):
         """
         ch_pair_type: a pair of int.
                       E.g., (0, 0) for ZZ, (1, 1) for RR, (0, 3) for ZN...
@@ -574,6 +623,12 @@ class CS_InterRcv:
         if mpi_comm is not None:
             log_print(-1, 'mpi_rank=%d, mpi_size=%d' % (mpi_comm.Get_rank(), mpi_comm.Get_size() ) )
         ############################################################################################################
+        self.dummy_cc = dummy_cc
+        if dummy_cc:
+            log_print(-1, 'Dummy CC mode is ON!')
+            log_print( 1, 'No cross-correlation will be computed!')
+            log_print( 1, 'Only the correlation-pair selection metadata will be generated!')
+        ############################################################################################################
         # Stacking settings
         self.ch_pair_type = ch_pair_type
         log_print(-1, 'Init' )
@@ -592,6 +647,16 @@ class CS_InterRcv:
         log_print( 1, 'Select correlation pairs:' )
         log_print( 2, 'daz_range (deg and rad):', daz_range, self.daz_range_rad)
         log_print( 2, 'gcd_range (deg and rad):', gcd_range, self.gcd_range_rad)
+        ############################################################################################################
+        ### station location selection
+        #`stlc_rect_boxes` is a list of (lomin, lomax, lamin, lamax) in deg, and plz consider longitude range 0->360 
+        #Don't worry if `stlc_rect_boxes` is None, 1d or 2d array. They are handled well latter.
+        stlc_rect_boxes = np.zeros(0) if (stlc_rect_boxes is None) else stlc_rect_boxes
+        self.stlc_rect_boxes_rad = np.deg2rad(stlc_rect_boxes)
+        log_print( 1, 'Select correlation pairs by station locations:')
+        log_print( 2, 'stlc_rect_boxes:     ', stlc_rect_boxes)
+        log_print( 2, 'stlc_rect_boxes(rad):', self.stlc_rect_boxes_rad.flatten() )
+        ############################################################################################################
         ### great circle center selections
         #Don't worry if gc_center_rect_boxes/gc_center_circles is None, 1d or 2d array. They are handled well latter.
         gc_center_rect_boxes = np.zeros(0) if (gc_center_rect_boxes is None) else gc_center_rect_boxes
@@ -674,11 +739,12 @@ class CS_InterRcv:
             log_print( 2, 'cc_nf:                         ', cc_nf)
         ############################################################################################################
         # stack buffers
-        self.stack_mat_spec = np.zeros( (self.stack_bins.centers.size, cc_nf ), dtype=np.complex64)
-        self.stack_count    = np.zeros(  self.stack_bins.centers.size, dtype=np.int32)
-        log_print( 1, 'Correlation spectra stack buffer:')
-        log_print( 2, 'stack_mat_spec: ', self.stack_mat_spec.shape, self.stack_mat_spec.dtype)
-        log_print( 2, 'stack_count:    ', self.stack_count.shape, self.stack_count.dtype)
+        if (not self.dummy_cc):
+            self.stack_mat_spec = np.zeros( (self.stack_bins.centers.size, cc_nf ), dtype=np.complex64)
+            self.stack_count    = np.zeros(  self.stack_bins.centers.size, dtype=np.int32)
+            log_print( 1, 'Correlation spectra stack buffer:')
+            log_print( 2, 'stack_mat_spec: ', self.stack_mat_spec.shape, self.stack_mat_spec.dtype)
+            log_print( 2, 'stack_count:    ', self.stack_count.shape, self.stack_count.dtype)
         ############################################################################################################
         # whiten settings
         self.wtlen = wtlen
@@ -692,7 +758,7 @@ class CS_InterRcv:
         log_print( 2, 'whiten_taper_halfsize: ', self.whiten_taper_halfsize, flush=True)
         ############################################################################################################
         # Optional: turn on spectral whitening speedup
-        self.wf_fftsize = func_align(self.nt4cut, 2) # this may need more tests
+        self.wf_fftsize = func_align(self.nt4cut, 64) # this may need more tests
         if (speedup_critical_frequency_band is not None) and (speedup_critical_level is not None) and (self.wtlen is not None):
             f1, f2 = speedup_critical_frequency_band
             f1, f2 = f1-wflen, f2+wflen
@@ -755,102 +821,107 @@ class CS_InterRcv:
         log_print = self.logger
         log_print(-1, 'Adding... %s' % event_name, flush=True)
         log_print( 1, 'Function variables:')
-        log_print( 2, 'zne_mat_f32: ', zne_mat_f32.shape, zne_mat_f32.dtype)
+        if (zne_mat_f32 is not None) and (not self.dummy_cc):
+            log_print( 2, 'zne_mat_f32: ', zne_mat_f32.shape, zne_mat_f32.dtype)
         log_print( 2, 'stlo:        ', stlo_rad.shape, stlo_rad.dtype)
         log_print( 2, 'stla:        ', stla_rad.shape, stla_rad.dtype)
         log_print( 2, 'evlo:        ', evlo_rad.shape, evlo_rad.dtype)
         log_print( 2, 'evla:        ', evla_rad.shape, evla_rad.dtype, flush=True)
         ############################################################################################################
         #### get ZNERT if necessary, the RT here refers to event-receiver R and T (ERR, ERT)
-        with Timer(tag='zne2znert', verbose=False, summary=local_time_summary):
-            log_print(1, 'Cutting and making ZNERT matrix from the ZNE...')
-            idx0, idx1 = self.cut_idx_range
-            idx0 = max(idx0, 0)
-            idx1 = min(idx1, zne_mat_f32.shape[1])
-            local_sz = idx1-idx0
-            if FLAG_PYFFTW_USED:
-                znert_mat_f32  = pyfftw.zeros_aligned((zne_mat_f32.shape[0]//3*5, self.nt4mem), dtype=np.float32)
-            else:
-                znert_mat_f32  = np.zeros(            (zne_mat_f32.shape[0]//3*5, self.nt4mem), dtype=np.float32)
-            ### Note: the nt4mem is different from nt4cut.
-            ### nt4mem is used for cc_fftsize and address-aligned memory allocation
-            ### nt4cut is for cutting the input time series.
-            ### nt4mem >= nt4cut, and zeros are padded for those additional slots in nt4mem compared to nt4cut.
-            ### nt4cut == self.cut_idx_range[1]-self.cut_idx_range[0]
-            ### nt4mem != self.cut_idx_range[1]-self.cut_idx_range[0]
-            zne2znert(zne_mat_f32[:, idx0:idx1], znert_mat_f32, stlo_rad, stla_rad, evlo_rad, evla_rad)
-            del zne_mat_f32
-            log_print(2, 'cut_idx here:  [%d, %d)' % (idx0, idx1) )
-            log_print(2, 'nt here:       ', local_sz)
-            log_print(2, 'cut_idx_range: [%d, %d)' % (self.cut_idx_range[0], self.cut_idx_range[1]) )
-            log_print(2, 'nt4cut:        ', self.nt4cut)
-            log_print(2, 'nt4fft:        ', self.nt4fft)
-            log_print(2, 'Finished.')
-            log_print(2, 'znert_mat_f32: ', znert_mat_f32.shape, znert_mat_f32.dtype, flush=True)
+        if (not self.dummy_cc):
+            with Timer(tag='zne2znert', verbose=False, summary=local_time_summary):
+                log_print(1, 'Cutting and making ZNERT matrix from the ZNE...')
+                idx0, idx1 = self.cut_idx_range
+                idx0 = max(idx0, 0)
+                idx1 = min(idx1, zne_mat_f32.shape[1])
+                local_sz = idx1-idx0
+                if FLAG_PYFFTW_USED:
+                    znert_mat_f32  = pyfftw.zeros_aligned((zne_mat_f32.shape[0]//3*5, self.nt4mem), dtype=np.float32)
+                else:
+                    znert_mat_f32  = np.zeros(            (zne_mat_f32.shape[0]//3*5, self.nt4mem), dtype=np.float32)
+                ### Note: the nt4mem is different from nt4cut.
+                ### nt4mem is used for cc_fftsize and address-aligned memory allocation
+                ### nt4cut is for cutting the input time series.
+                ### nt4mem >= nt4cut, and zeros are padded for those additional slots in nt4mem compared to nt4cut.
+                ### nt4cut == self.cut_idx_range[1]-self.cut_idx_range[0]
+                ### nt4mem != self.cut_idx_range[1]-self.cut_idx_range[0]
+                zne2znert(zne_mat_f32[:, idx0:idx1], znert_mat_f32, stlo_rad, stla_rad, evlo_rad, evla_rad)
+                del zne_mat_f32
+                log_print(2, 'cut_idx here:  [%d, %d)' % (idx0, idx1) )
+                log_print(2, 'nt here:       ', local_sz)
+                log_print(2, 'cut_idx_range: [%d, %d)' % (self.cut_idx_range[0], self.cut_idx_range[1]) )
+                log_print(2, 'nt4cut:        ', self.nt4cut)
+                log_print(2, 'nt4fft:        ', self.nt4fft)
+                log_print(2, 'Finished.')
+                log_print(2, 'znert_mat_f32: ', znert_mat_f32.shape, znert_mat_f32.dtype, flush=True)
         ############################################################################################################
         #### whiten the input data in time series
-        if self.wtlen:
-            with Timer(tag='wt', verbose=False, summary=local_time_summary):
-                log_print(1, 'Temporal normalization for the ZNERT matrix...')
-                for xs in znert_mat_f32:
-                    if xs.max() > xs.min():
-                        tnorm_f32(xs[:local_sz],   self.delta, self.wtlen, self.wt_f1, self.wt_f2, 1.0e-5, self.whiten_taper_halfsize)
-                log_print(2, 'Finished.', flush=True)
-        if self.wflen:
-            with Timer(tag='wf', verbose=False, summary=local_time_summary):
-                su_wf_i1, su_wf_i2 = self.whiten_speedup_spectra_index_range # default is (-1, -1) to disable speedup
-                log_print(1, 'Spectral whitening for the ZNERT matrix...')
-                log_print(2, 'wf_fftsize:                        ', self.wf_fftsize )
-                log_print(2, 'whiten_speedup_spectra_index_range:', (su_wf_i1, su_wf_i2) )
-                wf_fftsize = self.wf_fftsize
-                for xs in znert_mat_f32:
-                    if xs.max() > xs.min():
-                        fwhiten_f32(xs[:local_sz], self.delta, self.wflen, 1.0e-5, self.whiten_taper_halfsize,
-                                    su_wf_i1, su_wf_i2, wf_fftsize )
-                log_print(2, 'Finished.', flush=True)
+        if (not self.dummy_cc):
+            if self.wtlen:
+                with Timer(tag='wt', verbose=False, summary=local_time_summary):
+                    log_print(1, 'Temporal normalization for the ZNERT matrix...')
+                    for xs in znert_mat_f32:
+                        if xs.max() > xs.min():
+                            tnorm_f32(xs[:local_sz],   self.delta, self.wtlen, self.wt_f1, self.wt_f2, 1.0e-5, self.whiten_taper_halfsize)
+                    log_print(2, 'Finished.', flush=True)
+            if self.wflen:
+                with Timer(tag='wf', verbose=False, summary=local_time_summary):
+                    su_wf_i1, su_wf_i2 = self.whiten_speedup_spectra_index_range # default is (-1, -1) to disable speedup
+                    log_print(1, 'Spectral whitening for the ZNERT matrix...')
+                    log_print(2, 'wf_fftsize:                        ', self.wf_fftsize )
+                    log_print(2, 'whiten_speedup_spectra_index_range:', (su_wf_i1, su_wf_i2) )
+                    wf_fftsize = self.wf_fftsize
+                    for xs in znert_mat_f32:
+                        if xs.max() > xs.min():
+                            fwhiten_f32(xs[:local_sz], self.delta, self.wflen, 1.0e-5, self.whiten_taper_halfsize,
+                                        su_wf_i1, su_wf_i2, wf_fftsize )
+                    log_print(2, 'Finished.', flush=True)
         ############################################################################################################
         #### remove Nan of Inf
-        not_valid = lambda xs: np.any( np.isnan(xs) ) or np.any( np.isinf(xs) ) or (np.max(xs) == np.min(xs) )
-        with Timer(tag='fix_nan', verbose=False, summary=local_time_summary):
-            log_print(1, 'Zeroing the stations with any Nan of Inf in any of ZNERT...')
-            invalid_stas = [idx//5 for idx, xs in enumerate(znert_mat_f32) if not_valid(xs) ]
-            invalid_stas = list(set(invalid_stas) )
-            for ista in invalid_stas:
-                znert_mat_f32[ista*5,   :] = 0.0
-                znert_mat_f32[ista*5+1, :] = 0.0
-                znert_mat_f32[ista*5+2, :] = 0.0
-                znert_mat_f32[ista*5+3, :] = 0.0
-                znert_mat_f32[ista*5+4, :] = 0.0
-            log_print(2, 'Finished.', flush=True)
+        if (not self.dummy_cc):
+            not_valid = lambda xs: np.any( np.isnan(xs) ) or np.any( np.isinf(xs) ) or (np.max(xs) == np.min(xs) )
+            with Timer(tag='fix_nan', verbose=False, summary=local_time_summary):
+                log_print(1, 'Zeroing the stations with any Nan of Inf in any of ZNERT...')
+                invalid_stas = [idx//5 for idx, xs in enumerate(znert_mat_f32) if not_valid(xs) ]
+                invalid_stas = list(set(invalid_stas) )
+                for ista in invalid_stas:
+                    znert_mat_f32[ista*5,   :] = 0.0
+                    znert_mat_f32[ista*5+1, :] = 0.0
+                    znert_mat_f32[ista*5+2, :] = 0.0
+                    znert_mat_f32[ista*5+3, :] = 0.0
+                    znert_mat_f32[ista*5+4, :] = 0.0
+                log_print(2, 'Finished.', flush=True)
         ############################################################################################################
         #### fft
-        with Timer(tag='fft', verbose=False, summary=local_time_summary):
-            log_print(1, 'FFTing...')
-            nrow = znert_mat_f32.shape[0]
-            i1, i2 = self.cc_speedup_spectra_index_range
-            if FLAG_PYFFTW_USED:
-                spectra_c64 = pyfftw.zeros_aligned((nrow, i2-i1), dtype=np.complex64)
-            else:
-                spectra_c64 = np.zeros(            (nrow, i2-i1), dtype=np.complex64)
-            ####
-            if FLAG_PYFFTW_USED:
-                ####method: pyfftw interface fft
-                ###pyffftw_interfaces_cache.enable()
-                ###for irow in range(nrow): # do fft one by one may save some memory
-                ###    spectra_c64[irow] = rfft(znert_mat_f32[irow], self.cc_fftsize)[i1:i2]
-                #method: pyfftw builder fft
-                buf_spec = self.pyfftw_buf_spec
-                rfft_obj = self.pyfftw_rfft_obj
-                for irow in range(nrow):
-                    rfft_obj(znert_mat_f32[irow], buf_spec, normalise_idft=True)
-                    spectra_c64[irow] = buf_spec[i1:i2]
-            else:
-                #method: scipy fft
-                for irow in range(nrow):
-                    spectra_c64[irow] = rfft(znert_mat_f32[irow], self.cc_fftsize)[i1:i2]# method: scipy.fft.rfft
-            del znert_mat_f32
-            log_print(2, 'Finished.')
-            log_print(2, 'spectra_c64: ', spectra_c64.shape, spectra_c64.dtype, flush=True)
+        if (not self.dummy_cc):
+            with Timer(tag='fft', verbose=False, summary=local_time_summary):
+                log_print(1, 'FFTing...')
+                nrow = znert_mat_f32.shape[0]
+                i1, i2 = self.cc_speedup_spectra_index_range
+                if FLAG_PYFFTW_USED:
+                    spectra_c64 = pyfftw.zeros_aligned((nrow, i2-i1), dtype=np.complex64)
+                else:
+                    spectra_c64 = np.zeros(            (nrow, i2-i1), dtype=np.complex64)
+                ####
+                if FLAG_PYFFTW_USED:
+                    ####method: pyfftw interface fft
+                    ###pyffftw_interfaces_cache.enable()
+                    ###for irow in range(nrow): # do fft one by one may save some memory
+                    ###    spectra_c64[irow] = rfft(znert_mat_f32[irow], self.cc_fftsize)[i1:i2]
+                    #method: pyfftw builder fft
+                    buf_spec = self.pyfftw_buf_spec
+                    rfft_obj = self.pyfftw_rfft_obj
+                    for irow in range(nrow):
+                        rfft_obj(znert_mat_f32[irow], buf_spec, normalise_idft=True)
+                        spectra_c64[irow] = buf_spec[i1:i2]
+                else:
+                    #method: scipy fft
+                    for irow in range(nrow):
+                        spectra_c64[irow] = rfft(znert_mat_f32[irow], self.cc_fftsize)[i1:i2]# method: scipy.fft.rfft
+                del znert_mat_f32
+                log_print(2, 'Finished.')
+                log_print(2, 'spectra_c64: ', spectra_c64.shape, spectra_c64.dtype, flush=True)
         ############################################################################################################
         ccpairs_selection_mat = np.ones( (stlo_rad.size, stlo_rad.size), dtype=np.int8)
         gcd_selection_mat = None
@@ -877,6 +948,19 @@ class CS_InterRcv:
                 #
                 dict_output_inter_mediate_data['daz_selection_mat'] = daz_selection_mat
                 log_print(2, 'daz_selection_mat: ', daz_selection_mat.shape, daz_selection_mat.dtype)
+                log_print(2, 'Finished.', flush=True)
+        ############################################################################################################
+        #### selection w.r.t. station locations
+        with Timer(tag='stlc_select', verbose=False, summary=local_time_summary):
+            if self.stlc_rect_boxes_rad.size>0:
+                log_print(1, 'Selecting w.r.t. station locations...')
+                stlc_selection_mat = np.zeros( (stlo_rad.size, stlo_rad.size), dtype=np.int8)
+                # pair_loc_selection(...) will take care of any values of `stlo_rad` that are outside [0, 2pi)
+                pair_loc_selection(stlo_rad.size, stlo_rad, stla_rad, self.stlc_rect_boxes_rad, stlc_selection_mat)
+                ccpairs_selection_mat &= stlc_selection_mat
+                #
+                dict_output_inter_mediate_data['stlc_selection_mat'] = stlc_selection_mat
+                log_print(2, 'stlc_selection_mat: ', stlc_selection_mat.shape, stlc_selection_mat.dtype)
                 log_print(2, 'Finished.', flush=True)
         ############################################################################################################
         #### selection w.r.t. great circle center locations
@@ -928,6 +1012,10 @@ class CS_InterRcv:
                     grp.create_dataset('daz_selection_mat', data=np.packbits(daz_selection_mat.flatten() ) )
                     grp['daz_selection_mat'].attrs['shape'] = daz_selection_mat.shape
                     grp['daz_selection_mat'].attrs['daz_range_rad'] = np.reshape(self.daz_range_rad, (-1, 2) )
+                if self.stlc_rect_boxes_rad.size>0:
+                    grp.create_dataset('stlc_selection_mat', data=np.packbits(stlc_selection_mat.flatten() ) )
+                    grp['stlc_selection_mat'].attrs['shape'] = stlc_selection_mat.shape
+                    grp['stlc_selection_mat'].attrs['stlc_rect_boxes_rad'] = np.reshape(self.stlc_rect_boxes_rad, (-1, 4) )
                 if (self.gc_center_rect_boxes_rad.size>0) or (self.gc_center_circles_rad.size>0):
                     grp.create_dataset('gc_center_selection_mat', data=np.packbits(gc_center_selection_mat.flatten() ) )
                     grp['gc_center_selection_mat'].attrs['shape'] = gc_center_selection_mat.shape
@@ -944,14 +1032,15 @@ class CS_InterRcv:
             del gc_center_selection_mat
         ############################################################################################################
         #### cc & stack
-        with Timer(tag='ccstack', verbose=False, summary=local_time_summary):
-            log_print(1, 'cc&stack...')
-            ch1, ch2 = self.ch_pair_type
-            stack_count = self.stack_count
-            stack_mat_spec = self.stack_mat_spec
-            #print(spectra_c64.dtype, stack_mat_spec.dtype, stack_count.dtype, stack_index_mat_nn.dtype, selection_mat.dtype, flush=True)
-            cc_stack(ch1, ch2, spectra_c64, stlo_rad, stla_rad, stack_mat_spec, stack_count, stack_index_mat_nn, ccpairs_selection_mat)
-            log_print(2, 'Finished.', flush=True)
+        if (not self.dummy_cc):
+            with Timer(tag='ccstack', verbose=False, summary=local_time_summary):
+                log_print(1, 'cc&stack...')
+                ch1, ch2 = self.ch_pair_type
+                stack_count = self.stack_count
+                stack_mat_spec = self.stack_mat_spec
+                #print(spectra_c64.dtype, stack_mat_spec.dtype, stack_count.dtype, stack_index_mat_nn.dtype, selection_mat.dtype, flush=True)
+                cc_stack(ch1, ch2, spectra_c64, stlo_rad, stla_rad, stack_mat_spec, stack_count, stack_index_mat_nn, ccpairs_selection_mat)
+                log_print(2, 'Finished.', flush=True)
         ############################################################################################################
         #t_total = time_time() - t0
         #t_other = t_total*1000 - local_time_summary.total_t() # miliseconds
@@ -964,6 +1053,10 @@ class CS_InterRcv:
     def finish(self, filter_band=None, fold=True, cut=None, taper_sec=None, norm=False, ofnm=None):
         """
         """
+        if self.dummy_cc:
+            self.logger(1, 'Dummy correlation stack, nothing to finish.')
+            return None
+        ############################################################################################################
         log_print = self.logger
         log_print(-1, 'To finish...')
         ############################################################################################################
@@ -1079,26 +1172,28 @@ class CS_InterRcv:
         mpi_ncpu = mpi_comm.Get_size()
         ########################################################################
         # gather stack_mat_spec and stack_count
-        log_print(-1, 'MPI reduce stack results to rank0...', flush=True)
-        stack_mat_spec = self.stack_mat_spec
-        stack_count    = self.stack_count
-        global_stack_mat_spec = stack_mat_spec
-        global_stack_count    = stack_count
-        if mpi_rank == 0:
-            global_stack_mat_spec = np.zeros(stack_mat_spec.shape, dtype=stack_mat_spec.dtype )
-            global_stack_count    = np.zeros(stack_count.shape,    dtype=stack_count.dtype )
-        mpi_comm.Reduce([stack_mat_spec, MPI.C_FLOAT_COMPLEX], [global_stack_mat_spec, MPI.C_FLOAT_COMPLEX], MPI.SUM, root= 0)
-        mpi_comm.Reduce([stack_count, MPI.INT32_T], [global_stack_count, MPI.INT32_T], MPI.SUM, root= 0 )
-        log_print(1, 'Finished.')
-        mpi_comm.Barrier()
+        if (not self.dummy_cc):
+            log_print(-1, 'MPI reduce stack results to rank0...', flush=True)
+            stack_mat_spec = self.stack_mat_spec
+            stack_count    = self.stack_count
+            global_stack_mat_spec = stack_mat_spec
+            global_stack_count    = stack_count
+            if mpi_rank == 0:
+                global_stack_mat_spec = np.zeros(stack_mat_spec.shape, dtype=stack_mat_spec.dtype )
+                global_stack_count    = np.zeros(stack_count.shape,    dtype=stack_count.dtype )
+            mpi_comm.Reduce([stack_mat_spec, MPI.C_FLOAT_COMPLEX], [global_stack_mat_spec, MPI.C_FLOAT_COMPLEX], MPI.SUM, root= 0)
+            mpi_comm.Reduce([stack_count, MPI.INT32_T], [global_stack_count, MPI.INT32_T], MPI.SUM, root= 0 )
+            log_print(1, 'Finished.')
+            mpi_comm.Barrier()
         ########################################################################
         # finish on rank 0
-        if mpi_rank == 0:
-            self.stack_mat_spec = global_stack_mat_spec
-            self.stack_count    = global_stack_count
-            to_return = self.finish(filter_band=filter_band, fold=fold, cut=cut, taper_sec=taper_sec, norm=norm, ofnm=ofnm)
-        else:
-            to_return = None
+        if (not self.dummy_cc):
+            if mpi_rank == 0:
+                self.stack_mat_spec = global_stack_mat_spec
+                self.stack_count    = global_stack_count
+                to_return = self.finish(filter_band=filter_band, fold=fold, cut=cut, taper_sec=taper_sec, norm=norm, ofnm=ofnm)
+            else:
+                to_return = None
         ########################################################################
         # gather and print time consumption information
         mpi_comm.Barrier()
