@@ -979,9 +979,10 @@ class CS_InterRcv:
         #### Finish the correlation selection
         with Timer(tag='cc_pair_select', verbose=False, summary=local_time_summary):
             log_print(1, 'Finish obtaining cc pair selections matrix...')
-            for ista in invalid_stas:
-                ccpairs_selection_mat[ista,:] = 0
-                ccpairs_selection_mat[:,ista] = 0
+            if (not self.dummy_cc):
+                for ista in invalid_stas:
+                    ccpairs_selection_mat[ista,:] = 0
+                    ccpairs_selection_mat[:,ista] = 0
             dict_output_inter_mediate_data['ccpairs_selection_mat'] = ccpairs_selection_mat
             log_print(2, 'ccpairs_selection_mat: ', ccpairs_selection_mat.shape, ccpairs_selection_mat.dtype)
             log_print(2, 'Finished.', flush=True)
@@ -1004,19 +1005,19 @@ class CS_InterRcv:
                 grp.create_dataset('stla_rad', data=stla_rad, dtype=np.float32)
                 grp.create_dataset('evlo_rad', data=evlo_rad, dtype=np.float32)
                 grp.create_dataset('evla_rad', data=evla_rad, dtype=np.float32)
-                if self.gcd_range_rad.size>0:
+                if (self.gcd_range_rad.size>0) and (np.sum(gcd_selection_mat==0) > 0):
                     grp.create_dataset('gcd_selection_mat', data=np.packbits(gcd_selection_mat.flatten() ) )
                     grp['gcd_selection_mat'].attrs['shape'] = gcd_selection_mat.shape
                     grp['gcd_selection_mat'].attrs['gcd_range_rad'] = np.reshape(self.gcd_range_rad, (-1, 2) )
-                if self.daz_range_rad.size>0:
+                if (self.daz_range_rad.size>0) and (np.sum(daz_selection_mat==0) > 0):
                     grp.create_dataset('daz_selection_mat', data=np.packbits(daz_selection_mat.flatten() ) )
                     grp['daz_selection_mat'].attrs['shape'] = daz_selection_mat.shape
                     grp['daz_selection_mat'].attrs['daz_range_rad'] = np.reshape(self.daz_range_rad, (-1, 2) )
-                if self.stlc_rect_boxes_rad.size>0:
+                if (self.stlc_rect_boxes_rad.size>0) and (np.sum(stlc_selection_mat==0) > 0):
                     grp.create_dataset('stlc_selection_mat', data=np.packbits(stlc_selection_mat.flatten() ) )
                     grp['stlc_selection_mat'].attrs['shape'] = stlc_selection_mat.shape
                     grp['stlc_selection_mat'].attrs['stlc_rect_boxes_rad'] = np.reshape(self.stlc_rect_boxes_rad, (-1, 4) )
-                if (self.gc_center_rect_boxes_rad.size>0) or (self.gc_center_circles_rad.size>0):
+                if ( (self.gc_center_rect_boxes_rad.size>0) or (self.gc_center_circles_rad.size>0) ) and (np.sum(gc_center_selection_mat==0) > 0):
                     grp.create_dataset('gc_center_selection_mat', data=np.packbits(gc_center_selection_mat.flatten() ) )
                     grp['gc_center_selection_mat'].attrs['shape'] = gc_center_selection_mat.shape
                     grp['gc_center_selection_mat'].attrs['gc_center_rect_boxes_rad'] = np.reshape(self.gc_center_rect_boxes_rad, (-1, 4) )
@@ -1187,13 +1188,12 @@ class CS_InterRcv:
             mpi_comm.Barrier()
         ########################################################################
         # finish on rank 0
+        to_return = None
         if (not self.dummy_cc):
             if mpi_rank == 0:
                 self.stack_mat_spec = global_stack_mat_spec
                 self.stack_count    = global_stack_count
                 to_return = self.finish(filter_band=filter_band, fold=fold, cut=cut, taper_sec=taper_sec, norm=norm, ofnm=ofnm)
-            else:
-                to_return = None
         ########################################################################
         # gather and print time consumption information
         mpi_comm.Barrier()
