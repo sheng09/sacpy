@@ -319,7 +319,7 @@ def split_px_legs(ps, xs, lst_of_lst=None):
     ps = np.array(ps)[idx_sort]
     xs = np.array(xs)[idx_sort]
     if lst_of_lst is not None:
-        lst_of_lst = [ [lst[it] for it in idx_sort] for lst in lst_of_lst]
+        lst_of_lst = [ lst[idx_sort] if isinstance(lst, np.ndarray) else [lst[it] for it in idx_sort]        for lst in lst_of_lst]
     ### if there are just two data points (which means a single leg), then return a single leg
     if len(ps) == 2:
         if lst_of_lst is not None:

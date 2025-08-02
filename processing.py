@@ -1282,16 +1282,13 @@ class TSFuncs:
             #########
             tend = tstart + (mat.shape[1]-1)*dt
             xend = xstart + (mat.shape[0]-1)*dx
-            if kwargs['origin'] == 'lower':
-                extent = (tstart-0.5*dt, tend+0.5*dt, xstart-0.5*dx, xend+0.5*dx) # pixel centers
-            else:
-                extent = (tstart-0.5*dt, tend+0.5*dt, xend+0.5*dx, xstart-0.5*dx) # pixel centers
+            if kwargs['origin'] == 'upper':
+                xstart, xend = xend, xstart # swap xstart and xend if origin is 'upper'
+            extent = (tstart-0.5*dt, tend+0.5*dt, xstart-0.5*dx, xend+0.5*dx) # pixel centers
             #########
             ax.imshow(mat, extent=extent, **kwargs)
-            if tend>tstart:
-                ax.set_xlim((tstart, tend) )
-            if xend>xstart:
-                ax.set_ylim((xstart, xend) )
+            ax.set_xlim((tstart, tend) )
+            ax.set_ylim((xstart, xend) )
             if label_col is not None:
                 ax.set_xlabel(label_col)
             if label_row is not None:
