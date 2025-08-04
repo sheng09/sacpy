@@ -1325,6 +1325,7 @@ class CS_InterRcv:
                     grp['ccpairs_selection_mat'].attrs['shape'] = ccpairs_selection_mat.shape
                 # stack_index_mat_nn values are not binary, hence CANNOT support packbits(...)
                 grp.create_dataset('stack_index_mat_nn', data=stack_index_mat_nn)
+                grp['stack_index_mat_nn'].attrs['bin_settings']    = (self.stack_bins.centers[0], self.stack_bins.step, self.stack_bins.centers.size)
                 log_print(1, 'Intermediate data saved!', flush=True)
             del gcd_selection_mat
             del daz_selection_mat
