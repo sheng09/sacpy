@@ -927,6 +927,13 @@ class CS_InterRcv:
             log_print( 1, 'No cross-correlation will be computed!')
             log_print( 1, 'Only the correlation-pair selection metadata will be generated!')
         ############################################################################################################
+        if type(self) is CS_InterRcv:
+            self.inter_src = False
+            log_print(-1, "Inter-receiver correlation mode is ON!")
+        elif type(self) is CS_InterSrc:
+            self.inter_src = True
+            log_print(-1, "Inter-source correlation mode is ON!")
+        ############################################################################################################
         # Stacking settings
         self.ch_pair_type = ch_pair_type
         log_print(-1, 'Init' )
@@ -1221,7 +1228,14 @@ class CS_InterRcv:
                 log_print(2, 'Finished.')
                 log_print(2, 'spectra_c64: ', spectra_c64.shape, spectra_c64.dtype, flush=True)
         ############################################################################################################
-        ccpairs_selection_mat = np.ones( (stlo_rad.size, stlo_rad.size), dtype=np.int8)
+        if self.inter_src: # inter-source correlation
+            cc_lo, cc_la   = evlo_rad, evla_rad
+            ref_lo, ref_la = stlo_rad, stla_rad
+        else: # inter-receiver correlation
+            cc_lo, cc_la   = stlo_rad, stla_rad
+            ref_lo, ref_la = evlo_rad, evla_rad
+        ############################################################################################################
+        ccpairs_selection_mat = np.ones( (cc_lo.size, cc_lo.size), dtype=np.int8)
         gcd_selection_mat = None
         daz_selection_mat = None
         gc_center_selection_mat = None
@@ -1231,8 +1245,8 @@ class CS_InterRcv:
         with Timer(tag='gcd_daz_select', verbose=False, summary=local_time_summary):
             if (self.gcd_range_rad.size>0):
                 log_print(1, 'Selecting wr.t. gcd ranges...')
-                gcd_selection_mat = np.zeros( (stlo_rad.size, stlo_rad.size), dtype=np.int8)
-                gcd_selection(stlo_rad.size, stlo_rad, stla_rad, evlo_rad[0], evla_rad[0], self.gcd_range_rad, gcd_selection_mat)
+                gcd_selection_mat = np.zeros( (cc_lo.size, cc_lo.size), dtype=np.int8)
+                gcd_selection(cc_lo.size, cc_lo, cc_la, ref_lo[0], ref_la[0], self.gcd_range_rad, gcd_selection_mat)
                 ccpairs_selection_mat &= gcd_selection_mat
                 #
                 dict_output_inter_mediate_data['gcd_selection_mat'] = gcd_selection_mat
@@ -1240,21 +1254,21 @@ class CS_InterRcv:
                 log_print(2, 'Finished.', flush=True)
             if (self.daz_range_rad.size>0):
                 log_print(1, 'Selecting wr.t. daz ranges...')
-                daz_selection_mat = np.zeros( (stlo_rad.size, stlo_rad.size), dtype=np.int8)
-                daz_selection(stlo_rad.size, stlo_rad, stla_rad, evlo_rad[0], evla_rad[0], self.daz_range_rad, daz_selection_mat)
+                daz_selection_mat = np.zeros( (cc_lo.size, cc_lo.size), dtype=np.int8)
+                daz_selection(cc_lo.size, cc_lo, cc_la, ref_lo[0], ref_la[0], self.daz_range_rad, daz_selection_mat)
                 ccpairs_selection_mat &= daz_selection_mat
                 #
                 dict_output_inter_mediate_data['daz_selection_mat'] = daz_selection_mat
                 log_print(2, 'daz_selection_mat: ', daz_selection_mat.shape, daz_selection_mat.dtype)
                 log_print(2, 'Finished.', flush=True)
         ############################################################################################################
-        #### selection w.r.t. station locations
+        #### selection w.r.t. station locations for inter-receiver correlation (or event locations for inter-source)
         with Timer(tag='stlc_select', verbose=False, summary=local_time_summary):
             if self.stlc_rect_boxes_rad.size>0:
                 log_print(1, 'Selecting w.r.t. station locations...')
-                stlc_selection_mat = np.zeros( (stlo_rad.size, stlo_rad.size), dtype=np.int8)
-                # pair_loc_selection(...) will take care of any values of `stlo_rad` that are outside [0, 2pi)
-                pair_loc_selection(stlo_rad.size, stlo_rad, stla_rad, self.stlc_rect_boxes_rad, stlc_selection_mat)
+                stlc_selection_mat = np.zeros( (cc_lo.size, cc_lo.size), dtype=np.int8)
+                # pair_loc_selection(...) will take care of any values of `cc_lo` that are outside [0, 2pi)
+                pair_loc_selection(cc_lo.size, cc_lo, cc_la, self.stlc_rect_boxes_rad, stlc_selection_mat)
                 ccpairs_selection_mat &= stlc_selection_mat
                 #
                 dict_output_inter_mediate_data['stlc_selection_mat'] = stlc_selection_mat
@@ -1265,8 +1279,8 @@ class CS_InterRcv:
         with Timer(tag='gc_center_select', verbose=False, summary=local_time_summary):
             if (self.gc_center_rect_boxes_rad.size>0) or (self.gc_center_circles_rad.size>0):
                 log_print(1, 'Selecting w.r.t. to great circle center locations...')
-                gc_center_selection_mat = np.zeros( (stlo_rad.size, stlo_rad.size), dtype=np.int8)
-                gc_center_selection(stlo_rad.size, stlo_rad, stla_rad, evlo_rad[0], evla_rad[0],
+                gc_center_selection_mat = np.zeros( (cc_lo.size, cc_lo.size), dtype=np.int8)
+                gc_center_selection(cc_lo.size, cc_lo, cc_la, ref_lo[0], ref_la[0],
                                     self.gc_center_rect_boxes_rad, self.gc_center_circles_rad, gc_center_selection_mat,
                                     self.critical_distance_rad)
                 dict_output_inter_mediate_data['gc_center_selection_mat'] = gc_center_selection_mat
@@ -1288,9 +1302,9 @@ class CS_InterRcv:
         #### stack index
         with Timer(tag='get_stack_index', verbose=False, summary=local_time_summary):
             log_print(1, 'Computing the stack index...')
-            stack_index_mat_nn = np.zeros( (stlo_rad.size, stlo_rad.size), dtype=np.uint16)
+            stack_index_mat_nn = np.zeros( (cc_lo.size, cc_la.size), dtype=np.uint16)
             dist_min, dist_step = self.stack_bins.centers[0], self.stack_bins.step
-            get_stack_index_mat(stlo_rad.size, stlo_rad, stla_rad, dist_min, dist_step, stack_index_mat_nn)
+            get_stack_index_mat(cc_lo.size, cc_lo, cc_la, dist_min, dist_step, stack_index_mat_nn)
             dict_output_inter_mediate_data['stack_index_mat_nn'] = stack_index_mat_nn
             log_print(2, 'stack_index_mat_nn: ', stack_index_mat_nn.shape, stack_index_mat_nn.dtype)
             log_print(2, 'Finished.', flush=True)
@@ -1339,7 +1353,7 @@ class CS_InterRcv:
                 stack_count = self.stack_count
                 stack_mat_spec = self.stack_mat_spec
                 #print(spectra_c64.dtype, stack_mat_spec.dtype, stack_count.dtype, stack_index_mat_nn.dtype, selection_mat.dtype, flush=True)
-                cc_stack(ch1, ch2, spectra_c64, stlo_rad, stla_rad, stack_mat_spec, stack_count, stack_index_mat_nn, ccpairs_selection_mat)
+                cc_stack(ch1, ch2, spectra_c64, cc_lo, cc_la, stack_mat_spec, stack_count, stack_index_mat_nn, ccpairs_selection_mat)
                 log_print(2, 'Finished.', flush=True)
         ############################################################################################################
         #t_total = time_time() - t0
@@ -1561,6 +1575,14 @@ class CS_InterRcv:
             folder = '/'.join(filename.split('/')[:-1])
             if not os.path.exists(folder):
                 os.makedirs(folder)
+
+class CS_InterSrc(CS_InterRcv):
+    def __init__(self, ch_pair_type, delta, nt, **kwargs):
+        """
+        Chan the parameter info for `CS_InterRcv.__init__(...)`
+        """
+        self.inter_src = True
+        super().__init__(ch_pair_type, delta, nt, **kwargs)
 
 if __name__ == "__main__":
     if False:
