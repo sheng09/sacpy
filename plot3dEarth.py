@@ -718,32 +718,7 @@ class beachball_3d:
     """
     Class to plot 3d beachball given focal mechanism.
 
-    Example:
-    >>> import pyvista as pv
-    >>>
-    >>> p = pv.Plotter(notebook=0, shape=(1, 1), border=False, window_size=(1700, 1000) )
-    >>> p.set_background('white')
-    >>> ######################################################
-    >>> # plot surface
-    >>> mesh = pv.Plane(center=(0, 0, 0), direction=(0, 0, 1), i_size=30, j_size=30, i_resolution=10, j_resolution=10)
-    >>> mesh.point_arrays.clear()
-    >>> p.add_mesh(mesh, show_edges=True, opacity=0.6, smooth_shading=True, lighting=False, culling=False)
-    >>> ######################################################
-    >>> # plot East, South, Down vectors
-    >>> start = (-15, -15, 0)
-    >>> for v in ( (1, 0, 0), (0, 1, 0), (0, 0, -1) ):
-    >>>     mesh = pv.Arrow(start=start, direction=v, tip_length=0.3, shaft_resolution=30, shaft_radius=0.01, scale=3)
-    >>>     p.add_mesh(mesh, show_edges=True,  opacity=1.0, color='k', smooth_shading=True, lighting=True, culling=False)
-    >>> ######################################################
-    >>> # plot beachball
-    >>> mt = [0.91, -0.89, -0.02, 1.78, -1.55, 0.47]
-    >>> bb = beachball_3d(mt)
-    >>> cmap = ListedColormap(('#444444', '#eeeeee'))
-    >>> bb.plot_3d(p,     center=(0,0,0), radius=10.0, hemisphere='None', cmap='RdBu_r', plot_nodal=True, show_scalar_bar=True)
-    >>> bb.plot_3d_vec(p, center=(0,0,0), radius=10.0, hemisphere=None, alpha=1.0, lighting=False, culling=False, scale=3)
-    >>> bb.plot_3d_vcone(p, apex=(0,0,0), cones=[(3.0, 15, '#CA3C33', 0.3), (3.1, 15, '#407AA2', 0.3)])
-    >>> p.camera_position=( (0, -55, -30), (0, 0, 0), (0, 0, 1) )
-    >>> p.show()
+    Examples are in `beachball_3d.benchmark(...)`.
     """
     def __init__(self, mt):
         """
@@ -770,33 +745,59 @@ class beachball_3d:
         mat[0,1], mat[1,0] = -M23, -M23
         self.d_mt = mt
         self.d_mat = mat
-    def __radiation_p(self, thetas, phis, binarization=False):
+    def __radiation(self, thetas, phis, binarization=False):
         """
-        Compute the P-wave radiations given a list of directions.
+        Compute the P-, SV- and SH-wave radiations given a list of points on a unit sphere.
 
-        thetas, phis: a list of theta and phi. theta is angle between
+        thetas, phis: a list of theta and phi for the points on
+                      a unit sphere. theta is angle between
                       the direction and x axis, and phi the angle
                       between the direction and z axis. Angles should
                       be in radian other than in degree.
-        binarization: Modify the radiation amplitude to -1, 0, 1 for
+        binarization: Modify the P-wave radiation amplitude to -1, 0, 1 for
                       negative, zero, and positive amplitudes, respectively.
+                      Will not modify SV- and SH-wave amplitudes.
 
-        Return: vecs, radiations
-                vecs: a matrix each row of which is a unit direction vector.
-                radiations: a list of radiation amplitudes for the directions.
+        Return: loc_xyz, P_pol, SV_pol, SH_pol, P_amp, SV_amp, SH_amp
+                loc_xyz: a matrix each row of which specify a point's (x,y,z) on a unit sphere.
+                P_pol:   a matrix each row of which specify the unit vector for the polarity direction of the P wave at the point (x,y,z).
+                SV_pol:  a matrix each row of which specify the unit vector for the polarity direction of the SV wave at the point (x,y,z).
+                SH_pol:  a matrix each row of which specify the unit vector for the polarity direction of the SH wave at the point (x,y,z).
+                P_amp:   an array each element of which specify the radiation amplitude of the P wave along the unit vector polarity direction at the point (x,y,z).
+                SV_amp:  an array each element of which specify the radiation amplitude of the SV wave along the unit vector polarity direction at the point (x,y,z).
+                SH_amp:  an array each element of which specify the radiation amplitude of the SH wave along the unit vector polarity direction at the point (x,y,z).
+
+                !!! Note: the unit vector for a polarity should be combined with its amplitude! Usually, a negative amplitude means
+                the displacement is in the opposite direction of the unit vector, and a positive amplitude means the displacement is in
+                the direction of the unit vector!
         """
-        sin, cos = np.sin, np.cos
-        sp, cp = sin(phis), cos(phis)
-        vecs = np.zeros((len(thetas), 3 ) )
-        vecs[:,0] = sp*cos(thetas)
-        vecs[:,1] = sp*sin(thetas)
-        vecs[:,2] = cp
-        radiations = np.zeros(len(thetas) )
-        for idx, vt in enumerate(vecs):
-            radiations[idx] = np.matmul(np.matmul(vt, self.d_mat), vt.T)
+        sin_phi, cos_phi     = np.sin(phis), np.cos(phis)
+        sin_theta, cos_theta = np.sin(thetas), np.cos(thetas)
+        ####################
+        #unit P wave polarity vectors from the center of the source
+        P_pol      = np.zeros((len(thetas), 3 ) )
+        P_pol[:,0] = sin_phi * cos_theta
+        P_pol[:,1] = sin_phi * sin_theta
+        P_pol[:,2] = cos_phi
+        loc_xyz = P_pol
+        #the SV vectors that are perpendicular to the radial vectors and in vertical planes
+        SV_pol      = np.zeros((len(thetas), 3 ) )
+        SV_pol[:,0] = cos_phi * cos_theta
+        SV_pol[:,1] = cos_phi * sin_theta
+        SV_pol[:,2] = -sin_phi
+        #the SH vectors that are perpendicular to the radial vectors and in vertical planes
+        SH_pol      = np.zeros((len(thetas), 3 ) )
+        SH_pol[:,0] = sin_theta
+        SH_pol[:,1] = -cos_theta
+        SH_pol[:,2] = 0.0
+        ####################
+        P_amp, SV_amp, SH_amp = np.zeros(len(thetas) ), np.zeros(len(thetas) ), np.zeros(len(thetas) )
+        for pol, amp in zip((P_pol, SV_pol, SH_pol), (P_amp, SV_amp, SH_amp)):
+            for idx, pol in enumerate(pol):
+                amp[idx] = np.matmul(np.matmul(pol, self.d_mat), P_pol[idx].T) # based on Eq.4.97 in Aki&Richard (2002) Quantitative Seismology (2nd edition)
         if binarization:
-            radiations = np.sign(radiations)
-        return vecs, radiations
+            P_amp = np.sign(P_amp)
+        return loc_xyz, P_pol, SV_pol, SH_pol, P_amp, SV_amp, SH_amp
     def plot_3d_vcone(self, p, apex=(0,0,0), cones=[(2.8, 18, 'r', 0.3), (3.1, 18, 'b', 0.3)], 
                       culling=False, lighting=False):
         """
@@ -836,7 +837,7 @@ class beachball_3d:
     def plot_3d_vec(self, p, center=(0,0,0), radius=10.0, hemisphere=None,
                     neg_color='#0f0396', pos_color='#db620c',
                     alpha=1.0, scale=3.0, density_level=3,
-                    lighting=False, culling=False, ):
+                    lighting=False, culling=False, wave_type='P'):
         """
         Plot 3d P-wave radiation vectors at the surface of the beachball.
 
@@ -851,40 +852,65 @@ class beachball_3d:
         density_level: the bigger, the more vector arrows.
         culling:    pyvista parameters.
         lighting:   pyvista parameters.
+        wave_type:  'P', 'SV', 'SH', 'S', or 'all' to specify the type of wave.
         """
-        sin, cos, pi = np.sin, np.cos, np.pi
-        phi_min, phi_max = 0.0, pi
+        if wave_type not in ('P', 'SV', 'SH', 'S', 'all'):
+            raise ValueError(f"Unknown wave_type: {wave_type}. Use 'P', 'SV', 'SH', 'S', or 'all'.")
         mesh = stripy.spherical_meshes.triangulated_cube_mesh(refinement_levels=density_level)
         thetas = mesh.lons
-        phis   = pi*0.5 - mesh.lats
-        if hemisphere=='upper':
-            phi_max = 0.5*pi
-        elif hemisphere=='lower':
-            phi_min = 0.5*pi
-
-        idxs = np.where(phi_min<=phis)
+        phis   = np.pi*0.5 - mesh.lats
+        phi_min = 0.0   if (hemisphere!='lower') else 0.5*np.pi
+        phi_max = np.pi if (hemisphere!='upper') else 0.5*np.pi
+        #########
+        idxs = np.where((phi_min<=phis) & (phis<=phi_max))
         thetas, phis = thetas[idxs], phis[idxs]
         idxs = np.where(phis<=phi_max)
         thetas, phis = thetas[idxs], phis[idxs]
-
-        vecs, radiations = self.__radiation_p(thetas, phis)
+        #########
+        loc_xyz, P_pol, SV_pol, SH_pol, P_amp, SV_amp, SH_amp = self.__radiation(thetas, phis)
+        dict_pol = {'P': P_pol, 'SV': SV_pol, 'SH': SH_pol}
+        dict_amp = {'P': P_amp, 'SV': SV_amp, 'SH': SH_amp}
+        #########
+        # add for S and all if necessary
+        if wave_type=='S':
+            S_pol = np.zeros(SV_pol.shape, SV_pol.dtype)
+            S_amp = np.zeros(SV_amp.shape, SV_amp.dtype)
+            for idx, (sv, sh, asv, ash) in enumerate(zip(SV_pol, SH_pol, SV_amp, SH_amp)):
+                pol = sv*asv + sh*ash
+                amp = np.sqrt( np.sum(pol*pol) )
+                #pol /= amp # no need to normalize in pyvista
+                S_pol[idx] = pol
+                S_amp[idx] = amp
+            dict_pol['S'] = S_pol
+            dict_amp['S'] = S_amp
+        elif wave_type=='all':
+            pol3d = np.zeros(SV_pol.shape, SV_pol.dtype)
+            amp3d = np.zeros(SV_amp.shape, SV_amp.dtype)
+            for idx, (_p, sv, sh, ap, asv, ash) in enumerate(zip(P_pol, SV_pol, SH_pol, P_amp, SV_amp, SH_amp)):
+                pol = _p*ap + sv*asv + sh*ash
+                amp = np.sqrt( np.sum(pol*pol) )
+                #pol /= amp # no need to normalize in pyvista
+                pol3d[idx] = pol
+                amp3d[idx] = amp
+            dict_pol['all'] = pol3d
+            dict_amp['all'] = amp3d
+        ######### plot
         bb_center = np.array(center)
-        for v, r in zip(vecs, radiations):
-            amp = abs(r)*scale
-            start = v*radius+bb_center
-            direction = v
-            clr = pos_color
-            if r<0:
-                start = v*(radius+amp)+bb_center
-                direction=-v
-                clr=neg_color
-            #start = start + bb_center
-            mesh = pv.Arrow(start=start, direction=direction, tip_length=0.3, shaft_radius=0.02, scale=amp )
-            p.add_mesh(mesh, show_edges=False, opacity=alpha, color=clr,
+        scale = np.abs(scale)
+        for loc, pol, amp in zip(loc_xyz, dict_pol[wave_type], dict_amp[wave_type]*scale ):
+            if np.abs(amp) > 0:
+                start = loc*radius + bb_center
+                clr = pos_color
+                if wave_type == 'P':
+                    clr = pos_color if amp>0 else neg_color
+                    start = start if amp>0 else (start + pol*np.abs(amp))
+                direction = pol * np.sign(amp)
+                mesh = pv.Arrow(start=start, direction=direction, tip_length=0.3, shaft_radius=0.02, scale=np.abs(amp) )
+                p.add_mesh(mesh, show_edges=False, opacity=alpha, color=clr,
                     smooth_shading=True, lighting=lighting, culling=culling)
     def plot_3d(self, p, center=(0,0,0), radius=10.0, hemisphere=None, plot_nodal=False,
                 binarization=False, cmap='bwr', show_scalar_bar=True,
-                alpha=1.0, culling=False, lighting=False):
+                alpha=1.0, culling=False, lighting=False, wave_type='P'):
         """
         Plot 3d beachball with varied P-wave radiation amplitudes at different directions.
         p:              an instance of pyvista.Plotter
@@ -901,7 +927,10 @@ class beachball_3d:
         alpha:      transparency.
         culling:    pyvista parameters.
         lighting:   pyvista parameters.
+        wave_type:  'P', 'SV', 'SH', 'S', or 'all' to specify the type of wave.
         """
+        if wave_type not in ('P', 'SV', 'SH', 'S', 'all'):
+            raise ValueError(f"Unknown wave_type: {wave_type}. Use 'P', 'SV', 'SH', 'S', or 'all'.")
         # Create mesh data
         x = np.arange(0, 360.001, 1)
         if hemisphere=='upper':
@@ -913,7 +942,12 @@ class beachball_3d:
         xx, yy = np.meshgrid(x, y)
 
         #
-        vecs, scalar = self.__radiation_p( np.deg2rad(xx.flatten()), np.deg2rad(yy.flatten()), binarization=binarization )
+        loc_xyz, P_pol, SV_pol, SH_pol, P_amp, SV_amp, SH_amp = self.__radiation(np.deg2rad(xx.flatten()), np.deg2rad(yy.flatten()), binarization=binarization)
+        tmp = {'P': P_amp, 'SV': np.abs(SV_amp), 'SH': np.abs(SH_amp),
+               'S': np.sqrt(SV_amp**2 + SH_amp**2),
+               'all': np.sqrt(P_amp**2 + SV_amp**2 + SH_amp**2) }
+        scalar = tmp[wave_type]
+
         scalar *= (1.0/scalar.max() )
         scalar = scalar.reshape(xx.shape)
 
@@ -922,24 +956,63 @@ class beachball_3d:
 
         #Create a structured grid
         grid_scalar = pv.grid_from_sph_coords(x, y, levels)
-        grid_scalar.translate(center) #
+        grid_scalar.translate(center, inplace=True)
 
         # And fill its cell arrays with the scalar data
-        grid_scalar.point_arrays["Normalized P-wave radiation amplitudes"] = np.array(scalar).swapaxes(-2, -1).ravel("C")
+        grid_scalar.point_data["Normalized P-wave radiation amplitudes"] = np.array(scalar).swapaxes(-2, -1).ravel("C")
 
         # Make a plot
         vmax = scalar.max()
-        sargs = dict(color='k', vertical=True, interactive=False, n_colors=128, title='', outline=False, 
+        vmin = -vmax if (wave_type == 'P') else 0.0
+        sargs = dict(color='k', vertical=True, interactive=False, n_colors=128, title=wave_type, outline=False, 
                      position_x=0.88, position_y=0.05, width=0.05, height=0.8, n_labels=5,
                      label_font_size=39, fmt='%.2f' )
-        p.add_mesh(grid_scalar, show_edges=False, clim=[-vmax, vmax], opacity=alpha, cmap=cmap,
+        p.add_mesh(grid_scalar, show_edges=False, clim=[vmin, vmax], opacity=alpha, cmap=cmap,
                    smooth_shading=True, lighting=lighting, culling=culling,
                    scalar_bar_args=sargs, show_scalar_bar=show_scalar_bar)
-        if plot_nodal:
+        if plot_nodal and wave_type == 'P':
             if scalar.min() < 0.0 < scalar.max():
                 contours = grid_scalar.contour([0.0] )
                 p.add_mesh(contours, show_edges=True, opacity=1.0, color='k')
+    @staticmethod
+    def benchmark():
+        p = pv.Plotter(notebook=0, shape=(1, 1), border=False, window_size=(1700, 1000) )
+        p.set_background('white')
+        ######################################################
+        # plot surface
+        mesh = pv.Plane(center=(0, 0, 0), direction=(0, 0, 1), i_size=90, j_size=30, i_resolution=90, j_resolution=30)
+        mesh.clear_point_data()#not useful here
+        p.add_mesh(mesh, show_edges=True, opacity=0.1, smooth_shading=True, lighting=False, culling=False)
+        ######################################################
+        # plot East, South, Down vectors
+        start = np.array((-45, -15, 0))
+        for v, label in zip(( (1, 0, 0), (0, 1, 0), (0, 0, -1) ), 'END'):
+            v = np.array(v)
+            mesh = pv.Arrow(start=start, direction=v, tip_length=0.3, shaft_resolution=30, shaft_radius=0.01, scale=3)
+            p.add_mesh(mesh, show_edges=True,  opacity=1.0, color='k', smooth_shading=True, lighting=True, culling=False, )
+            label = pv.Label(label, position=start+v*3)
+            p.add_actor(label)
+        ######################################################
+        # plot beachball
+        #mt = [0.91, -0.89, -0.02, 1.78, -1.55, 0.47]
+        mt = [1, 1, -2, 0, 0, 0] # (Mrr=M11, Mtt=M22, Mpp=M33, Mrt=M12, Mrp=M13, Mtp=M23).
+        #mt = [1, 1, 1, 0, 0, 0]
+        bb = beachball_3d(mt)
+        cmap = ListedColormap(('#444444', '#eeeeee'))
+        bb.plot_3d(p,     center=(0,0,0), radius=10.0, hemisphere='None', cmap='Blues', plot_nodal=True, show_scalar_bar=False, wave_type='SV')
+        bb.plot_3d_vec(p, center=(0,0,0), radius=10.0, hemisphere=None, alpha=1.0, lighting=False, culling=False, scale=3, wave_type='SV')
+        bb.plot_3d(p,     center=(30,0,0), radius=10.0, hemisphere='None', cmap='Blues', plot_nodal=True, show_scalar_bar=False, wave_type='S')
+        bb.plot_3d_vec(p, center=(30,0,0), radius=10.0, hemisphere=None, alpha=1.0, lighting=False, culling=False, scale=3, wave_type='S')
+        # plot P wave radiations
+        bb.plot_3d(p,     center=(-30,0,0), radius=10.0, hemisphere='None', cmap='RdBu_r', plot_nodal=True, show_scalar_bar=True)
+        bb.plot_3d_vec(p, center=(-30,0,0), radius=10.0, hemisphere=None, alpha=1.0, lighting=False, culling=False, scale=3)
+        ##bb.plot_3d_vcone(p, apex=(0,0,0), cones=[(3.0, 15, '#CA3C33', 0.3), (3.1, 15, '#407AA2', 0.3)])
+        p.camera_position=( (0, -90, 60), (0, 0, 0), (0, 0.5, 0.8) )
+        p.show()
+        print(p.camera_position)
 if __name__ == '__main__':
+    beachball_3d.benchmark()
+    sys.exit(0)
     globe3d.benchmark4()
     sys.exit(0)
     globe3d.benchmark()
@@ -949,7 +1022,6 @@ if __name__ == '__main__':
     ######
     # plot surface
     mesh = pv.Plane(center=(0, 0, 0), direction=(0, 0, 1), i_size=30, j_size=30, i_resolution=10, j_resolution=10)
-    mesh.point_arrays.clear()
     p.add_mesh(mesh, show_edges=True, opacity=0.6,
                smooth_shading=True, lighting=False, culling=False)
     ######
