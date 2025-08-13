@@ -943,36 +943,38 @@ class beachball_3d:
 
         #
         loc_xyz, P_pol, SV_pol, SH_pol, P_amp, SV_amp, SH_amp = self.__radiation(np.deg2rad(xx.flatten()), np.deg2rad(yy.flatten()), binarization=binarization)
-        tmp = {'P': P_amp, 'SV': np.abs(SV_amp), 'SH': np.abs(SH_amp),
-               'S': np.sqrt(SV_amp**2 + SH_amp**2),
-               'all': np.sqrt(P_amp**2 + SV_amp**2 + SH_amp**2) }
-        scalar = tmp[wave_type]
+        dict_amp = {'P': P_amp, 'SV': np.abs(SV_amp), 'SH': np.abs(SH_amp),
+                    'S': np.sqrt(SV_amp**2 + SH_amp**2),
+                    'all': np.sqrt(P_amp**2 + SV_amp**2 + SH_amp**2) }
+        dict_grd = dict()
+        for wave_type in set([wave_type, 'P']):
+            scalar = dict_amp[wave_type]
 
-        scalar *= (1.0/scalar.max() )
-        scalar = scalar.reshape(xx.shape)
+            scalar *= (1.0/scalar.max() )
+            scalar = scalar.reshape(xx.shape)
 
-        # Vertical levels
-        levels = [radius * 1.]
+            # Vertical levels
+            levels = [radius * 1.]
 
-        #Create a structured grid
-        grid_scalar = pv.grid_from_sph_coords(x, y, levels)
-        grid_scalar.translate(center, inplace=True)
+            #Create a structured grid
+            grid_scalar = pv.grid_from_sph_coords(x, y, levels)
+            grid_scalar.translate(center, inplace=True)
 
-        # And fill its cell arrays with the scalar data
-        grid_scalar.point_data["Normalized P-wave radiation amplitudes"] = np.array(scalar).swapaxes(-2, -1).ravel("C")
-
+            # And fill its cell arrays with the scalar data
+            grid_scalar.point_data[wave_type] = np.array(scalar).swapaxes(-2, -1).ravel("C")
+            dict_grd[wave_type] = grid_scalar
         # Make a plot
-        vmax = scalar.max()
+        vmax = dict_grd[wave_type].point_data[wave_type].max()
         vmin = -vmax if (wave_type == 'P') else 0.0
         sargs = dict(color='k', vertical=True, interactive=False, n_colors=128, title=wave_type, outline=False, 
                      position_x=0.88, position_y=0.05, width=0.05, height=0.8, n_labels=5,
                      label_font_size=39, fmt='%.2f' )
-        p.add_mesh(grid_scalar, show_edges=False, clim=[vmin, vmax], opacity=alpha, cmap=cmap,
+        p.add_mesh(dict_grd[wave_type], show_edges=False, clim=[vmin, vmax], opacity=alpha, cmap=cmap,
                    smooth_shading=True, lighting=lighting, culling=culling,
                    scalar_bar_args=sargs, show_scalar_bar=show_scalar_bar)
-        if plot_nodal and wave_type == 'P':
-            if scalar.min() < 0.0 < scalar.max():
-                contours = grid_scalar.contour([0.0] )
+        if plot_nodal:
+            if dict_grd['P'].point_data['P'].min() < 0.0 < dict_grd['P'].point_data['P'].max():
+                contours = dict_grd['P'].contour([0.0])
                 p.add_mesh(contours, show_edges=True, opacity=1.0, color='k')
     @staticmethod
     def benchmark():
@@ -986,7 +988,7 @@ class beachball_3d:
         ######################################################
         # plot East, South, Down vectors
         start = np.array((-45, -15, 0))
-        for v, label in zip(( (1, 0, 0), (0, 1, 0), (0, 0, -1) ), 'END'):
+        for v, label in zip(( (1, 0, 0), (0, 1, 0), (0, 0, 1) ), 'ENU'):
             v = np.array(v)
             mesh = pv.Arrow(start=start, direction=v, tip_length=0.3, shaft_resolution=30, shaft_radius=0.01, scale=3)
             p.add_mesh(mesh, show_edges=True,  opacity=1.0, color='k', smooth_shading=True, lighting=True, culling=False, )
@@ -995,7 +997,7 @@ class beachball_3d:
         ######################################################
         # plot beachball
         #mt = [0.91, -0.89, -0.02, 1.78, -1.55, 0.47]
-        mt = [1, 1, -2, 0, 0, 0] # (Mrr=M11, Mtt=M22, Mpp=M33, Mrt=M12, Mrp=M13, Mtp=M23).
+        mt = [0, 0, -0.1, 1, 0, 0] # (Mrr=M11, Mtt=M22, Mpp=M33, Mrt=M12, Mrp=M13, Mtp=M23).
         #mt = [1, 1, 1, 0, 0, 0]
         bb = beachball_3d(mt)
         cmap = ListedColormap(('#444444', '#eeeeee'))
