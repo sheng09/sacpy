@@ -1,16 +1,13 @@
 #!/usr/bin/env python3
 
-# sphinx_gallery_thumbnail_number = 1
-from glob import glob
-from PIL.Image import radial_gradient
-from matplotlib.colors import LightSource,  ListedColormap
-from numpy.core.numeric import ones
+from matplotlib.colors import  ListedColormap, LinearSegmentedColormap
 import pyvista as pv
 from pyvista import examples as pv_examples
 
 import numpy as np
 import pickle
-from scipy.interpolate import interp1d
+from scipy.linalg import eig
+from scipy.interpolate import interp1d, RegularGridInterpolator
 from scipy.ndimage import gaussian_filter
 import obspy.taup as taup
 
@@ -23,6 +20,605 @@ import cartopy.feature as cfeature
 import sys
 import stripy
 
+class Scene3D:
+    """
+    A scene holding multiple 3D objects.
+    """
+    def __init__(self, pv_plotter=None, pv_plotter_kargs={'window_size':(1700, 1200)} ):
+        """
+        Initialize the 3D scene.
+
+        :param pv_plotter:       An existing PyVista plotter instance (default is None).
+        :param pv_plotter_kargs: Keyword arguments for creating the PyVista plotter if `pv_plotter` is not provided.
+        """
+        if pv_plotter is not None:
+            self.pv_plotter = pv_plotter
+        else:
+            self.pv_plotter = pv.Plotter(**pv_plotter_kargs)
+        self.pv_plotter.enable_depth_peeling() #  to handles multiple transparent surfaces correctly
+    def add_plane(self, center=(0,0,0), direction=(0,0,1), color='gray',
+                    i_size=10, j_size=10, i_resolution=10, j_resolution=10,
+                    opacity=0.6, lighting=True, **kwargs):
+        """
+        Add a plane.
+
+        :param center:    The center of the plane.
+        :param direction: The direction of the plane normal.
+        :param color:     The color of the plane.
+        :param i_size:    The size of the plane in the i direction.
+        :param j_size:    The size of the plane in the j direction.
+        :param i_resolution: The resolution of the plane in the i direction.
+        :param j_resolution: The resolution of the plane in the j direction.
+        :param opacity:      The opacity of the plane.
+        :param lighting:       Whether to use lighting.
+        :param kwargs:         Additional keyword arguments for `pyvista.Plotter.add_mesh(...)`.
+        """
+        mesh = pv.Plane(center=center, direction=direction, i_size=i_size, j_size=j_size, i_resolution=i_resolution, j_resolution=j_resolution)
+        self.pv_plotter.add_mesh(mesh, color=color, opacity=opacity, lighting=lighting, **kwargs)
+        pass
+    def add_spline(self, xs, ys, zs,
+                 scalars=None, color='k', cmap='viridis', line_width=5, label='line',
+                 lighting=True, **kwargs):
+        """
+        Add a spline to the scene.
+
+        :param xs: The x-coordinates of the line.
+        :param ys: The y-coordinates of the line.
+        :param zs: The z-coordinates of the line.
+        :param scalars: The scalars to color the line. (default is `None`)
+        :param color: The color of the line if `scalars=None`.
+        :param cmap: The colormap to use if `scalars` is not `None`.
+        :param line_width: The width of the line (or the radius of the tube).
+        :param lighting: Whether to use lighting.
+        :param kwargs: Additional keyword arguments for `pyvista.Plotter.add_mesh(...)`.
+        """
+        points = np.column_stack((xs, ys, zs))
+        spline = pv.Spline(points)
+        if scalars is None:
+            self.pv_plotter.add_mesh(spline, color=color, cmap=cmap, line_width=line_width, lighting=lighting, **kwargs)
+        else:
+            spline.point_data[label] = scalars
+            self.pv_plotter.add_mesh(spline, scalars=label, color=color, cmap=cmap, line_width=line_width, lighting=lighting, **kwargs)
+    def add_point(self, x, y, z, direction=(0,0,1), size=2, shape='sphere', color='k',
+                  shift_along_direction=0,
+                  lighting=True, **kwargs):
+        """
+        Add a point to the scene.
+
+        :param x: The x-coordinate of the point.
+        :param y: The y-coordinate of the point.
+        :param z: The z-coordinate of the point.
+        :param direction: The direction of the point.
+        :param size: The size of the point (which means the radius of a sphere, or the base of a cylinder or a cone).
+        :param shape: The shape of the point (could be 'sphere', 'cone', or 'cylinder').
+        :param color: The color of the point.
+        :param shift_along_direction: The amount to shift the point along the direction.
+                                      Usually, a `-size` or `size` can be used to move
+                                      the point object so that its vertex or base is at (x, y, z)!
+        :param lighting: Whether to use lighting.
+        :param kwargs: Additional keyword arguments for `pyvista.Plotter.add_mesh(...)`.
+        """
+        direction = np.array(direction, dtype=np.float64)
+        direction *= (1.0/np.linalg.norm(direction))  # Normalize the direction vector
+        dx, dy, dz = direction * shift_along_direction
+        x, y, z = x + dx, y + dy, z + dz
+        if shape == 'sphere':
+            mesh = pv.Sphere(center=(x, y, z), direction=direction, radius=size, theta_resolution=180, phi_resolution=90)
+        elif shape == 'cone':
+            mesh = pv.Cone(center=(x, y, z), direction=direction, height=size*2, capping=True, angle=30, resolution=90)
+        elif shape == 'cylinder':
+            mesh = pv.Cylinder(center=(x, y, z), direction=direction, radius=size, height=size*2, resolution=90, capping=True)
+        else:
+            raise ValueError(f"Unknown shape: {shape}. Supported shapes are 'sphere', 'cone', and 'cylinder'.")
+        self.pv_plotter.add_mesh(mesh, color=color, lighting=lighting, **kwargs)
+    def add_arrow(self, loc, direction, scale=1, loc_is_end=False, color='k',
+                  tip_length=0.3, shaft_resolution=30, shaft_radius=0.01,
+                  lighting=True, **kwargs):
+        """
+        Add an arrow to the scene.
+
+        :param loc: The location point of the arrow.
+                    If `loc_is_end=False` (default), then this is the start point.
+                    If `loc_is_end=True`, then this is the end point of the arrow (the cap side).
+        :param direction: The direction of the arrow.
+        :param scale: The scale factor for the arrow (equivalent to the length (and radius as well) of the arrow).
+        :param loc_is_end: (default is `False`) so the `loc` is used as the start point of the arrow.
+                           If set to true, then the `loc` is used as the end point (the cap side) of the arrow.
+        :param color: The color of the arrow.
+        :param tip_length: The length of the arrow tip.
+        :param shaft_resolution: The resolution of the arrow shaft.
+        :param shaft_radius: The radius of the arrow shaft.
+        :param lighting: Whether to use lighting.
+        :param kwargs: Additional keyword arguments for `pyvista.Plotter.add_mesh(...)`.
+        """
+        if loc_is_end:
+            loc = np.array(loc, dtype=np.float64)
+            vec = np.array(direction, dtype=np.float64)
+            vec /= np.linalg.norm(vec)
+            loc -= (vec*scale)
+        mesh = pv.Arrow(start=loc, direction=direction, scale=scale, tip_length=tip_length, shaft_resolution=shaft_resolution, shaft_radius=shaft_radius)
+        self.pv_plotter.add_mesh(mesh, color=color, lighting=lighting, **kwargs)
+    def add_disk(self, center=(0,0,0), inner=0.0, outer=1.0, normal=(0,0,1), color='k', r_res=1, c_res=180,
+                 lighting=True, **kwargs):
+        disc = pv.Disc(center=center, inner=inner, outer=outer, normal=normal, r_res=r_res, c_res=c_res)
+        self.pv_plotter.add_mesh(disc, color=color, lighting=lighting, **kwargs)
+    def add_sphere(self, radius=1, center=(0,0,0),
+                   rotation_about_north_pole_deg=0.0, north_pole_direction=(0, 0, 1),
+                   color='r', texture=None,
+                   theta_resolution=60, start_theta=0, end_theta=360,
+                   phi_resolution=30,   start_phi=0,   end_phi=180,
+                   lighting=True, **kwargs):
+        """
+        Add a sphere to the scene.
+
+        :param radius: The radius of the sphere.
+        :param center: The center of the sphere.
+        :param rotation_about_north_pole_deg: The rotation angle about the north pole in degrees. (default is 0 degree).
+        :param north_pole_direction: The direction of the north pole of the sphere. (default is (0,0,1), the vertical direction).
+        :param color: The color of the sphere.
+        :param texture: The texture of the sphere (default is None and will use the color parameter for uniform color).
+                        The texture could be a figure filename, or a grd of rgb values, where the grd should have a
+                        meaningful shape: (nrow, ncol, 3) for RGB or (nrow, ncol, 4) for RGBA values. RGBA are in [0,255]!
+                        The upper-left of the image (or the grd) should have the lon=0,lat=90; the upper-right lon=360,lat=90;
+                        the lower-left lon=0,lat=-90; and the lower-right lon=360,lat=-90.
+        :param theta_resolution: The resolution of the sphere in the theta direction.
+        :param start_theta: The starting angle of the sphere in the theta direction.
+        :param end_theta: The ending angle of the sphere in the theta direction.
+        :param phi_resolution: The resolution of the sphere in the phi direction.
+        :param start_phi: The starting angle of the sphere in the phi direction.
+        :param end_phi: The ending angle of the sphere in the phi direction.
+        :param lighting: Whether to use lighting.
+        :param kwargs: Additional keyword arguments for `pyvista.Plotter.add_mesh(...)`.
+        """
+        if texture is not None:
+            # fix the distortion at seam
+            # ref: https://discourse.paraview.org/t/single-azimuthal-segment-texture-distortion-for-earth-texturemaptosphere/783/5
+            start_theta += 0.001
+            end_theta   -= 0.001
+        sphere = pv.Sphere(radius=1, center=(0,0,0), direction=(0,0,1),
+                           theta_resolution=theta_resolution, start_theta=start_theta, end_theta=end_theta,
+                           phi_resolution=phi_resolution, start_phi=start_phi, end_phi=end_phi)
+        #### 1. add the `active_texture_coordinates` to the mesh
+        if texture is not None:
+            ## Manually set the texture coordinates (u, v) for the sphere
+            ## u corresponds to the horizontal direction (left to right) on the texture, here need to be 0 to 2pi in longitude
+            ## v corresponds to the vertical direction (bottom to top) on the texture, here need to be -pi/2 to pi/2 in latitude
+            ## ref: https://github.com/pyvista/pyvista-support/issues/257#issuecomment-705518157
+            #x, y, z = sphere.points[:, 0], sphere.points[:, 1], sphere.points[:, 2]
+            #lon = np.arctan2(y, x) % (np.pi*2) # lon: [0, 2pi]
+            #u = lon*(0.5/np.pi)
+            #lat = np.arcsin(z) # lat: [-pi/2, pi/2]
+            #v = (lat+np.pi/2)*(1/np.pi)
+            #sphere.active_texture_coordinates = np.column_stack((u, v))
+            ########################################################################################################################
+            ## Use internal texture mapping
+            # Now, the u is 0->1 for theta (or longitude) 0->360
+            #      the v is 0->1 for phi 0->180 (or latitude 90-> -90), so that we need to change it
+            sphere.texture_map_to_sphere(inplace=True, prevent_seam=False)
+            sphere.active_texture_coordinates[:,1] = 1-sphere.active_texture_coordinates[:,1] # flip the v directin to top->bot to bot->top
+        #### 2. rotate about the north pole
+        if (rotation_about_north_pole_deg%360) > 1e-6:
+            x, y = sphere.points[:, 0], sphere.points[:, 1]
+            rotation_about_north_pole = np.deg2rad(rotation_about_north_pole_deg)
+            c, s = np.cos(rotation_about_north_pole), np.sin(rotation_about_north_pole)
+            new_x =  x*c - y*s
+            new_y =  x*s + y*c
+            sphere.points[:, 0] = new_x
+            sphere.points[:, 1] = new_y
+        #### 3. rotate to make the unit sphere's north pole direction match the given direction
+        if True:
+            v0 = np.array((0.,0.,1.), dtype=np.float64)
+            v1 = np.array(north_pole_direction, dtype=np.float64)
+            v1 /= np.linalg.norm(v1)
+            #          v0
+            #      v1  |
+            #        \ |
+            #         \|
+            #          o
+            #         /
+            #        /rotation_axis =  v0 x v1
+            angle = np.arccos(np.clip(np.dot(v0, v1), -1.0, 1.0) )
+            if angle > 1.e-6:
+                rotation_axis = np.cross(v0, v1)  # rotation axis (not unit)
+                R = Scene3D.rotation_matrix(rotation_axis, angle)
+                xyz = sphere.points
+                R = R.T
+                # xyz.T = R @ xyz.T ==> xyz = xyz @ R.T
+                xyz = xyz @ R
+                sphere.points = xyz
+        #### 4. scale to radius and translate to the center
+        if True:
+            sphere.points *= radius
+            sphere.points += center
+        ####
+        if texture is None:
+            self.pv_plotter.add_mesh(sphere, color=color, lighting=lighting, **kwargs)
+        else:
+            texture = pv.Texture(texture)
+            texture.interpolate = False                  # avoid smearing a tiny 2x2
+            texture.repeat = False                       # avoid repeating the texture
+            self.pv_plotter.add_mesh(sphere, texture=texture, lighting=lighting,  **kwargs)
+    def add_sphere_grd(self, grd_theta_deg, grd_phi_deg, grd_values,
+                       radius=1, center=(0,0,0),
+                       rotation_about_north_pole_deg=0.0, north_pole_direction=(0, 0, 1),
+                       cmap='viridis', label='sphere_grd',
+                       start_theta=0, end_theta=360,
+                       start_phi=0,   end_phi=180,
+                       lighting=True, **kwargs):
+        """
+        Add a spherical grid to the scene.
+
+        :param grd_theta_deg: The theta coordinates (0->360) of the grid. (theta could be considered as longitude.)
+        :param grd_phi_deg:   The phi coordinates (0->180) of the grid. (phi could be considered as colatitude.)
+        :param grd_values:  The values to be mapped onto the grid.
+                            Note, the `grd_values` should correspond to a matrix with the shape (len(grd_phi_deg), len(grd_theta_deg))!
+        :param radius: The radius of the sphere.
+        :param center: The center of the sphere.
+        :param rotation_about_north_pole_deg: The rotation angle about the north pole in degrees. (default is 0 degree).
+        :param north_pole_direction: The direction of the north pole of the sphere. (default is (0,0,1), the vertical direction).
+        :param cmap: The colormap to use.
+        :param label: The label for the scalar data (grd_values).
+        :param start_theta: The starting angle of the sphere in the theta direction.
+        :param end_theta: The ending angle of the sphere in the theta direction.
+        :param start_phi: The starting angle of the sphere in the phi direction.
+        :param end_phi: The ending angle of the sphere in the phi direction.
+        :param lighting: Whether to use lighting.
+        :param kwargs: Additional keyword arguments for `pyvista.Plotter.add_mesh(...)`.
+        """
+        x, y       = grd_theta_deg, grd_phi_deg
+        grd_values = grd_values.reshape(len(grd_phi_deg), len(grd_theta_deg))
+        # find idx in x for start_theta and end_theta, which might not exist in the x
+        ix0 = np.searchsorted(x, start_theta, side='left')
+        ix1 = np.searchsorted(x, end_theta,   side='right')
+        iy0 = np.searchsorted(y, start_phi,   side='left')
+        iy1 = np.searchsorted(y, end_phi,     side='right')
+        x = x[ix0:ix1]
+        y = y[iy0:iy1]
+        grd_values = grd_values[iy0:iy1, ix0:ix1]
+        #### 1. set a unit sphere centered at (0,0,0)
+        sphere = pv.grid_from_sph_coords(x, y, [1.0,] )
+        sphere.point_data[label] = np.array(grd_values).T.flatten() # note here! The input `grd_value` lat as 0th axis and lon as 1th axis
+        #### 2. rotate about the north pole
+        if (rotation_about_north_pole_deg%360) > 1e-6:
+            x, y = sphere.points[:, 0], sphere.points[:, 1]
+            rotation_about_north_pole = np.deg2rad(rotation_about_north_pole_deg)
+            c, s = np.cos(rotation_about_north_pole), np.sin(rotation_about_north_pole)
+            new_x =  x*c - y*s
+            new_y =  x*s + y*c
+            sphere.points[:, 0] = new_x
+            sphere.points[:, 1] = new_y
+        #### 3. rotate to make the unit sphere's north pole direction match the given direction
+        if True:
+            v0 = np.array((0.,0.,1.), dtype=np.float64)
+            v1 = np.array(north_pole_direction, dtype=np.float64)
+            v1 /= np.linalg.norm(v1)
+            #          v0
+            #      v1  |
+            #        \ |
+            #         \|
+            #          o
+            #         /
+            #        /rotation_axis =  v0 x v1
+            angle = np.arccos(np.clip(np.dot(v0, v1), -1.0, 1.0) )
+            if angle > 1.e-6:
+                rotation_axis = np.cross(v0, v1)  # rotation axis (not unit)
+                R = Scene3D.rotation_matrix(rotation_axis, angle)
+                xyz = sphere.points
+                R = R.T
+                # xyz.T = R @ xyz.T ==> xyz = xyz @ R.T
+                xyz = xyz @ R
+                sphere.points = xyz
+        #### 4. scale to radius and translate to the center
+        if True:
+            sphere.points *= radius
+            sphere.points += center
+        self.pv_plotter.add_mesh(sphere, cmap=cmap, lighting=lighting, **kwargs)
+    def add_earth(self, land_color='#ccccccff', ocean_color='#00000000',
+                  coastline_width=0.5, coastline_color='r', coastline_style='-', plot_stock_img=False,
+                  radius=1, center=(0,0,0),
+                  rotation_about_north_pole_deg=0.0, north_pole_direction=(0, 0, 1),
+                  theta_resolution=180, start_theta=0, end_theta=360,
+                  phi_resolution=90,   start_phi=0,   end_phi=180,
+                  lighting=True, **kwargs):
+        ####
+        rgba = Scene3D.plot_earth_basemap(land_color=land_color, ocean_color=ocean_color,
+                                          coastline_width=coastline_width, coastline_color=coastline_color, coastline_style=coastline_style,
+                                          plot_stock_img=plot_stock_img)
+        self.add_sphere(radius=radius, center=center,
+                        rotation_about_north_pole_deg=rotation_about_north_pole_deg, north_pole_direction=north_pole_direction,
+                        texture=rgba, theta_resolution=theta_resolution, start_theta=start_theta, end_theta=end_theta,
+                        phi_resolution=phi_resolution, start_phi=start_phi, end_phi=end_phi,
+                        lighting=lighting, **kwargs)
+        pass
+    def add_planet(self, basemap_filename, basemap_lon_range=(0, 360), basemap_lat_range=(-90,90),
+                  radius=1, center=(0,0,0),
+                  rotation_about_north_pole_deg=0.0, north_pole_direction=(0, 0, 1),
+                  theta_resolution=40, start_theta=0, end_theta=360,
+                  phi_resolution=20,   start_phi=0,   end_phi=180,
+                  lighting=True, **kwargs):
+        """
+        """
+        pixels = plt.imread(basemap_filename)
+        if pixels.dtype != np.uint8:
+            pixels = (pixels * 255).astype(np.uint8)  # Ensure pixels are in [0, 255] range
+        if (basemap_lon_range != (0, 360)) or (basemap_lat_range != (-90, 90)):
+            if True:
+                ny, nx = pixels.shape[:2]
+                x0, x1 = basemap_lon_range
+                y0, y1 = basemap_lat_range
+                dx = (x1 - x0) / (nx - 1)
+                dy = (y1 - y0) / (ny - 1)
+                #
+                u0, u1 =   0, 360
+                v0, v1 = -90, 90
+                nu = int(round((u1 - u0) / dx) )
+                nv = int(round((v1 - v0) / dy) )
+                u_start = int(round((x0-u0) / dx) )
+                v_start = int(round((y0-v0) / dy) )
+                u_end   = u_start + nx
+                v_end   = v_start + ny
+                #
+                x_start, x_end = 0, nx
+                y_start, y_end = 0, ny
+                #
+                if u_start<0:
+                    x_start = -u_start
+                    u_start = 0
+                if u_end>nu:
+                    x_end -= (u_end - nu)
+                    u_end = nu
+                if v_start<0:
+                    y_start = -v_start
+                    v_start = 0
+                if v_end>nv:
+                    y_end -= (v_end - nv)
+                    v_end = nv
+                #
+                out = np.zeros((nv, nu, 4), dtype=np.uint8)
+                out[v_start:v_end, u_start:u_end, :] = pixels[y_start:y_end, x_start:x_end, :]
+                pixels = out
+            else: # interpolation which is too slow
+                if pixels.shape[2] == 3:  # add alpha if not exists
+                    alpha_channel = np.ones((pixels.shape[0], pixels.shape[1], 1), dtype=pixels.dtype) * 255
+                    pixels = np.concatenate((pixels, alpha_channel), axis=2)
+                # adjust the basemap to make its range 0 to 360 for longitude and -90 to 90 for latitude
+                ny, nx = pixels.shape[:2]
+                x0, x1 = basemap_lon_range
+                y0, y1 = basemap_lat_range
+                # Original grid coordinates
+                x = np.linspace(x0, x1, nx)
+                y = np.linspace(y0, y1, ny)
+                #
+                dx = (x1 - x0) / (nx - 1)
+                dy = (y1 - y0) / (ny - 1)
+                u0, u1 =   0, 360
+                v0, v1 = -90, 90
+                nx_new = int(round(abs(u1 - u0) / abs(dx))) + 1
+                ny_new = int(round(abs(v1 - v0) / abs(dy))) + 1
+                #
+                x_new = np.linspace(u0, u1, nx_new)
+                y_new = np.linspace(v0, v1, ny_new)
+                Xn, Yn = np.meshgrid(x_new, y_new)
+                #
+                new_pixels = np.zeros((ny_new, nx_new, 4), dtype=np.uint8)
+                for depth in range(4):
+                    interp = RegularGridInterpolator( (y, x), pixels[:,:,depth], method='linear', bounds_error=False, fill_value=0 )
+                    pts = np.column_stack([Yn.ravel(), Xn.ravel()])  # (y, x) order
+                    new_pixels[:,:,depth] = interp(pts).reshape(ny_new, nx_new).astype(np.uint8)
+                pixels = new_pixels
+        self.add_sphere(radius=radius, center=center,
+                        rotation_about_north_pole_deg=rotation_about_north_pole_deg, north_pole_direction=north_pole_direction,
+                        texture=pixels, theta_resolution=theta_resolution, start_theta=start_theta, end_theta=end_theta,
+                        phi_resolution=phi_resolution, start_phi=start_phi, end_phi=end_phi,
+                        lighting=lighting, **kwargs)
+    def add_planet2(self, basemap_filename, basemap_lon_range=(0, 360), basemap_lat_range=(-90,90),
+                    radius=1, center=(0,0,0),
+                    rotation_about_north_pole_deg=0.0, north_pole_direction=(0, 0, 1),
+                    lighting=True, **kwargs):
+        """
+        """
+        pixels = plt.imread(basemap_filename)#[::10,::10,:]
+        nrow, ncol = pixels.shape[:2]
+        ratio = int(ncol / 720)+1
+        pixels = pixels[::ratio, ::ratio, :]  # downsample the image
+        r,g,b = pixels[:,:,0], pixels[:,:,1], pixels[:,:,2]
+        vs = np.arctan2(np.sqrt(3)*(g-b), 2*r-g-b) # hue
+        #vs = (r+r+r+b+g+g+g+g)/8
+        lons = np.linspace(basemap_lon_range[0], basemap_lon_range[1], pixels.shape[1])
+        lats = 90+np.linspace(basemap_lat_range[0], basemap_lat_range[1], pixels.shape[0])
+        self.add_sphere_grd(lons, lats, vs,
+                            radius=radius, center=center,
+                            rotation_about_north_pole_deg=rotation_about_north_pole_deg, north_pole_direction=north_pole_direction,
+                            lighting=lighting, **kwargs)
+    def show(self):
+        self.pv_plotter.show()
+    @staticmethod
+    def rotation_matrix(axis, angle):
+        """
+        Get the rotation matrix for rotation about `axis` (an vector) by `angle` (radian).
+
+        :param axis:  The rotation axis (3D vector).
+        :param angle: The rotation angle (in radians).
+        :return:      The rotation matrix (3x3 numpy array).
+        """
+        axis = np.array(axis, dtype=np.float64)
+        axis /= np.linalg.norm(axis)  # ensure unit
+        x, y, z = axis
+        c = np.cos(angle)
+        s = np.sin(angle)
+        C = 1 - c
+
+        R = np.array([
+            [c + x*x*C,     x*y*C - z*s, x*z*C + y*s],
+            [y*x*C + z*s,   c + y*y*C,   y*z*C - x*s],
+            [z*x*C - y*s,   z*y*C + x*s, c + z*z*C]
+        ])
+        return R
+    @staticmethod
+    def plot_earth_basemap(land_color='#bbbbbbFF', ocean_color='#bbbbbb00',
+                           coastline_width=0.5, coastline_color='r', coastline_style='-',
+                           plot_stock_img=False):
+        prj = ccrs.PlateCarree(central_longitude=180)
+        fig = plt.figure(figsize=(20, 10), dpi=200)
+        ax = fig.add_axes([0, 0, 1, 1], projection=prj)  # (left, bottom, width, height) in figure coords
+        fig.patch.set_alpha(0.0) # set background to transparent
+        ax.patch.set_alpha(0.0)
+        #
+        ax.set_global()
+        if plot_stock_img:
+            ax.stock_img()
+        else:
+            ax.add_feature(cfeature.LAND, color=land_color,  linewidth=0 )
+            ax.add_feature(cfeature.OCEAN, color=ocean_color, linewidth=0 )
+        ####
+        if coastline_width>0:
+            ax.coastlines(linewidth=coastline_width, color=coastline_color, linestyle=coastline_style)
+        ax.axis("off")
+        ####
+        fig.tight_layout(pad=0)
+        fig.canvas.draw()
+        rgba = np.array(fig.canvas.buffer_rgba())
+        plt.close(fig)
+        ####
+        return rgba
+    @staticmethod
+    def figure2mat2d(filename, cmap=None):
+        pixels = plt.imread(filename)  # shape (H, W, 3) or (H, W, 4)
+        if pixels.shape[2] == 4:  # remove alpha if exists
+            pixels = pixels[:, :, :3]
+        #
+        unique_colors = np.unique(pixels, axis=0)
+        brightness    = unique_colors.mean(axis=1)
+        sorted_idx    = np.argsort(brightness)
+        sorted_colors = unique_colors[sorted_idx]*(1.0/255)
+        # === Step 2: Make a colormap ===
+        cmap = ListedColormap(sorted_colors )
+        #
+        # Build a lookup table from the cmap
+        N = 64
+        lut_vals = cmap(np.linspace(0, 1, N))[:, :3]  # RGB only
+        # Flatten image for processing
+        flat_img = pixels.reshape(-1, 3)
+        # Compute nearest colormap index for each pixel
+        indices = np.argmin(np.linalg.norm(flat_img[:, None] - lut_vals[None, :], axis=2), axis=1)
+        # Convert indices to scalar values
+        scalar_values = indices / (N - 1)  # normalized 0-1
+        mat2d = scalar_values.reshape(pixels.shape[0], pixels.shape[1])
+        return mat2d, cmap
+    @staticmethod
+    def benchmark():
+        app = Scene3D()
+        #app.pv_plotter.add_axes(xlabel='E', ylabel='N', zlabel='U')
+        #
+        app.add_plane(color='gray', show_edges=True, opacity=0.1)
+        app.add_plane(color='gray', direction=(0,1,0), show_edges=True, opacity=0.1)
+        app.add_plane(color='gray', direction=(1,0,0), show_edges=True, opacity=0.1)
+        if False:
+            app.add_disk((0,0,1), 0.5, 1.0, (0, 0, 1), 'c', opacity=0.6)
+            app.add_arrow((0,0,0), (0,0,1), 2)
+        if False:
+            xs = np.linspace(-5, 5, 1000)
+            yz, zs = np.cos(5*xs), np.sin(5*xs)-2
+            scalars = zs
+            app.add_spline(xs, yz, zs, scalars=scalars, color='k', cmap='viridis', line_width=20, opacity=1) #, scalar_bar_args={'vertical':True} )
+            app.add_sphere(radius=2, center=(0,0,0),
+                           color='g', opacity=0.9)
+            for shape in ('cone', 'cylinder', 'sphere'):
+                loc = np.random.rand(3)
+                loc *= (2/np.linalg.norm(loc))
+                x, y, z = loc
+                app.add_point(x, y, z, -loc, 0.2, shape=shape, color='r', shift_along_direction=-0.2)
+        if True:
+            app.add_arrow(loc=(0,0,0), direction=(1, 0, 0), scale=5)
+            app.add_arrow(loc=(0,0,0), direction=(1, 0, 0), loc_is_end=True, color='gray', scale=5)
+            app.add_arrow(loc=(0,0,0), direction=(0, 1, 0), scale=-5, color=(255, 0, 0))
+            app.add_arrow(loc=(0,0,0), direction=(0, 1, 0), loc_is_end=True, color=(255, 150, 150), scale=-5)
+        if False:
+            app.add_sphere(radius=2, center=(0,0,0),
+                           color='g', opacity=0.9,
+                           theta_resolution=60, start_theta=30, end_theta=300,
+                           phi_resolution=30,   start_phi=20,   end_phi=150,)
+        if False:
+            app.add_sphere(radius=2, center=(0,0,0),
+                           texture='/Users/sw/Programs_Sheng/sacpy/dataset/global_maps/fancy2_0-360.png',
+                           opacity=0.9,
+                           theta_resolution=60, start_theta=30, end_theta=300,
+                           phi_resolution=30,   start_phi=20,   end_phi=150, culling=True)
+        if False:
+            app.add_disk(color='r', outer=3, normal=(1,-1,0), show_edges=True, opacity=0.1)
+            app.add_disk(color='r', outer=3, normal=(1,1,-2), show_edges=True, opacity=0.1)
+            app.add_disk(color='r', outer=3, normal=(1,1,1), show_edges=True, opacity=0.1)
+            app.add_sphere(radius=2, center=(0,0,0),
+                           texture='/Users/sw/Programs_Sheng/sacpy/dataset/global_maps/fancy2_0-360.png',
+                           opacity=0.9,
+                           rotation_about_north_pole_deg=45, north_pole_direction=(1, 1, 1),
+                           culling=True)
+        if False:
+            grd_rgba = np.array(
+                [
+                    [50,0,0,100], [100, 0, 0, 255], [255, 0, 0, 255],
+                    [0,50,0,255], [0, 100, 0, 100], [0, 255, 0, 255],
+                    [0,0,50,255], [0, 0, 100, 255], [0, 0, 255, 100],
+                ],
+                dtype=np.uint8
+            ).reshape((3, 3, 4), order='C')#[::-1,:,:]  # (H, W, 4)
+            app.add_sphere(radius=2, center=(0,0,0),
+                           texture=grd_rgba,
+                           rotation_about_north_pole_deg=0, north_pole_direction=(0, 0, 1),
+                           culling=True)
+            app.add_sphere(radius=1, color='k')
+        if False:
+            lons   = np.arange(0, 360.1, 1)
+            colats = np.arange(0, 180.1, 1)
+            grd = np.zeros( (colats.size, lons.size) )
+            grd[:90,:90] = 1
+            grd[40:50, 90:180] = -1
+            app.add_sphere_grd(lons, colats, grd,
+                               radius=5, center=(0,0,0),
+                               cmap='bwr', label='test', opacity=1, show_edges=True,
+                               start_theta=0, end_theta=350,
+                               start_phi=10,   end_phi=170,)
+        if False:
+            lons   = np.arange(0, 360.1, 1)
+            colats = np.arange(0, 180.1, 1)
+            grd = np.zeros( (colats.size, lons.size) )
+            grd[:90,:90] = 1
+            grd[40:50, 90:180] = -1
+            app.add_sphere_grd(lons, colats, grd,
+                               radius=5, center=(0,0,0),
+                               cmap='bwr', label='test', opacity=1, show_edges=True,
+                               rotation_about_north_pole_deg=30, north_pole_direction=(-1, -1, 1) )
+        if False:
+            app.add_earth( land_color='#ccccccff', ocean_color='#0000ff11',
+                            coastline_color='r', coastline_style='-', coastline_width=0.6, #2.0,
+                            radius=10, center=(0, 0, 0),
+                            #rotation_about_north_pole_deg=0, north_pole_direction=(1, 1, 3),
+                            start_theta=0, end_theta=360, start_phi=0, end_phi=180,
+                            culling=True, show_edges=False)
+            app.add_sphere(radius=5, color='k')
+        if False:
+            app.add_earth( plot_stock_img=True,
+                            coastline_color='r', coastline_style='-', coastline_width=0.6, #2.0,
+                            radius=10, center=(0, 0, 0),
+                            #rotation_about_north_pole_deg=0, north_pole_direction=(1, 1, 3),
+                            start_theta=0, end_theta=360, start_phi=0, end_phi=180,
+                            culling=True, show_edges=False)
+            app.add_sphere(radius=5, color='k')
+        if False:
+            app.add_planet('/Users/sw/Programs_Sheng/sacpy/dataset/global_maps/fancy2_0-360.png', (0, 360), (-90, 90),
+                        radius=3, center=(0, 0, 0),
+                        rotation_about_north_pole_deg=45, north_pole_direction=(1, 1, 1),
+                        start_theta=0, end_theta=360, start_phi=0, end_phi=180,
+                        opacity=1, culling=True, show_edges=True)
+        if False:
+            app.add_planet2('/Users/sw/Programs_Sheng/sacpy/dataset/global_maps/fancy2_0-360.png', (0, 360), (-90, 90),
+                        radius=5, center=(0, 0, 0),
+                        rotation_about_north_pole_deg=45, north_pole_direction=(1, 1, 1),
+                        start_theta=0, end_theta=360, start_phi=0, end_phi=180,
+                        opacity=1, culling=True, show_edges=True)
+        ##
+        app.pv_plotter.add_axes()
+        app.show()
 class globe3d:
     """
     Geometric data and methods for a 3D globe.
@@ -714,37 +1310,74 @@ def plot_line(p, globe, xs, ys, zs, color, show_edges=True, opacity=0.5, lightin
 ###########################################################################################
 # Plot 3D beachball
 ###########################################################################################
-class beachball_3d:
+class beachball3d:
     """
     Class to plot 3d beachball given focal mechanism.
 
-    Examples are in `beachball_3d.benchmark(...)`.
+    Examples are in `beachball3d.benchmark(...)`.
     """
-    def __init__(self, mt):
+    def __init__(self, gcmt=None, mtUSE=None, mtENU=None, normalize=True):
         """
-        mt: (M11, M22, M33, M12, M13, M23) - the six independent components of the moment tensor,
-            where the coordinate system is 1,2,3 = Up,South,East which equals r,theta,phi.
-            - Harvard/Global CMT convention, or (Mrr=M11, Mtt=M22, Mpp=M33, Mrt=M12, Mrp=M13, Mtp=M23).
+        Initialize the beachball3d class with optional gcmt(6-element array), or mtUSE(3x3 matrix), or mtENU(3x3 matrix).
 
-            The relation to Aki and Richards x,y,z equals North,East,Down convention is as follows:
-            (Mzz=M11, Mxx=M22, Myy=M33, Mxz=M12, Myz=-M13, Mxy=-M23).
+        :param gcmt:  (M11, M22, M33, M12, M13, M23) in Up-South-East coordinate..
+        :param mtUSE: a 3x3 moment tensor in Up-South-East coordinate.
+        :param mtENU: a 3x3 moment tensor in East-North-Up coordinate.
+        :param normalize: whether to normalize the moment tensor. (default is True)
 
-            Here we use x,y,z equals East,North,Up, hence:
-            (Mzz=M11, Myy=M22, Mxx=M33, Myz=-M12, Mxz=M13, Mxy=-M23)
+        Note:  Coordinate system Up-South-East equals r-theta-phi (the Harvard/Global CMT convention ).
+               - Harvard/Global CMT convention, or (Mrr=M11, Mtt=M22, Mpp=M33, Mrt=M12, Mrp=M13, Mtp=M23).
 
-            Input  GCMT     Aki      Here
-            1(U)   r(U)=1   x(N)=-2  x(E)= 3
-            2(S)   t(S)=2   y(E)= 3  y(N)=-2
-            3(E)   p(E)=3   z(D)=-1  z(U)= 1
+                The relation to Aki and Richards x,y,z equals North,East,Down convention is as follows:
+                (Mzz=M11, Mxx=M22, Myy=M33, Mxz=M12, Myz=-M13, Mxy=-M23).
+
+                Here we use x,y,z equals East,North,Up, hence:
+                (Mzz=M11, Myy=M22, Mxx=M33, Myz=-M12, Mxz=M13, Mxy=-M23)
+
+                Input  GCMT     Aki      Here
+                1(U)   r(U)=1   x(N)=-2  x(E)= 3
+                2(S)   t(S)=2   y(E)= 3  y(N)=-2
+                3(E)   p(E)=3   z(D)=-1  z(U)= 1
         """
-        M11, M22, M33, M12, M13, M23 = mt
-        mat = np.zeros((3, 3))
-        mat[2,2], mat[1,1], mat[0,0] = M11, M22, M33
-        mat[1,2], mat[2,1] = -M12, -M12
-        mat[0,2], mat[2,0] = M13, M13
-        mat[0,1], mat[1,0] = -M23, -M23
-        self.d_mt = mt
-        self.d_mat = mat
+        if gcmt is not None:
+            self.matENU = beachball3d.gcmt2mtENU(gcmt, normalize=normalize)
+        elif mtUSE is not None:
+            self.matENU = beachball3d.mtUSE2mtENU(mtUSE, normalize=normalize)
+        elif mtENU is not None:
+            self.matENU = mtENU
+    @property
+    def gcmt(self):   # the gcmt array (M11, M22, M33, M12, M13, M23) in USE coordinate
+        return beachball3d.mtENU2gcmt(self.matENU, normalize=False)
+    @property
+    def matUSE(self): # the 3x3 matrix for the moment tensor in USE coordinate
+        return beachball3d.mtENU2mtUSE(self.matENU, normalize=False)
+    @property
+    def iso(self):    # the isotropic part of the moment tensor (invariant for any coordinate system)
+        (mtTBP, deviatoric_mtTBP, iso_mt), _ = beachball3d.mtENU2strike_dip_slip(self.matENU)
+        return iso_mt
+    @property
+    def deviatoric(self): # the deviatoric part of the moment tensor in ENU coordinate
+        return self.matENU - self.iso
+    @property
+    def deviatoricTBP(self): # the deviatoric part of the moment tensor in TBP coordinate (so the mat has only non-zero values at 11 and 33 positions)
+        (mtTBP, deviatoric_mtTBP, iso_mt), _ = beachball3d.mtENU2strike_dip_slip(self.matENU)
+        return deviatoric_mtTBP
+    @property
+    def mtTBP(self):  # the full moment tensor in TBP coordinate
+        (mtTBP, deviatoric_mtTBP, iso_mt), _ = beachball3d.mtENU2strike_dip_slip(self.matENU)
+        return mtTBP
+    @property
+    def two_strike_dip_slip(self): # a pair of (strike, dip, slip) for two planes as defined in Fig 4.2-2 in Stein and Wysession (2003).
+        _, pair_strike_dip_slip = beachball3d.mtENU2strike_dip_slip(self.matENU)
+        return pair_strike_dip_slip
+    @property
+    def tbp(self):    # T, B, P unit vectors (minimal compressive, null, maximal compressive directions). Note: (-T, -B, -P) also works
+        (vec_t, vec_b, vec_p), _, _ = beachball3d.getTBP(self.matENU)
+        return vec_t, vec_b, vec_p
+    @property
+    def two_nd(self): # a pair of (n, d) for two planes. Note: (-N, -D) also works.
+        _, (vec_n1, vec_d1), (vec_n2, vec_d2) = beachball3d.getTBP(self.matENU)
+        return (vec_n1, vec_d1), (vec_n2, vec_d2)
     def __radiation(self, thetas, phis, binarization=False):
         """
         Compute the P-, SV- and SH-wave radiations given a list of points on a unit sphere.
@@ -792,9 +1425,9 @@ class beachball_3d:
         SH_pol[:,2] = 0.0
         ####################
         P_amp, SV_amp, SH_amp = np.zeros(len(thetas) ), np.zeros(len(thetas) ), np.zeros(len(thetas) )
-        for pol, amp in zip((P_pol, SV_pol, SH_pol), (P_amp, SV_amp, SH_amp)):
-            for idx, pol in enumerate(pol):
-                amp[idx] = np.matmul(np.matmul(pol, self.d_mat), P_pol[idx].T) # based on Eq.4.97 in Aki&Richard (2002) Quantitative Seismology (2nd edition)
+        for wave_pol, amp in zip((P_pol, SV_pol, SH_pol), (P_amp, SV_amp, SH_amp)):
+            for idx, pol in enumerate(wave_pol):
+                amp[idx] = np.matmul(np.matmul(pol, self.matENU), P_pol[idx].T) # based on Eq.4.97 in Aki&Richard (2002) Quantitative Seismology (2nd edition)
         if binarization:
             P_amp = np.sign(P_amp)
         return loc_xyz, P_pol, SV_pol, SH_pol, P_amp, SV_amp, SH_amp
@@ -976,6 +1609,279 @@ class beachball_3d:
             if dict_grd['P'].point_data['P'].min() < 0.0 < dict_grd['P'].point_data['P'].max():
                 contours = dict_grd['P'].contour([0.0])
                 p.add_mesh(contours, show_edges=True, opacity=1.0, color='k')
+    #############################################################################################
+    # Conversion between gcmt (M11,M22,M33,M12,M13,M23), mtUSE(3x3matrix), and mtENU(3x3matrix)
+    @staticmethod
+    def gcmt2mtENU(gcmt, normalize=True):
+        """
+        Convert GCMT moment tensor components to a 3 by 3 moment tensor in East-North-Up coordinates.
+
+        :param gcmt: (M11, M22, M33, M12, M13, M23) - the six independent components of the moment tensor,
+            where the coordinate system is 1,2,3 = Up,South,East which equals r,theta,phi.
+            - Harvard/Global CMT convention, or (Mrr=M11, Mtt=M22, Mpp=M33, Mrt=M12, Mrp=M13, Mtp=M23).
+
+            The relation to Aki and Richards x,y,z equals North,East,Down convention is as follows:
+            (Mzz=M11, Mxx=M22, Myy=M33, Mxz=M12, Myz=-M13, Mxy=-M23).
+
+            Here we use x,y,z equals East,North,Up, hence:
+            (Mzz=M11, Myy=M22, Mxx=M33, Myz=-M12, Mxz=M13, Mxy=-M23)
+
+            Input  GCMT     Aki      Here
+            1(U)   r(U)=1   x(N)=-2  x(E)= 3
+            2(S)   t(S)=2   y(E)= 3  y(N)=-2
+            3(E)   p(E)=3   z(D)=-1  z(U)= 1
+        : param normalize: whether to normalize the output moment tensor.
+
+        :return mENU: a 3by3 matrix for the moment tensor in East-North-Up coordinates
+        """
+        M11, M22, M33, M12, M13, M23 = gcmt
+        mat = np.array(((M33, -M23, M13), (-M23, M22, -M12), (M13, -M12, M11)), dtype=np.float64)
+        if normalize:
+            norm = np.sqrt(np.sum(mat*mat))
+            if norm > 0:
+                mat *= (1.0/norm)
+        return mat
+    @staticmethod
+    def gcmt2mtUSE(gcmt, normalize=True):
+        """
+        Return a 3 by 3 matrix in USE coordinate for a GCMT array.
+        :param gcmt: (M11, M22, M33, M12, M13, M23) - the six independent components of the moment tensor,
+            where the coordinate system is 1,2,3 = Up,South,East which equals r,theta,phi.
+            - Harvard/Global CMT convention, or (Mrr=M11, Mtt=M22, Mpp=M33, Mrt=M12, Mrp=M13, Mtp=M23).
+
+            The relation to Aki and Richards x,y,z equals North,East,Down convention is as follows:
+            (Mzz=M11, Mxx=M22, Myy=M33, Mxz=M12, Myz=-M13, Mxy=-M23).
+
+        : param normalize: whether to normalize the output moment tensor matrix.
+
+        :return mUSE: a 3by3 matrix for the moment tensor in East-North-Up coordinates
+        """
+        M11, M22, M33, M12, M13, M23 = gcmt
+        mat = np.array(((M11, M12, M13), (M12, M22, M23), (M13, M23, M33)), dtype=np.float64)
+        if normalize:
+            norm = np.sqrt(np.sum(mat*mat))
+            if norm > 0:
+                mat *= (1.0/norm)
+        return mat
+    @staticmethod
+    def mtUSE2gcmt(matUSE, normalize=True):
+        if normalize:
+            norm = np.sqrt(np.sum(matUSE*matUSE))
+            if norm > 0:
+                matUSE = matUSE * (1.0/norm)
+        M11, M12, M13 = matUSE[0]
+        M21, M22, M23 = matUSE[1]
+        M31, M32, M33 = matUSE[2]
+        return np.array( (M11, M22, M33, M12, M13, M23), dtype=np.float64)
+    @staticmethod
+    def mtUSE2mtENU(mtUSE, normalize=True):
+        gcmt = beachball3d.mtUSE2gcmt(mtUSE, normalize=False)
+        return beachball3d.gcmt2mtENU(gcmt, normalize=normalize)
+    @staticmethod
+    def mtENU2mtUSE(mtENU, normalize=True):
+        if normalize:
+            norm = np.sqrt(np.sum(mtENU*mtENU))
+            if norm > 0:
+                mtENU /= norm
+        M33, M23, M13 = mtENU[0]; M23=-M23
+        _,   M22, M12 = mtENU[1]; M12=-M12
+        _,   _,   M11 = mtENU[2]
+        matUSE = np.array(((M11, M12, M13), (M12, M22, M23), (M13, M23, M33)), dtype=np.float64)
+        if normalize:
+            norm = np.sqrt(np.sum(matUSE*matUSE))
+            if norm > 0:
+                matUSE *= (1.0/norm)
+        return matUSE
+    @staticmethod
+    def mtENU2gcmt(mtENU, normalize=True):
+        mtUSE = beachball3d.mtENU2mtUSE(mtENU, normalize=False)
+        return beachball3d.mtUSE2gcmt(mtUSE, normalize=normalize)
+    #############################################################################################
+    # Convert between (strike, dip, slip) and mtENU(3x3 matrix)
+    @staticmethod
+    def strike_dip_slip2mtENU(strike_deg, dip_deg, slip_deg):
+        """
+        Compute moment tensor matrix in ENU coordinates (and n, d, t, p, b unit vectors) given strike, dip, and slip angles.
+
+        The strike, dip, and slip angles are defined as in Fig 4.2-2 in Stein and Wysession (2003).
+        Also, please note here we use x,y,z equals East,North,Up.
+
+        :param strike_deg: strike measured clockwise from North (in degrees)
+        :param dip_deg:    dip angle (in degrees, must be within 0-90 degree)
+        :param slip_deg:   slip angle (in degrees)
+
+        :return: mtENU,(n, d, t, b, p)
+            mtENU:           a 3x3 matrix for moment tensor in ENU coordinates
+            (n, d, t, b, p): unit vectors for normal, slip, T (minimal compressive),
+                             B (null), and P (maximal compressive) directions in ENU coordinates
+        """
+        if dip_deg < 0 or dip_deg > 90:
+            raise ValueError(f"Dip angle must be within 0-90 degrees, but got {dip_deg} degree.")
+        phi, delta, lamda    = np.deg2rad(strike_deg), np.deg2rad(dip_deg), np.deg2rad(slip_deg)
+        sin_phi, cos_phi     = np.sin(phi),   np.cos(phi)
+        sin_delta, cos_delta = np.sin(delta), np.cos(delta)
+        sin_lamda, cos_lamda = np.sin(lamda), np.cos(lamda)
+        XE, YN, ZU = np.array((1.,0.,0.)), np.array((0.,1.,0.)), np.array((0.,0.,1.)) # the coordinate in all internal computation
+        # Calculate the x1, x2, x3 show in Fig 4.2-2 in the ase XE,YN,ZU
+        x3 =  ZU
+        x1 =  sin_phi * XE + cos_phi * YN
+        x2 = -cos_phi * XE + sin_phi * YN
+        #
+        vec_n = cos_delta*x3 - sin_delta*x2 # the normal vector, n,  of the fault plane
+        vec_d = cos_lamda*x1 + sin_lamda*(cos_delta*x2 + sin_delta*x3) #the slip vector, d
+        #
+        vec_b = np.cross(vec_n, vec_d) # the null vector, b
+        vec_p = (vec_n-vec_d)*(np.sqrt(2)*0.5) #the maximal compressive direction, P
+        vec_t = (vec_n+vec_d)*(np.sqrt(2)*0.5) #the minimal compressive direction, T
+        # Now, compute the moment tensor matrix
+        moment_mat = np.zeros((3, 3), dtype=np.float64)
+        for i in range(3):
+            for j in range(i, 3):
+                moment_mat[i,j] = vec_n[i]*vec_d[j] + vec_n[j]*vec_d[i]
+                moment_mat[j,i] = moment_mat[i,j]
+        moment_mat *= (0.5*np.sqrt(2.)) # to normalize
+        return moment_mat, (vec_n, vec_d, vec_t, vec_b, vec_p)
+    @staticmethod
+    def mtENU2strike_dip_slip(mtENU):
+        """
+        Compute the strike, dip, and slip angles (and n, d, t, p, b unit vectors) given a moment tensor.
+
+        :param moment_mat: a 3by3 matrix for moment tensor in ENU coordinates
+
+        :return: (mtTBP, deviatoric_mtTBP, iso_mt), ((strike1, dip1, slip1), (strike2, dip2, slip2))
+                mtTBP:              the rotated moment tensor in the t-b-p coordinate system
+                deviatoric_mtTBP:   the diagonalized deviatoric moment tensor (with isotropic enegery removed) in the t-b-p coordinate system
+                iso_mt:             the isotropic part of the moment tensor (regardless of whatever coordinates)
+                ((strike1, dip1, slip1), (strike2, dip2, slip2)): the strike, dip, and slip angles corresponding to the two nodal planes.
+        """
+        # get the deviatoric part of the moment tensor
+        iso_mt        = (np.trace(mtENU)/3.0) * np.eye(3)
+        deviatoric_mt = mtENU - iso_mt
+        # compute the t, b, p (minimal compressive, maximal compressive, null) vectors
+        L, U = eig(deviatoric_mt)
+        if np.sum(np.abs(np.imag(L))) > 0.0:
+            raise ValueError("Err: complex eigenvalues found for moment tensor")
+        L     = np.real(L)
+        idxs  = np.argsort(L)
+        L     = L[idxs]
+        U     = U[:, idxs]
+        vec_p = U[:, 0]
+        vec_t = U[:, 2]
+        vec_b = np.cross(vec_p, vec_t) # the null vector, b
+        # U is also the rotation matrix, so that Ut M U = L, because M = U L Ut
+        mtTBP            = U.T @ mtENU @ U
+        deviatoric_mtTBP = np.diag(L) #U.T @ deviatoric_moment_mat @ U
+        # Now, compute n, d. In fact, there are two solutions, (n1,d1) and (n2,d2) where n1=d2, and n2=d1
+        vec_n1 = (vec_t+vec_p)*(np.sqrt(2)*0.5)
+        vec_d1 = (vec_t-vec_p)*(np.sqrt(2)*0.5)
+        vec_n2 = vec_d1
+        vec_d2 = vec_n1
+        # Now, compute the strike, dip and slip angles using the obtained vec_n and vec_d
+        pair_strike_dip_slip = list()
+        for vec_n, vec_d in [ (vec_n1, vec_d1), (vec_n2, vec_d2) ]:
+            nx, ny, nz = vec_n
+            phi        = np.arctan2(-ny, nx) # Assume sin(delta)>0, and always works for n1,d1 which has dip!=0
+            # get delta
+            XE, YN, ZU = np.array((1.,0.,0.)), np.array((0.,1.,0.)), np.array((0.,0.,1.))
+            sin_phi, cos_phi  = np.sin(phi), np.cos(phi)
+            x3 =  ZU
+            x1 =  sin_phi * XE + cos_phi * YN
+            x2 = -cos_phi * XE + sin_phi * YN
+            delta = np.arctan2(np.dot(vec_n, -x2), np.dot(vec_n, x3) ) #based on: vec_n = cos_delta*x3 - sin_delta*x2! sin(delta)>0 is assumed above!
+            # get lamda
+            sin_delta, cos_delta = np.sin(delta), np.cos(delta)
+            sin_lamda = np.dot(vec_d, cos_delta*x2 + sin_delta*x3) #based on: vec_d = cos_lamda*x1 + sin_lamda*(cos_delta*x2 + sin_delta*x3)
+            cos_lamda = np.dot(vec_d, x1)
+            lamda     = np.arctan2(sin_lamda, cos_lamda)
+            #
+            strike_deg = np.rad2deg(phi)   % 360
+            dip_deg    = np.rad2deg(delta) % 180 # sin(delta)>0 is assumed above! so that 0<delta<90 degree
+            slip_deg   = np.rad2deg(lamda) % 360
+            if dip_deg > 90: # in fact this could be useless... but just in case...
+                strike_deg = (180+strike_deg) % 360
+                dip_deg    = 180 - dip_deg
+                slip_deg   = (360-slip_deg)%360
+            pair_strike_dip_slip.append( (strike_deg, dip_deg, slip_deg ) )
+        pair_strike_dip_slip = np.array(pair_strike_dip_slip, dtype=np.float64)
+        ################################################################################################################
+        # Fix the problem for dip=0
+            # The n1,d1 and n2,d2 correspond to two nodal planes (one fault plane and the other auxiliary plane), and
+            # n1 and n2 are the normal vector of the planes.
+            #
+            # However, if one plane conincide with the free surface, which means dip=0, then for that plane, the norm
+            # n is vertical and has nx,ny=0. Notably, for the plane with dip=0, the strike and slip angles cannot be
+            # determined, as there are multiple combination of strike and slip angles that form the same slip vector
+            # in the plane, as long as strike-slip is a constant (the direction angle of the slip vector)! Think about that!
+            #
+            # Still, the work plane works! The other plane, being perpendicular to the plane with dip=0, will be perpendicular
+            # to the free surface. Obviously, that plane will intersect with the free surface at a line, and the line
+            # is delineate the strike!
+            #
+            # So, let us use that strike for both planes if such case happen!
+        for this_idx in (0, 1):
+            other_idx = 1-this_idx
+            this_strike, this_dip, this_slip = pair_strik_dip_slip[this_idx]
+            other_strike, junk, junk = pair_strik_dip_slip[other_idx]
+            if (this_dip<1e-9): # dip is zero!
+                new_strike = other_strike
+                new_slip = (new_strike + (this_slip-this_strike)) % 360
+                pair_strik_dip_slip[this_idx] = (new_strike, 0.0, new_slip)
+        return (mtTBP, deviatoric_mtTBP, iso_mt), pair_strike_dip_slip
+    @staticmethod
+    def getTBP(mtENU):
+        """
+        Get the T, B, P unit vectors (and n, d) from a moment tensor centered at (0,0,0) in ENU coordinates.
+
+        :param mtENU: Moment tensor in ENU coordinates
+        :return:  (t, b, p), (n1, d1), (n2, d2)
+                t, b, p: the maximal compressive, minimal compressive, and null vectors.
+                         Note, (-t, -b, -p) also works.
+                n1, d1: the normal and deviatoric vectors for the first plane
+                        Note, (-n1, -d1) also works.
+                n2, d2: the normal and deviatoric vectors for the second plane
+                        Note, (-n2, -d2) also works.
+        """
+        # get the deviatoric part of the moment tensor
+        iso_mt        = (np.trace(mtENU)/3.0) * np.eye(3)
+        deviatoric_mt = mtENU - iso_mt
+        # compute the t, b, p (minimal compressive, maximal compressive, null) vectors
+        L, U = eig(deviatoric_mt)
+        if np.sum(np.abs(np.imag(L))) > 0.0:
+            raise ValueError("Err: complex eigenvalues found for moment tensor")
+        L     = np.real(L)
+        idxs  = np.argsort(L)
+        L     = L[idxs]
+        U     = U[:, idxs]
+        vec_p = U[:, 0]
+        vec_t = U[:, 2]
+        vec_b = np.cross(vec_p, vec_t) # the null vector, b
+        vec_n1 = (vec_t+vec_p)*(np.sqrt(2)*0.5)
+        vec_d1 = (vec_t-vec_p)*(np.sqrt(2)*0.5)
+        vec_n2 = vec_d1
+        vec_d2 = vec_n1
+        return (vec_t, vec_b, vec_p), (vec_n1, vec_d1), (vec_n2, vec_d2)
+    @staticmethod
+    def benchmark2():
+        np.set_printoptions(formatter={'float': '{:5.1f}'.format})
+        #####
+        strike, dip, slip = 210, 0, 120
+        print('Input:')
+        print('strike, dip, slip:', strike, dip, slip)
+        #
+        mtENU,(n, d, t, b, p)= beachball3d.strike_dip_slip2mtENU(strike, dip, slip)
+        print('n, d, t, b, p:', n, d, t, b, p)
+        print('mtENU:\n', mtENU)
+        #
+        (mtTBP, deviatoric_mtTBP, iso_mt), pair_strik_dip_slip = beachball3d.mtENU2strike_dip_slip(mtENU)
+        print('\nmtTBP:\n', mtTBP)
+        print('deviatoric_mtTBP:\n', deviatoric_mtTBP)
+        print('iso_mt:\n', iso_mt)
+        print('\nCHECK:')
+        for sds in pair_strik_dip_slip:
+            print('strike, dip, slip:', sds)
+            mtENU,(n, d, t, b, p)= beachball3d.strike_dip_slip2mtENU(*sds)
+            print('n, d, t, b, p:', n, d, t, b, p)
+            print('mtENU:\n', mtENU)
     @staticmethod
     def benchmark():
         p = pv.Plotter(notebook=0, shape=(1, 1), border=False, window_size=(1700, 1000) )
@@ -997,9 +1903,10 @@ class beachball_3d:
         ######################################################
         # plot beachball
         #mt = [0.91, -0.89, -0.02, 1.78, -1.55, 0.47]
-        mt = [0, 0, -0.1, 1, 0, 0] # (Mrr=M11, Mtt=M22, Mpp=M33, Mrt=M12, Mrp=M13, Mtp=M23).
-        #mt = [1, 1, 1, 0, 0, 0]
-        bb = beachball_3d(mt)
+        #mt = [0, 0, -0.1, 1, 0, 0] # (Mrr=M11, Mtt=M22, Mpp=M33, Mrt=M12, Mrp=M13, Mtp=M23).
+        mt = [0, 0, 0, 0, -1, 0]
+        #mt = [0, 0, 0, 0, 1, 1]
+        bb = beachball3d(mt)
         cmap = ListedColormap(('#444444', '#eeeeee'))
         bb.plot_3d(p,     center=(0,0,0), radius=10.0, hemisphere='None', cmap='Blues', plot_nodal=True, show_scalar_bar=False, wave_type='SV')
         bb.plot_3d_vec(p, center=(0,0,0), radius=10.0, hemisphere=None, alpha=1.0, lighting=False, culling=False, scale=3, wave_type='SV')
@@ -1013,7 +1920,9 @@ class beachball_3d:
         p.show()
         print(p.camera_position)
 if __name__ == '__main__':
-    beachball_3d.benchmark()
+    Scene3D.benchmark()
+    sys.exit(0)
+    beachball3d.benchmark()
     sys.exit(0)
     globe3d.benchmark4()
     sys.exit(0)
@@ -1044,7 +1953,7 @@ if __name__ == '__main__':
     #mt = [-1, 0, 1, 0, 0, 0] # strike-slip
     #mt = [0, 0, 0, 0, -1, 0] # dip-slip
     #mt = [0.91, -0.89, -0.02, 1.78, -1.55, 0.47]
-    bb = beachball_3d(mt)
+    bb = beachball3d(mt)
     cmap = ListedColormap(('#444444', '#eeeeee'))
     bb.plot_3d(p,     center=(0,0,0), radius=10.0, hemisphere='None', cmap='RdBu_r', plot_nodal=True, show_scalar_bar=True)
     bb.plot_3d_vec(p, center=(0,0,0), radius=10.0, hemisphere=None, alpha=1.0, lighting=True, culling=False, scale=3)
