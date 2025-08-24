@@ -24,6 +24,7 @@ pv.global_theme.allow_empty_mesh = True
 class Scene3D:
     """
     A scene holding multiple 3D objects.
+    Note, here theta is like the longitude, and phi is like the colatitude on a sphere.
     """
     def __init__(self, pv_plotter=None, pv_plotter_kargs={'window_size':(1700, 1200)}, number_of_peels=4 ):
         """
@@ -41,6 +42,7 @@ class Scene3D:
         else:
             self.pv_plotter.disable_depth_peeling()  # disable depth peeling for efficiency
         self.disable_clip()
+        self.enable_add_mesh_to_plotter()
     def enable_clip(self, clip_kw={'normal': (0, 0, 1), 'origin': (0, 0, 0)},
                           clip_box_kw={'bounds': (-1, 1, -1, 1, -1, 1)} ):
         """
@@ -55,6 +57,10 @@ class Scene3D:
     def disable_clip(self):
         self.clip_kw = None
         self.clip_box_kw = None
+    def disable_add_mesh_to_plotter(self):
+        self.flag_add_mesh_to_plotter = False
+    def enable_add_mesh_to_plotter(self):
+        self.flag_add_mesh_to_plotter = True
     def __clip(self, mesh):
         if self.clip_kw is not None:
             mesh = mesh.clip(**self.clip_kw)
@@ -63,7 +69,9 @@ class Scene3D:
         return mesh
     def add_mesh(self, mesh, **kwargs):
         mesh = self.__clip(mesh)
-        actor= self.pv_plotter.add_mesh(mesh, **kwargs)
+        actor = None
+        if self.flag_add_mesh_to_plotter:
+            actor = self.pv_plotter.add_mesh(mesh, **kwargs)
         return mesh, actor
     def add_plane(self, center=(0.,0.,0.), direction=(0,0,1), x_direction=None, color='gray',
                     i_size=10, j_size=10, i_resolution=10, j_resolution=10,
@@ -382,9 +390,11 @@ class Scene3D:
         ####
         u1 = current_orientation_direction1
         u2 = np.cross(u1, current_orientation_direction2)
+        u2 /=np.linalg.norm(u2) ####
         u3 = np.cross(u1, u2)
         v1 = new_orientation_direction1
         v2 = np.cross(v1, new_orientation_direction2)
+        v2 /=np.linalg.norm(v2) ####
         v3 = np.cross(v1, v2)
         UT = np.array([u1, u2, u3], dtype=np.float64)
         VT = np.array([v1, v2, v3], dtype=np.float64)
@@ -446,6 +456,7 @@ class Scene3D:
             angle = np.arccos(np.clip(np.dot(v0, v1), -1.0, 1.0) )
             if angle > 1.e-6:
                 rotation_axis = np.cross(v0, v1)
+                rotation_axis /= np.linalg.norm(rotation_axis)
                 mesh.points = Scene3D.rotate_about_axis(mesh.points, rotation_axis, angle, rotation_axis_start_point=current_mesh_center)
         #### 4. translate
         mesh.points += ( np.asanyarray(new_mesh_center) - np.asarray(current_mesh_center) )
@@ -1416,6 +1427,7 @@ class beachball3d:
     Class to plot 3d beachball given focal mechanism.
 
     Examples are in `beachball3d.benchmark(...)`.
+    Note, here theta is like the longitude, and phi is like the colatitude on a sphere.
     """
     ZERO_TOL = 1e-3
     ##########################################################################################
@@ -1614,8 +1626,8 @@ class beachball3d:
         Compute the P-, SV- and SH-wave radiations given a list of points on a unit sphere.
 
         thetas, phis: a list of theta and phi for the points on
-                      a unit sphere. theta is angle between
-                      the direction and x axis, and phi the angle
+                      a unit sphere. theta is angle (0->360) between
+                      the direction and x+-z plane, and phi the angle
                       between the direction and z axis. Angles should
                       be in radian other than in degree.
         binarization: Modify the P-wave radiation amplitude to -1, 0, 1 for
@@ -1634,10 +1646,40 @@ class beachball3d:
                 !!! Note: the unit vector for a polarity should be combined with its amplitude! Usually, a negative amplitude means
                 the displacement is in the opposite direction of the unit vector, and a positive amplitude means the displacement is in
                 the direction of the unit vector!
+
+                In details,
+                For P wave,
+                positive radiation amplitude means particles are going away from the source along the ray path. (Recorded P wave is positive
+                in both radial and up directions).
+                negative radiation amplitude means particles are going toward the source along the ray path. (recorded P wave is negative
+                in both radial and up directions).
+                #
+                For SV wave,
+                positive radiation amplitude means particles are going downards along the ray path. (Recorded SV wave is positive in radial
+                direction but negative in up direction).
+                negative radiation amplitude means particles are going upwards along the ray path. (Recorded SV wave is negative in radial
+                direction but positive in up direction).
+                #
+                For SH wave,
+                positive radiation amplitude means particles are going clockwise (view from top) (or T direction) if we center at source. (Records SH
+                is positive in T direction).
+                negative radiation amplitude means particles are going anti-clockwise (view from top) (for -T direction) if we center at source.
+                (Recorded SH is negative in T direction).
+                #
+                Above, the up is up (Z), radial is from source to receiver, and T is T=RxZ (RTZ is left-handed, or RZT right-handed)
         """
         sin_phi, cos_phi     = np.sin(phis), np.cos(phis)
         sin_theta, cos_theta = np.sin(thetas), np.cos(thetas)
         ####################
+        # R,T,Z is a left-handed coordinate system, and hence R,T,-Z is right-handed
+        # Here use P-polarity the one close to R direction,
+        #          SV-...     ...     close to -Z directin,
+        #          SH-...     ...     same to T direction.
+        #
+        # uR = cos(t) ux + sin(t) uy
+        # SV = cos(p) uR - sin(p) uz = cos(p)cos(t) ux + cos(p)sin(t) uy - sin(p) uz
+        # SH = sin(t) ux - cos(t) uy
+        #
         #unit P wave polarity vectors from the center of the source
         P_pol      = np.zeros((len(thetas), 3 ) )
         P_pol[:,0] = sin_phi * cos_theta
@@ -1648,10 +1690,10 @@ class beachball3d:
         SV_pol      = np.zeros((len(thetas), 3 ) )
         SV_pol[:,0] = cos_phi * cos_theta
         SV_pol[:,1] = cos_phi * sin_theta
-        SV_pol[:,2] = -sin_phi
+        SV_pol[:,2] = -sin_phi # Note, here SV_pol is always pointing downwards!
         #the SH vectors that are perpendicular to the radial vectors and in vertical planes
         SH_pol      = np.zeros((len(thetas), 3 ) )
-        SH_pol[:,0] = sin_theta
+        SH_pol[:,0] = sin_theta # Note, here SH_pol is always pointing Eastwards (or clockwise from top view)
         SH_pol[:,1] = -cos_theta
         SH_pol[:,2] = 0.0
         ####################
@@ -1659,8 +1701,11 @@ class beachball3d:
         for wave_pol, amp in zip((P_pol, SV_pol, SH_pol), (P_amp, SV_amp, SH_amp)):
             for idx, pol in enumerate(wave_pol):
                 amp[idx] = np.matmul(np.matmul(pol, self.matENU), P_pol[idx].T) # based on Eq.4.97 in Aki&Richard (2002) Quantitative Seismology (2nd edition)
+                # The amp could be negative! Which means the polarity direction should be -pol!
         if binarization:
             P_amp = np.sign(P_amp)
+            SV_amp = np.sign(SV_amp)
+            SH_amp = np.sign(SH_amp)
         return loc_xyz, P_pol, SV_pol, SH_pol, P_amp, SV_amp, SH_amp
     def plot_3d_vcone(self, p, apex=(0,0,0), cones=[(2.8, 18, 'r', 0.3), (3.1, 18, 'b', 0.3)], 
                       culling=False, lighting=False):
@@ -1697,9 +1742,9 @@ class beachball3d:
             p.add_mesh(mesh, show_edges=True,  opacity=alpha, color='k',
                         smooth_shading=True, lighting=lighting, culling=culling)
         return p
-    def plot_3d_vec(self, p=None, wave_type='P', hemisphere=None,
+    def plot3d_pol(self, p=None, wave_type='P', hemisphere=None,
                     neg_color='#0f0396', pos_color='#db620c',
-                    center=(0,0,0), radius=10.0, scale=3.0, density_level=3,
+                    center=(0,0,0), radius=1.0, scale=1.0, density_level=3,
                     opacity=1, lighting=True, **kwargs):
         """
         Plot 3d P-wave radiation vectors at the surface of the beachball.
@@ -1726,6 +1771,11 @@ class beachball3d:
         phi_min = 0.0   if (hemisphere!='lower') else 0.5*np.pi
         phi_max = np.pi if (hemisphere!='upper') else 0.5*np.pi
         #########
+        if wave_type != 'P': # remove north and south poles for which SV and SH are meaningless
+            idx = np.where((0.001<=phis) & ((np.pi-0.001)<=phi_max) )
+            thetas = thetas[idx]
+            phis   = phis[idx]
+        #########
         idxs = np.where((phi_min<=phis) & (phis<=phi_max))
         thetas, phis = thetas[idxs], phis[idxs]
         idxs = np.where(phis<=phi_max)
@@ -1747,7 +1797,7 @@ class beachball3d:
                 S_amp[idx] = amp
             dict_pol['S'] = S_pol
             dict_amp['S'] = S_amp
-        elif wave_type=='all':
+        elif wave_type=='all': # In fact, this is meanless, as P and S have different factors as in Eq.4.96 in in Aki&Richard (2002) (2nd Edition)
             pol3d = np.zeros(SV_pol.shape, SV_pol.dtype)
             amp3d = np.zeros(SV_amp.shape, SV_amp.dtype)
             for idx, (_p, sv, sh, ap, asv, ash) in enumerate(zip(P_pol, SV_pol, SH_pol, P_amp, SV_amp, SH_amp)):
@@ -1759,7 +1809,7 @@ class beachball3d:
             dict_pol['all'] = pol3d
             dict_amp['all'] = amp3d
         ######### plot
-        scale = np.abs(scale)
+        scale = np.abs(scale)*radius*0.5
         app = Scene3D(pv_plotter=p, number_of_peels=-1)
         #p.disable_depth_peeling() # important for efficient rendering
         print(wave_type, loc_xyz.shape, center )
@@ -1768,13 +1818,19 @@ class beachball3d:
         for loc, pol, amp in zip(loc_xyz, dict_pol[wave_type], dict_amp[wave_type]*scale ):
             loc_is_end = True if (amp<0 and wave_type=='P')  else False
             color      = neg_color if amp<0 else pos_color
-            app.add_arrow(loc, direction=pol, scale=amp, loc_is_end=loc_is_end, color=color, lighting=lighting, opacity=opacity, tip_resolution=10, shaft_resolution=10  )
+            if np.abs(amp) > 1e-6:
+                # Note amp could be negative, so that direction will be reversed.
+                #amp, pol = (-amp, -pol) if amp < 0 else (amp, pol) # pyvista will take care of this
+                app.add_arrow(loc, direction=pol, scale=amp, loc_is_end=loc_is_end, color=color, lighting=lighting, opacity=opacity, tip_resolution=10, shaft_resolution=10  )
         if wave_type == 'S':
             for wave_type in ('SV', 'SH'):
                 for loc, pol, amp in zip(loc_xyz, dict_pol[wave_type], dict_amp[wave_type]*scale ):
-                    app.add_arrow(loc, direction=pol, scale=amp, loc_is_end=False, color=pos_color, lighting=lighting, opacity=opacity*0.5, tip_resolution=10, shaft_resolution=10  )
+                    if np.abs(amp) > 1e-6:
+                        # Note amp could be negative, so that direction will be reversed.
+                        #amp, pol = (-amp, -pol) if amp < 0 else (amp, pol) # pyvista will take care of this
+                        app.add_arrow(loc, direction=pol, scale=amp, loc_is_end=False, color='gray', lighting=lighting, opacity=opacity*0.5, tip_resolution=10, shaft_resolution=10  )
         return app.pv_plotter
-    def plot_3d(self, p=None, wave_type='P', binarization=False, hemisphere=None,
+    def plot3d(self, p=None, wave_type='P', binarization=False, hemisphere=None,
                 plot_zero_contour=True, color_zero_contour='k', plot_zero_contour_width=1,
                 plot_tbp=True, plot_dc_nodal_planes=True,
                 cmap='RdBu_r', diverging_clim=True, label='M', center=(0,0,0), radius=1.0, resolution_step_deg=2,
@@ -1818,7 +1874,11 @@ class beachball3d:
         SV_amp = SV_amp.reshape(theta_mesh.shape)
         SH_amp = SH_amp.reshape(theta_mesh.shape)
         #
-        dict_radiation = {'P': P_amp, 'SV': np.abs(SV_amp), 'SH': np.abs(SH_amp), }
+        #dict_radiation = {'P': P_amp, 'SV': np.abs(SV_amp), 'SH': np.abs(SH_amp), }
+        # We keep negative and positive amplitude for SH, SV. Positive SV amplitude means it is positive amplitude in radial direction at receiver.
+        # Negative SV amplitude means it is negative amplitude in radial direction  at receiver. Positive SH amplitude means it is positive amplitude in
+        # tangential direction at receiver. Negative SH amplitude means it is negative amplitude in tangential direction at receiver.
+        dict_radiation = {'P': P_amp, 'SV': SV_amp, 'SH': SH_amp, }
         if wave_type=='S':
             dict_radiation['S'] = np.sqrt(SV_amp*SV_amp + SH_amp*SH_amp)
         elif wave_type=='all':
@@ -1840,8 +1900,11 @@ class beachball3d:
         ################################################################################################################################################################################
         app.add_sphere_grd((0, 360), (phi[0], phi[-1]), dict_radiation[wave_type], label=label, radius=radius, center=center, cmap=cmap, lighting=lighting, clim=clim, **kwargs)
         if plot_zero_contour:
-            mesh, actor = app.add_sphere_grd((0, 360), (phi[0], phi[-1]), dict_radiation['P'], label='junkjunkjunk', radius=radius, center=center, opacity=0.0, show_scalar_bar=False)
-            if mesh.point_data['junkjunkjunk'].min() < 0.0 < mesh.point_data['junkjunkjunk'].max():
+            contour_label = '%s_contour0' % wave_type
+            app.disable_add_mesh_to_plotter()
+            mesh, actor = app.add_sphere_grd((0, 360), (phi[0], phi[-1]), dict_radiation[wave_type], label=contour_label, radius=radius, center=center, opacity=0.0, show_scalar_bar=False)
+            app.enable_add_mesh_to_plotter()
+            if mesh.point_data[contour_label].min() < 0.0 < mesh.point_data[contour_label].max():
                 contours = mesh.contour([0.0])
                 app.add_mesh(contours, show_edges=True, opacity=1.0, color=color_zero_contour, line_width=plot_zero_contour_width)
         ################################################################################################################################################################################
@@ -1849,14 +1912,14 @@ class beachball3d:
             cmap = plt.get_cmap(cmap)
             color_p = cmap(0.0)
             color_t = cmap(1.0)
-            self.plot_3d_tbp_nodal_planes( app.pv_plotter, hemisphere=hemisphere, center=center, radius=radius,
-                                            plot_t=plot_tbp, plot_b=False, plot_p=plot_tbp, color_t=color_t, color_p=color_p,
+            self.plot3d_tbp_nodal_planes( app.pv_plotter, hemisphere=hemisphere, center=center, radius=radius,
+                                            plot_t=plot_tbp, plot_b=plot_tbp, plot_p=plot_tbp, color_t=color_t, color_p=color_p,
                                             plot_dc_nodal_planes=plot_dc_nodal_planes,
                                             lighting=lighting, **kwargs)
         ################################################################################################################################################################################
         app.disable_clip()
         return app.pv_plotter
-    def plot_3d_tbp_nodal_planes(self, p=None, hemisphere=None, plot_t=True, plot_b=True, plot_p=True, plot_dc_nodal_planes=True,
+    def plot3d_tbp_nodal_planes(self, p=None, hemisphere=None, plot_t=True, plot_b=True, plot_p=True, plot_dc_nodal_planes=True,
                                  center=(0,0,0), radius=1.0, color_t='red', color_p='black', color_b='gray', scale_tbp=0.5, color_nodal_planes='k',
                                  lighting=False, **kwargs):
         """
@@ -1886,9 +1949,11 @@ class beachball3d:
                     continue
                 app.add_arrow(loc=loc, direction=sign*v, loc_is_end=loc_is_end, color=clr, lighting=lighting, scale=radius*scale_tbp, **kwargs)
         ################################################################################################################################################################################
-        #### plot two nodal planes
+        #### plot two nodal planes and the third plane
         if plot_dc_nodal_planes:
-            for n, d in ((n1, d1), (n2, d2)):
+            n3 = np.cross(n1, n2)
+            d3 = n1
+            for n, d in ((n1, d1), (n2, d2), (n3, d3) ):
                 flag = 'opacity' in kwargs
                 opacity = kwargs.pop('opacity', 1.0)
                 app.add_plane(center=center, direction=n, x_direction=d, color=color_nodal_planes, opacity=opacity*0.2,
@@ -1898,10 +1963,10 @@ class beachball3d:
         ################################################################################################################################################################################
         app.disable_clip()
         return app.pv_plotter
-    def plot_2d(self, ax_polar=None, wave_type='P', binarization=False, hemisphere='lower', proj_method='Schmidt',
+    def plot2d(self, ax_polar=None, wave_type='P', binarization=False, hemisphere='lower', proj_method='Schmidt',
                 plot_zero_contour=True, color_zero_contour='k', plot_zero_contour_width=0.5,
-                plot_tbp=True, color_tbp='c', plot_dc_nodal_planes=True,
-                cmap='RdBu_r', diverging_clim=True, radius=1.0, resolution_step_deg=1,
+                plot_tbp=True, color_tbp='y', plot_dc_nodal_planes=True, color_nodal_planes='gray',
+                cmap='RdBu_r', diverging_clim=True, radius=1.0, resolution_step_deg=1, markersize=5,
                 figname=None, show=False, **kwargs ):
         """
         """
@@ -1915,7 +1980,8 @@ class beachball3d:
             phi = np.deg2rad(np.arange(0, 90.001, resolution_step_deg))
         theta_mesh, phi_mesh = np.meshgrid(theta, phi)
         loc_xyz, P_pol, SV_pol, SH_pol, P_amp, SV_amp, SH_amp = self.__radiation(theta_mesh.ravel(), phi_mesh.ravel(), binarization=binarization)
-        dict_radiation = {'P': P_amp, 'SV': np.abs(SV_amp), 'SH': np.abs(SH_amp) }
+        #dict_radiation = {'P': P_amp, 'SV': np.abs(SV_amp), 'SH': np.abs(SH_amp) }
+        dict_radiation = {'P': P_amp, 'SV': SV_amp, 'SH': SH_amp }
         if wave_type == 'S':
             dict_radiation['S'] =  np.sqrt(SV_amp**2 + SH_amp**2)
         elif wave_type == 'all':
@@ -1935,7 +2001,7 @@ class beachball3d:
                 cmax = max(vmax, -vmin)
                 clim = kwargs.pop('clim', (-cmax, cmax) )
             else:
-                clim = kwargs.pop('clim', None)
+                clim = kwargs.pop('clim', (None, None))
             ########## plot radiations
             im = ax_polar.pcolormesh(tt, rr, values, shading='gouraud', cmap=cmap, vmin=clim[0], vmax=clim[1] )
             if plot_zero_contour:
@@ -1948,24 +2014,23 @@ class beachball3d:
                 color_b = color_tbp
                 plot_t = True
                 plot_p = True
-                plot_b = False
-                self.plot_2d_tbp_nodal_planes(ax_polar=ax_polar, hemisphere=hemisphere,
-                                              plot_t=plot_t, plot_b=plot_b, plot_p=plot_p,  color_t=color_t, color_p=color_p, color_b=color_b,
-                                              plot_dc_nodal_planes=plot_dc_nodal_planes,
+                plot_b = True
+                self.plot2d_tbp_nodal_planes(ax_polar=ax_polar, hemisphere=hemisphere,
+                                              plot_t=plot_t, plot_b=plot_b, plot_p=plot_p,  color_t=color_t, color_p=color_p, color_b=color_b, markersize=5,
+                                              plot_dc_nodal_planes=plot_dc_nodal_planes, color_nodal_planes=color_nodal_planes,
                                               radius=radius)
             ########## adjust
             ax_polar.set_ylim((0, radius) )
             ax_polar.grid(False)
             ax_polar.set_xticks([])
             ax_polar.set_yticks([])
-            plt.colorbar(im)
             if figname is not None:
                 plt.savefig(figname, bbox_inches='tight', dpi=300)
             if show:
                 plt.show()
             return ax_polar
-    def plot_2d_tbp_nodal_planes(self, ax_polar=None, hemisphere='lower', plot_t=True, plot_b=True, plot_p=True, plot_dc_nodal_planes=True,
-                                 radius=1.0, color_t='c', color_p='c', color_b='c', marker_t='o', marker_p='o', marker_b='.', markersize=5,
+    def plot2d_tbp_nodal_planes(self, ax_polar=None, hemisphere='lower', plot_t=True, plot_b=True, plot_p=True, plot_dc_nodal_planes=True,
+                                 radius=1.0, color_t='c', color_p='c', color_b='c', markersize=5,
                                  color_nodal_planes='gray', linestyle='-', linewidth=0.3,
                                  proj_method= 'Schmidt'):
         """
@@ -1974,26 +2039,60 @@ class beachball3d:
             return
         (vt, vb, vp), (n1, d1), (n2, d2) = self.getTBPND()
         ####
+        if hemisphere == 'lower':
+            marker_t='X' # going into the paper
+            marker_p='o' # going out of the paper
+            marker_b='s'
+        else:
+            marker_t='o'
+            marker_p='X'
+            marker_b='s'
+        ####
         def xyz2tr(x, y, z, scale, hemisphere):
+            x, y, z = np.array(x).ravel(), np.array(y).ravel(), np.array(z).ravel()
             theta = np.arctan2(y, x)
             phi   = np.arctan2(np.sqrt(x*x+y*y), z )
             if hemisphere == 'lower':
+                idxs = np.where(z < 0)
+                theta = theta[idxs]
+                phi = phi[idxs]
                 r = np.sqrt(2)*np.cos(0.5*phi)*scale
             elif hemisphere == 'upper':
+                idxs = np.where(z > 0)[0]
+                theta = theta[idxs]
+                phi = phi[idxs]
                 r = np.sqrt(2)*np.cos(0.5*(np.pi-phi) )*scale
             return theta, r
         if proj_method== 'Schmidt':
             #### plot nodal planes
             if (not self.is_pure_iso()) and (not self.is_pure_clvd()) and plot_dc_nodal_planes:
-                for n, d in ((n1, d1), (n2, d2)):
-                    angle = np.deg2rad( np.arange(0, 360.0001, 1))
-                    zs = np.sin(angle)
-                    ys = np.cos(angle)
-                    xs = np.zeros(zs.size)
-                    R  = np.column_stack((n, d, vb) )
-                    xyz = np.array( [xs, ys, zs] )
-                    xyz = R @ xyz
-                    xs, ys, zs = xyz
+                for n in (n1, d1):
+                    n /= np.linalg.norm(n)
+                    n = -n if n[2]<0 else n # make sure n is upward and unit
+                    if np.abs(n[2]-1)<1e-9: # n is vertical, no need to plot
+                        continue
+                    ########
+                    # We rotate from uvw to uqn about the axis u
+                    # u = w x n
+                    # Then, we need to find a half circle in x-y plane, so that rotating it about the u direction result in
+                    # the nodal plane (the rotation that bring w to n).
+                    # Apparently, the half circle in x-y plane starts from -u direction to u direction anti-clockwisely.
+                    # So we need to find the theta angle for -u, and then the half circle in x-y plane has theta range is
+                    # (angle-pi, angle) for the lower half and (angle, angle+pi) for the upper half.
+                    # 
+                    w = (0,0,1)
+                    u = np.cross(w,n)
+                    vcos = np.dot((1,0,0), u)
+                    vsin = np.dot(np.cross((1,0,0), u), (0,0,1) )
+                    start_angle = np.arctan2(vsin, vcos)
+                    angle = np.linspace(start_angle, start_angle+np.pi, 100) if hemisphere=='upper' else np.linspace(start_angle-np.pi, start_angle, 100)
+                    xs = np.cos(angle)
+                    ys = np.sin(angle)
+                    zs = np.zeros(xs.size)
+                    #
+                    xs, ys, zs= Scene3D.rotate_and_translate2(np.array([xs,ys,zs]), current_origin_xyz=(0,0,0),
+                                                              current_orientation_direction1=u, current_orientation_direction2=w,
+                                                              new_orientation_direction1=u, new_orientation_direction2=n, new_origin_xyz=(0,0,0) )
                     #
                     prj_theta, prj_r = xyz2tr(xs, ys, zs, radius, hemisphere)
                     if ax_polar is None:
@@ -2010,7 +2109,7 @@ class beachball3d:
                     x, y, z = v
                     prj_theta, prj_r = xyz2tr(x, y, z, radius, hemisphere)
                     if (hemisphere == 'upper' and z >0.0) or (hemisphere == 'lower' and z<0.0):
-                        ax_polar.scatter(prj_theta, prj_r, color=clr, linewidth=0.0, s=markersize, marker=marker, clip_on=False )
+                        ax_polar.plot(prj_theta, prj_r, color=clr, linewidth=0.0, markersize=markersize, marker=marker)
             ########## adjust
             ax_polar.set_ylim((0, radius) )
             ax_polar.grid(False)
@@ -2183,6 +2282,97 @@ class beachball3d:
         return matuvw
     ##########################################################################################
     @staticmethod
+    def benchmark7(): # test the P, SV, SH, and S polarity (vectors) for a DC source
+        app = Scene3D()
+        cmap = plt.get_cmap('RdBu_r', 11)
+        gcmt = (0,0,0,0,1,0)
+        bb = beachball3d(gcmt=gcmt, normalize=False)
+        bb.plot3d(    p=app.pv_plotter, wave_type='P',  center=(  0,0,0), cmap=cmap )
+        bb.plot3d_pol(p=app.pv_plotter, wave_type='P',  center=(  0,0,0), cmap=cmap )
+        #
+        bb.plot3d(    p=app.pv_plotter, wave_type='SV', center=( -3,0,0), cmap=cmap )
+        bb.plot3d_pol(p=app.pv_plotter, wave_type='SV', center=( -3,0,0), cmap=cmap )
+        #
+        bb.plot3d(    p=app.pv_plotter, wave_type='SH', center=( -6,0,0), cmap=cmap )
+        bb.plot3d_pol(p=app.pv_plotter, wave_type='SH', center=( -6,0,0), cmap=cmap )
+        #
+        bb.plot3d(    p=app.pv_plotter, wave_type='S',  center=( -9,0,0), cmap=cmap )
+        bb.plot3d_pol(p=app.pv_plotter, wave_type='S',  center=( -9,0,0), cmap=cmap )
+        app.pv_plotter.add_axes()
+        app.pv_plotter.show()
+    @staticmethod
+    def benchmark6():  # plot DC 2d for all possible dip and slip angles
+        ##### critical i angle for P and S wave from a source
+        if True:
+            prem_table =  [ (  0.0, 6371.0,  1.45, 0.00), # depth, radius, Vp (km/s), Vs (km/s)
+                            (  3.0, 6368.0,  1.45, 0.00), # src: https://www.soest.hawaii.edu/GG/FACULTY/smithkonter/GG631/problemsets/PS14_PREM.pdf
+                            (  3.0, 6368.0,  5.80, 3.20),
+                            ( 15.0, 6356.0,  5.80, 3.20),
+                            ( 15.0, 6356.0,  6.80, 3.90),
+                            ( 24.4, 6346.6,  6.80, 3.90),
+                            ( 24.4, 6346.6,  8.11, 4.49),
+                            ( 71.0, 6300.0,  8.08, 4.47),
+                            ( 80.0, 6291.0,  8.08, 4.47),
+                            ( 80.0, 6291.0,  8.08, 4.47),
+                            (171.0, 6200.0,  8.02, 4.44),
+                            (220.0, 6151.0,  7.99, 4.42),
+                            (220.0, 6151.0,  8.56, 4.64),
+                            (271.0, 6100.0,  8.66, 4.68),
+                            (371.0, 6000.0,  8.85, 4.75),
+                            (400.0, 5971.0,  8.91, 4.77),
+                            (400.0, 5971.0,  9.13, 4.93),
+                            (471.0, 5900.0,  9.50, 5.14),
+                            (571.0, 5800.0, 10.01, 5.43),
+                            (600.0, 5771.0, 10.16, 5.52),
+                            (600.0, 5771.0, 10.16, 5.52),
+                            (670.0, 5701.0, 10.27, 5.57),
+                            (670.0, 5701.0, 10.75, 5.95),
+                            (771.0, 5600.0, 11.07, 6.24), ]
+            prem_table = np.array(prem_table)
+            evdp = np.arange(10, 700, 2)
+            vp = np.interp(evdp, prem_table[:,0], prem_table[:,2])
+            vs = np.interp(evdp, prem_table[:,0], prem_table[:,3])
+            critical_slowness = 5 / (6371*np.pi/180) # 5 s/degree to s/km
+            critical_ip = np.arcsin(critical_slowness * vp) # in radian
+            critical_is = np.arcsin(critical_slowness * vs) # in radian
+            # convert the i angle to radius in Schmidt projection
+            critical_rp = np.sqrt(2)*np.sin(0.5*critical_ip)
+            critical_rs = np.sqrt(2)*np.sin(0.5*critical_is)
+            plt.semilogx(evdp, critical_rp, label='P-wave')
+            plt.semilogx(evdp, critical_rs, label='S-wave')
+            plt.grid(True)
+            plt.legend()
+            plt.savefig('critical_angles.png', bbox_inches='tight', dpi=300)
+        ###### plot the beachball in 2d
+        if False:
+            dip  = np.arange(90, 0,  -5)
+            slip = np.arange(0, 360,  5)
+            fig, axmat = plt.subplots(dip.size, slip.size, subplot_kw={'projection': 'polar'}, figsize=(40, 40/slip.size*dip.size) )
+            #cmap = plt.get_cmap('gray_r', 2)
+            cmap = plt.get_cmap('RdBu_r', 9)
+            for irow, d in enumerate(dip):
+                for icol, s in enumerate(slip):
+                    ax = axmat[irow, icol]
+                    bb = beachball3d(strike_dip_slip=(90, d, s) )
+                    bb.plot2d(ax_polar=ax, wave_type='P', hemisphere='lower', proj_method='Schmidt', radius=1.0, resolution_step_deg=1,
+                            plot_zero_contour=False, cmap=cmap, diverging_clim=True,
+                            color_nodal_planes='k', linewidth=10 )
+                    theta = np.linspace(0, 2*np.pi, 100)
+                    for r in (0.3, 0.4, 0.5):
+                        ax.plot(theta, np.full(theta.shape, r), linewidth=0.9)
+                    #ax.set_ylim((0, 0.5) )
+            # plot the color bar for cmap
+            # plt.colorbar(ax.collections[0], ax=axmat, orientation='horizontal', pad=0.1)
+            for irow, d in enumerate(dip):
+                ax = axmat[irow, 0]
+                ax.set_xticks([np.pi])
+                ax.set_xticklabels([d])
+            for icol, s in enumerate(slip):
+                ax = axmat[-1, icol]
+                ax.set_xticks([1.5*np.pi])
+                ax.set_xticklabels([s])
+            plt.savefig('P_dip_slip.png', bbox_inches='tight', dpi=300)
+    @staticmethod
     def benchmark5():
         ######################################################
         # plot beachball
@@ -2195,9 +2385,9 @@ class beachball3d:
         ######################################################
         #gcmt = [0, 0, 0, 0, 1, 0]
         bb = beachball3d(gcmt, normalize=False)
-        bb.plot_2d(wave_type='P', radius=1.0, binarization=False, hemisphere='upper', proj_method='Schmidt', resolution_step_deg=2, cmap='RdBu_r',
+        bb.plot2d(wave_type='P', radius=1.0, binarization=False, hemisphere='upper', proj_method='Schmidt', resolution_step_deg=2, cmap='RdBu_r',
                    figname='junk2.png') #, clim=(-2, 2) )
-        p = bb.plot_3d(clim=(-2, 2) )#wave_type='P'
+        p = bb.plot3d(clim=(-2, 2) )#wave_type='P'
                         #  hemisphere='None', cmap=cmap, plot_zero_contour=True,
                         #  show_scalar_bar=False, scalar_bar_args={"vertical": False, "height":0.02,}, clim=(-2, 2) )
         p.add_axes()
@@ -2237,7 +2427,7 @@ class beachball3d:
             if it_bb.norm <= 0:
                 continue
             #print(label, 'iso:', it_bb.is_pure_iso(), 'clvd:', it_bb.is_pure_clvd(), 'matENU:\n', it_bb.matENU )
-            it_bb.plot_3d(p, wave_type='P', label=label, center=center, radius=it_bb.norm,
+            it_bb.plot3d(p, wave_type='P', label=label, center=center, radius=it_bb.norm,
                           hemisphere='None', cmap=cmap, plot_zero_contour=True,
                           show_scalar_bar=False, scalar_bar_args={"vertical": False, "height":0.02,}, clim=(-2, 2) )
         ######################################################
@@ -2253,12 +2443,12 @@ class beachball3d:
         print('strike, dip, slip:', strike, dip, slip)
         #
         bb = beachball3d(strike_dip_slip=(strike, dip, slip))
-        bb.plot_3d(p, center=(-1, 0, 0), radius=0.5, hemisphere='full')
+        bb.plot3d(p, center=(-1, 0, 0), radius=0.5, hemisphere='full')
         print('\nCHECK:')
         for idx, sds in enumerate(bb.getSDS()):
             print('strike, dip, slip:', sds)
             bb = beachball3d(strike_dip_slip=sds)
-            bb.plot_3d(p, center=(idx, 0, 0), radius=0.5, hemisphere='full')
+            bb.plot3d(p, center=(idx, 0, 0), radius=0.5, hemisphere='full')
         p.show()
     @staticmethod
     def benchmark():
@@ -2274,27 +2464,58 @@ class beachball3d:
         # plot beachball
         #gcmt = [0.91, -0.89, -0.02, 1.78, -1.55, 0.47]
         #gcmt = [0, 0, -0.1, 1, 0, 0] # (Mrr=M11, Mtt=M22, Mpp=M33, Mrt=M12, Mrp=M13, Mtp=M23).
-        gcmt = [0.2, 0.2, 0.2, -0.2, -1, 0.2]
-        #gcmt = [0, 0, 0, 0, 1, 1]
+        #gcmt = [0.2, 0.2, 0.2, -0.2, -1, 0.2]
+        gcmt = [-1, 0, 1, 0, 0, 0]
+        #gcmt = [0, 0, 0, 0, 1, 0]
         bb = beachball3d(gcmt)
         cmap = ListedColormap(('#444444', '#eeeeee'))
+        cmap = plt.get_cmap('gray_r', 2)
+        cmap = plt.get_cmap('RdBu_r', 13)
+        binarization = False
         p = app.pv_plotter
-        bb.plot_3d(p,     center=(20,0,0), radius=15.0, hemisphere='upper', cmap='Blues', plot_zero_contour=True, show_scalar_bar=True, wave_type='S')
-        bb.plot_3d_vec(p, center=(20,0,0), radius=15.0, hemisphere='upper', alpha=1.0, lighting=False, culling=False, scale=5, wave_type='S')
-        # plot P wave radiations
-        bb.plot_3d(p,     center=(-20,0,0), radius=15.0, hemisphere=None, cmap='RdBu_r', plot_zero_contour=True, show_scalar_bar=True)
-        bb.plot_3d_vec(p, center=(-20,0,0), radius=15.0, hemisphere=None, alpha=1.0, lighting=False, culling=False, scale=5)
-        ##bb.plot_3d_vcone(p, apex=(0,0,0), cones=[(3.0, 15, '#CA3C33', 0.3), (3.1, 15, '#407AA2', 0.3)])
+        app = Scene3D(pv_plotter=p)
+        #
+        bb.plot3d(p,     center=(-20,0,0), radius=6.0, hemisphere=None, cmap=cmap, plot_zero_contour=True, show_scalar_bar=True, binarization=binarization)
+        bb.plot3d_pol(p, center=(-20,0,0), radius=6.0, hemisphere=None, alpha=1.0, lighting=False, culling=False, scale=3)
+        #
+        bb.plot3d(p,     center=(0,0,0), radius=6.0, hemisphere=None, cmap=cmap, plot_zero_contour=True, show_scalar_bar=True, wave_type='S', binarization=binarization)
+        bb.plot3d_pol(p, center=(0,0,0), radius=6.0, hemisphere=None, alpha=1.0, lighting=False, culling=False, scale=3, wave_type='S')
+        #
+        app.add_disk(center=(0,0,0), direction=(1,1,0), opacity=0.8, outer=8, show_edges=False, color='c', culling=False)
+        app.disable_add_mesh_to_plotter()
+        mesh, actor = app.add_disk(center=(0,0,0), direction=(1,1,0), opacity=0.8, outer=8, show_edges=False, color='k', culling=False)
+        app.enable_add_mesh_to_plotter()
+        mesh.points = Scene3D.rotate_and_translate2(mesh.points, current_origin_xyz=(0,0,0), current_orientation_direction1=(0,0,1), current_orientation_direction2=(1,0,0),
+                                                    new_origin_xyz=(0,0,0), new_orientation_direction1=(1,0,1), new_orientation_direction2=(1,0,-1) )
+        p.add_mesh(mesh, opacity=0.8, show_edges=False, color='y', culling=False)
+        #################################################################
+        gcmt = [0, 0, 0, 0, 1, 0]
+        bb2 = beachball3d(gcmt)
+        bb2.plot3d(p,     center=(40,0,0), radius=6.0, hemisphere=None, cmap=cmap, plot_zero_contour=True, show_scalar_bar=True, wave_type='P', binarization=binarization)
+        bb2.plot3d_pol(p, center=(40,0,0), radius=6.0, hemisphere=None, alpha=1.0, lighting=False, culling=False, scale=3, wave_type='P')
+        #
+        bb2.plot3d(p,     center=(20,0,0), radius=6.0, hemisphere=None, cmap=cmap, plot_zero_contour=True, show_scalar_bar=True, wave_type='S', binarization=binarization)
+        bb2.plot3d_pol(p, center=(20,0,0), radius=6.0, hemisphere=None, alpha=1.0, lighting=False, culling=False, scale=3, wave_type='S')
+        #
+        app.add_disk(center=(20,0,0), direction=(1,1,0), opacity=0.8, outer=8, show_edges=False, color='y', culling=False)
+        app.disable_add_mesh_to_plotter()
+        mesh, actor = app.add_disk(center=(20,0,0), direction=(1,1,0), opacity=0.8, outer=8, show_edges=False, color='k', culling=False)
+        app.enable_add_mesh_to_plotter()
+        mesh.points = Scene3D.rotate_and_translate2(mesh.points, current_origin_xyz=(20,0,0), current_orientation_direction1=(0,0,1), current_orientation_direction2=(1,0,0),
+                                                    new_origin_xyz=(20,0,0), new_orientation_direction1=(-1,0,1), new_orientation_direction2=(1,0,1) )
+        p.add_mesh(mesh, opacity=0.8, show_edges=False, color='c', culling=False)
+        #
         p.camera_position= [(-43.53802264331248, -82.34998370517927, 54.98109464231128),
                             (0.0, 0.0, 0.0),
                             (0.03490696877103766, 0.5420982707769743, 0.8395897619384318)]
         ######################################################
+        #print(p.camera_position)
+        p.export_gltf("DC_P_SV_SH.gltf")
         app.show()
-        print(p.camera_position)
 if __name__ == '__main__':
     #Scene3D.benchmark()
     #sys.exit(0)
-    beachball3d.benchmark5()
+    beachball3d.benchmark6()
     sys.exit(0)
     beachball3d.benchmark3()
     sys.exit(0)
