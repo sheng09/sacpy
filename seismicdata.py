@@ -21,9 +21,11 @@ import numpy as np
 import matplotlib.colors as colors
 import warnings, traceback, sys
 import os, os.path
+from glob import glob
 
-from .geomath import haversine, azimuth, decluster_spherical_pts
-from .utils import send_email, get_http_files, wget_http_files, deprecated_run, Timer
+
+from .geomath import haversine, azimuth, decluster_spherical_pts, decluster_spherical_pts3d
+from .utils import send_email, get_http_files, wget_http_files, deprecated_run, Timer, mpi_makedirs
 
 #####################################################################################################################
 # Using the IRIS's BREQ_FAST service to request and download seismic data
@@ -2276,6 +2278,192 @@ def event_mseed2h5(input, h5_fnm, inventory,
     del lst_st
     return nsta, ntr
 
+class H5Src2H5Rcv:
+    def __init__(self, lst_of_fnms=None, filename_wildcard=None, channels='ZNE', mpi_comm=None):
+        super().__setattr__("_channels", channels)
+        self.mpi_comm = mpi_comm
+        self.h5src_fnms = list()
+        if lst_of_fnms is not None:
+            self.add_src_fnms(lst_of_fnms, channels=channels)
+        if filename_wildcard is not None:
+            fnms = sorted(glob(filename_wildcard))
+            self.add_src_fnms(fnms, channels=channels)
+    def run(self, force_same_stnm=False, critical_distance_meter=10, critical_depth_dif_meter=1, minimal_nsrc_per_rcv=20, output_prefix='./junk/', debug_n=-1 ):
+        dict_s2r = self.get_dict_s2r()
+        dict_r2s = self.get_dict_r2s(dict_s2r)
+        dict_r2r = self.merge_rcvs(dict_r2s, force_same_stnm=force_same_stnm,
+                                   critical_distance_meter=critical_distance_meter,
+                                   critical_depth_dif_meter=critical_depth_dif_meter)
+        self.write_h5rcv(dict_r2r, dict_r2s, minimal_nsrc_per_rcv=minimal_nsrc_per_rcv, output_prefix=output_prefix, debug_n=debug_n )
+    def add_src_fnms(self, lst_of_fnms, channels):
+        """
+        Add a h5 file for a single source (event) and many stations.
+        """
+        if channels != self.channels:
+            raise ValueError(f"Different channels! channels {channels} != {self.channels}")
+        self.h5src_fnms.extend(lst_of_fnms)
+    # 1. Get dict: src(filename) --> lst of index+rcv [(ind, stnm, IKstlo, IKstla, IKstdp), ...]
+    def get_dict_s2r(self):
+        def get_s2r_dict_for_single_src(h5src_fnm):
+            with h5_File(h5src_fnm, 'r') as fid:
+                #evlo = fid['hdr']['evlo'][0]
+                #evla = fid['hdr']['evla'][0]
+                ######
+                stnm = fid['hdr']['stnm'][:]
+                ik_stlo = H5Src2H5Rcv.float2intkey(fid['hdr']['stlo'][:])
+                ik_stla = H5Src2H5Rcv.float2intkey(fid['hdr']['stla'][:])
+                ik_stdp = H5Src2H5Rcv.float2intkey(fid['hdr']['stdp'][:])
+                ind  = np.arange(len(stnm))
+                lst_of_rcvs = [ (a,b,c,d,e) for a,b,c,d,e in zip(ind, stnm, ik_stlo, ik_stla, ik_stdp) ]
+                ######
+            return {h5src_fnm: lst_of_rcvs}
+        #########################################################################
+        dict_s2r = dict()
+        for fnm in sorted( set(self.h5src_fnms) ):
+            dict_s2r.update( get_s2r_dict_for_single_src(fnm)  )
+        return dict_s2r
+    # 2. Get dict: rcv (stnm, IKstlo, IKstla, IKstdp) --> lst of src [(filename, ind), ...]
+    def get_dict_r2s(self, dict_s2r):
+        dict_r2s = dict()
+        for h5src_fnm, lst_of_rcvs in dict_s2r.items():
+            for single_rcv in lst_of_rcvs:
+                ind = single_rcv[0]
+                intkey = single_rcv[1:] # stnm, IKstlo, IKstla, IKstdp
+                if intkey not in dict_r2s:
+                    dict_r2s[intkey] = list()
+                dict_r2s[intkey].append((h5src_fnm, ind))
+        return dict_r2s
+    # 3. Get dict: some_key --> lst of rcv [(stnm, IKstlo, IKstla, IKstdp), ...]
+    def merge_rcvs(self, dict_r2s, force_same_stnm=False, critical_distance_meter=10, critical_depth_dif_meter=1):
+        rcvs = sorted(dict_r2s.keys())
+        ik_stlo = np.array([it[1] for it in rcvs])
+        ik_stla = np.array([it[2] for it in rcvs])
+        ik_stdp = np.array([it[3] for it in rcvs])
+        #
+        stlo = H5Src2H5Rcv.intkey2float(ik_stlo)
+        stla = H5Src2H5Rcv.intkey2float(ik_stla)
+        stdp = H5Src2H5Rcv.intkey2float(ik_stdp)
+        #
+        critical_distance_deg = critical_distance_meter / 110000 # meter to degree
+        if force_same_stnm:
+            dict_r2r = { (itla,itlo,itdp):[it] for itlo, itla, itdp, it in zip(stlo, stla, stdp, rcvs) }
+        else:
+            dict_merged = decluster_spherical_pts3d(stlo, stla, stdp, approximate_lo_dif=critical_distance_deg, approximate_la_dif=critical_distance_deg, approximate_dp_dif=critical_depth_dif_meter, key_type='float')
+            dict_r2r = dict() # rcv to rcvs. dict: (grp_stla, grp_stlo, grp_stdp) --> list of rcvs [(stnm, IKstlo, IKstla, IKstdp),...]
+            for grp_lalodp, inds in dict_merged.items():
+                dict_r2r[grp_lalodp] =  [rcvs[it] for it in inds]
+        return dict_r2r
+    def write_h5rcv(self, dict_r2r, dict_r2s, minimal_nsrc_per_rcv=10, output_prefix='./junk/', debug_n=-1 ):
+        def write_single_rcv(similar_rcvs, dict_r2s, output_h5fnm, metadict):
+            nch = len(self.channels)
+            #####
+            nsrc = np.sum([len(dict_r2s[rcv]) for rcv in similar_rcvs])
+            if nsrc < minimal_nsrc_per_rcv:
+                print(nsrc)
+                return
+            #####
+            az   = np.zeros(nsrc, dtype=np.float64)
+            baz  = np.zeros(nsrc, dtype=np.float64)
+            dist = np.zeros(nsrc, dtype=np.float64)
+            evlo = np.zeros(nsrc, dtype=np.float64)
+            evla = np.zeros(nsrc, dtype=np.float64)
+            stel = np.zeros(nsrc, dtype=np.float64)
+            stnm = list()
+            evnm = list()
+            stlo = np.zeros(nsrc, dtype=np.float64)
+            stla = np.zeros(nsrc, dtype=np.float64)
+            stdp = np.zeros(nsrc, dtype=np.float64)
+            data = list()
+            #####
+            gind = 0
+            for rcv in similar_rcvs:
+                for filename, ind in dict_r2s[rcv]:
+                    print(filename, ind)
+                    with h5_File(filename, 'r') as fid:
+                        az[gind]   = fid['hdr/az'][ind]
+                        baz[gind]  = fid['hdr/baz'][ind]
+                        dist[gind] = fid['hdr/dist'][ind]
+                        evlo[gind] = fid['hdr/evlo'][ind]
+                        evla[gind] = fid['hdr/evla'][ind]
+                        stel[gind] = fid['hdr/stel'][ind]
+                        stlo[gind] = fid['hdr/stlo'][ind]
+                        stla[gind] = fid['hdr/stla'][ind]
+                        stdp[gind] = fid['hdr/stdp'][ind]
+                        stnm.append(fid['hdr/stnm'][ind])
+                        evnm.append( filename.split('/')[-1].replace('.h5','') )
+                        for ich in range(nch):
+                            data.append(fid['dat'][ind*nch+ich, :]) # just to read data
+                        gind += 1
+                    pass
+            #### save to h5
+            if True:
+                data = np.array(data, dtype=np.float32)
+                with h5_File(output_h5fnm, 'w') as fid:
+                    for (k, v) in metadict.items():
+                        fid.attrs[k] = v
+                    #
+                    fid.attrs['nsrc'] = nsrc
+                    fid.attrs['nch']  = nch
+                    fid.attrs['nt']   = data.shape[1]
+                    fid.attrs['channels'] = self.channels
+                    #
+                    fid.create_dataset('dat',  data=data,   dtype=np.float32)
+                    #
+                    grp = fid.create_group('hdr')
+                    grp.create_dataset('stlo', data=stlo, dtype=np.float64)
+                    grp.create_dataset('stla', data=stla, dtype=np.float64)
+                    grp.create_dataset('stel', data=stel, dtype=np.float64)
+                    grp.create_dataset('stdp', data=stdp, dtype=np.float64)
+                    #
+                    grp.create_dataset('stnm', data=stnm)
+                    grp.create_dataset('evnm', data=evnm)
+                    if (evlo is not None) and (evla is not None):
+                        grp.create_dataset('evlo', data=evlo, dtype=np.float64)
+                        grp.create_dataset('evla', data=evla, dtype=np.float64)
+                        grp.create_dataset('dist', data=dist, dtype=np.float64)
+                        grp.create_dataset('az',   data=az,   dtype=np.float64)
+                        grp.create_dataset('baz',  data=baz,  dtype=np.float64)
+        #############################################
+        for grp_lalodp, similar_rcvs in list(dict_r2r.items())[:debug_n]:
+            grpla, grplo, grpdp = grp_lalodp
+            metadict = {'average_stla': grpla, 'average_stlo': grplo, 'average_stdp': grpdp}
+            ####
+            tmp = [rcv[0] for rcv in similar_rcvs]
+            count = {}
+            for s in tmp:
+                count[s] = count.get(s, 0) + 1
+            most_common_stnm = max(count, key=count.get)
+            most_common_stnm = most_common_stnm.decode() if type(most_common_stnm) is bytes else most_common_stnm
+            ofnm = '%s%s.h5' % (output_prefix, most_common_stnm)
+            wd = '/'.join(ofnm.split('/')[:-1])
+            mpi_makedirs(mpi_comm=self.mpi_comm, wd=wd)
+            ####
+            write_single_rcv(similar_rcvs, dict_r2s, ofnm, metadict)
+        pass
+    @property
+    def channels(self):
+        return self._channels
+    def __setattr__(self, key, value):
+        if key == "channels" or key == "_channels":
+            raise AttributeError(f"{key} cannot be modified")
+        super().__setattr__(key, value)
+    @staticmethod
+    def float2intkey(x):
+        if type(x) is np.ndarray:
+            return (x*1e6).astype(np.int64) # this likely convert degree to meter
+        else:
+            return int(x*1e6)
+    @staticmethod
+    def intkey2float(x):
+        if type(x) is np.ndarray:
+            return (x*1e-6).astype(np.float32)
+        else:
+            return x*1e-6
+    @staticmethod
+    def benchmark():
+        app = H5Src2H5Rcv(filename_wildcard='605_wd/605a/01a_ot0-32400s-dt1.00s_ZNE/202?-*.h5', channels='ZNE')
+        app.run(force_same_stnm=False, critical_distance_meter=10, critical_depth_dif_meter=1, minimal_nsrc_per_rcv=20, output_prefix='./junk/', debug_n=5 )
+
 #####################################################################################################################
 # For processing station metadata based on obspy.Inventory or obspy.Station objects
 #####################################################################################################################
@@ -2469,6 +2657,8 @@ def sort_stations(lst_stations, preferred_client_names=None, preferred_nets='II,
     return sorted_stations
 
 if __name__ == '__main__':
+    if True:
+        H5Src2H5Rcv.benchmark()
     if False:
         download_obspy_inventory('junk1.pkl', starttime='2000-01-01', endtime='2004-01-01',
                              network="*", station="A*", channel="LH?,BH?,HH?", level='station',

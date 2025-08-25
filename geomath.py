@@ -298,8 +298,8 @@ def decluster_spherical_pts(los_deg, las_deg, approximate_lo_dif=2, approximate_
     """
     Decluster a list of spherical points
     Return a dictionary
-    (lo, la) -> a list of indexes
-    where the (lo, la) is the grid center for a cluster of points.
+    (la, lo) -> a list of indexes
+    where the (la, lo) is the grid center for a cluster of points.
     #
     los_deg, las_deg: the longitude and latitude of the points.
     approximate_lo_dif, approximate_la_dif: the approximate longitude and latitude step for clustering.
@@ -322,7 +322,7 @@ def decluster_spherical_pts(los_deg, las_deg, approximate_lo_dif=2, approximate_
         dlo3 = 360 / n
         lo2 = np.floor(lo / dlo3) # here we use the floor to make every longitude starts from 0 degree
         int_lo = (lo2 * 1000).astype(np.int64)
-    Third, we have obtained the key (int_lo, int_la) for the point (lo, la), and we can use
+    Third, we have obtained the key (int_la, int_lo) for the point (la, lo), and we can use
     the key to cluster the points.
     """
     def lalo2intkey(los_deg, las_deg, approximate_lo_dif=2, approximate_la_dif=2):
@@ -387,6 +387,110 @@ def decluster_spherical_pts(los_deg, las_deg, approximate_lo_dif=2, approximate_
         raise ValueError(f"Unknown key_type: {key_type}")
     return declustered_points
 
+
+def decluster_spherical_pts3d(los_deg, las_deg, dp_meter, approximate_lo_dif=2, approximate_la_dif=2, approximate_dp_dif=1, key_type='float'):
+    """
+    Decluster a list of spherical points
+    Return a dictionary
+    (la, lo, dp) -> a list of indexes
+    where the (la, lo, dp) is the grid center for a cluster of points.
+    #
+    los_deg, las_deg, dp_meter: the longitude, latitude, and depth of the points.
+    approximate_lo_dif, approximate_la_dif: the approximate longitude and latitude step for clustering.
+    approximate_dp_dif: the approximate depth step for clustering.
+    key_type: the type of key, 'int' or 'float'. For 'float', the key will be
+              meaningful (latitude, longitude, depth) tuple. For 'int', the key will be
+              some integer values which is useful for further cluster operations.
+    #
+    NOTE: the `decluster_spherical_pts` has the following two methods:
+          lalodp2intkey(los_deg, las_deg, dp_meter, approximate_lo_dif, approximate_la_dif, approximate_dp_dif) --> [intkey1, intkey2, ...]
+          intkey2lalodp(intkeys, approximate_lo_dif, approximate_la_dif, approximate_dp_dif) --> las, los, dps
+    #
+    The algorithm is like this:
+    Lets say given a point lo, la, dp, and step dlo, dla, dpd.
+    First, we round the latitude, and obtain the int key for latitude.
+        la2 = np.round(la / dla) * dla
+        int_la = (la2 * 1000).astype(np.int64)
+    Second, we adjust the longitude step, so that the 0->360 range can be evened dividied by dlo.
+        dlo2 = dlo / np.cos( la2_in_rad )
+        n = np.round(360 / dlo2)
+        dlo3 = 360 / n
+        lo2 = np.floor(lo / dlo3) # here we use the floor to make every longitude starts from 0 degree
+        int_lo = (lo2 * 1000).astype(np.int64)
+    Third, we round the depth, and obtain the int key for depth.
+        dp2 = np.round(dp / dpd) * dpd
+        int_dp = (dp2 * 1000).astype(np.int64)
+    Forth, we have obtained the key (int_la, int_lo) for the point (la, lo), and we can use
+    the key to cluster the points.
+    """
+    def lalodp2intkey(los_deg, las_deg, dp_meter, approximate_lo_dif=2, approximate_la_dif=2, approximate_dp_dif=1):
+        los = np.array(los_deg, dtype=np.float64) % 360
+        las = np.array(las_deg, dtype=np.float64)
+        dps = np.array(dp_meter, dtype=np.float64)
+        ######
+        dlo, dla, dpd = approximate_lo_dif, approximate_la_dif, approximate_dp_dif
+        la2 = np.round(las / dla) * dla
+        int_la = (la2 * 1000).astype(np.int64)
+        #
+        dlo2 = dlo / np.cos(np.deg2rad(la2))
+        n = np.round(360 / dlo2)
+        n = np.where(n == 0, 1, n) # replace the zeros within an array, n, to 1
+        dlo3 = 360 / n
+        lo2 = np.floor(los / dlo3)
+        int_lo = (lo2 * 1000).astype(np.int64)
+        #
+        dp2 = np.round(dps / dpd) * dpd
+        int_dp = (dp2 * 1000).astype(np.int64)
+        ######
+        intkey = [it for it in zip(int_la, int_lo, int_dp)]
+        return intkey
+    def intkey2lalodp(intkeys, approximate_lo_dif=2, approximate_la_dif=2, approximate_dp_dif=1):
+        try:
+            int_la = np.array([it[0] for it in intkeys] )
+            int_lo = np.array([it[1] for it in intkeys] )
+            int_dp = np.array([it[2] for it in intkeys] )
+        except Exception as e:
+            int_la, int_lo, int_dp = intkeys
+        ######
+        dlo, dla, dpd = approximate_lo_dif, approximate_la_dif, approximate_dp_dif
+        ######
+        la2 = int_la * 0.001
+        las = la2
+        ######
+        dlo2 = dlo / np.cos(np.deg2rad(la2))
+        n = np.round(360 / dlo2)
+        n = np.where(n == 0, 1, n) # replace the zeros within an array, n, to 1
+        dlo3 = 360 / n
+        #
+        lo2 = int_lo * 0.001
+        los = (lo2+0.5) * dlo3
+        dps = int_dp * 0.001
+        #
+        return las, los%360, dps
+    ####
+    decluster_spherical_pts3d.lalodp2intkey = lalodp2intkey
+    decluster_spherical_pts3d.intkey2lalodp = intkey2lalodp
+    ####
+    idxs    = np.arange( len(los_deg) )
+    intkeys = lalodp2intkey(los_deg, las_deg, dp_meter, approximate_lo_dif, approximate_la_dif, approximate_dp_dif)
+    ####
+    tmp_dict = {it: set() for it in intkeys}
+    for intkey, idx in zip(intkeys, idxs):
+        tmp_dict[intkey].add(idx)
+    ####
+    declustered_points = dict()
+    if key_type == 'float':
+        for intkey, set_idxs in tmp_dict.items():
+            this_idxs = sorted(set_idxs)
+            key = intkey2lalodp(intkey, approximate_lo_dif, approximate_la_dif, approximate_dp_dif)
+            declustered_points[key] = this_idxs
+    elif key_type == 'int':
+        for intkey, set_idxs in tmp_dict.items():
+            this_idxs = sorted(set_idxs)
+            declustered_points[intkey] = this_idxs
+    else:
+        raise ValueError(f"Unknown key_type: {key_type}")
+    return declustered_points
 ##################################################################################################################
 # Functions/methods below are for special purpose
 ##################################################################################################################
