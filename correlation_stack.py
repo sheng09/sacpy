@@ -1133,101 +1133,7 @@ class CS_InterRcv:
         log_print( 2, 'evlo:        ', evlo_rad.shape, evlo_rad.dtype)
         log_print( 2, 'evla:        ', evla_rad.shape, evla_rad.dtype, flush=True)
         ############################################################################################################
-        #### get ZNERT if necessary, the RT here refers to event-receiver R and T (ERR, ERT)
-        if (not self.dummy_cc):
-            with Timer(tag='zne2znert', verbose=False, summary=local_time_summary):
-                log_print(1, 'Cutting and making ZNERT matrix from the ZNE...')
-                idx0, idx1 = self.cut_idx_range
-                idx0 = max(idx0, 0)
-                idx1 = min(idx1, zne_mat_f32.shape[1])
-                local_sz = idx1-idx0
-                if FLAG_PYFFTW_USED:
-                    znert_mat_f32  = pyfftw.zeros_aligned((zne_mat_f32.shape[0]//3*5, self.nt4mem), dtype=np.float32)
-                else:
-                    znert_mat_f32  = np.zeros(            (zne_mat_f32.shape[0]//3*5, self.nt4mem), dtype=np.float32)
-                ### Note: the nt4mem is different from nt4cut.
-                ### nt4mem is used for cc_fftsize and address-aligned memory allocation
-                ### nt4cut is for cutting the input time series.
-                ### nt4mem >= nt4cut, and zeros are padded for those additional slots in nt4mem compared to nt4cut.
-                ### nt4cut == self.cut_idx_range[1]-self.cut_idx_range[0]
-                ### nt4mem != self.cut_idx_range[1]-self.cut_idx_range[0]
-                zne2znert(zne_mat_f32[:, idx0:idx1], znert_mat_f32, stlo_rad, stla_rad, evlo_rad, evla_rad)
-                del zne_mat_f32
-                log_print(2, 'cut_idx here:  [%d, %d)' % (idx0, idx1) )
-                log_print(2, 'nt here:       ', local_sz)
-                log_print(2, 'cut_idx_range: [%d, %d)' % (self.cut_idx_range[0], self.cut_idx_range[1]) )
-                log_print(2, 'nt4cut:        ', self.nt4cut)
-                log_print(2, 'nt4fft:        ', self.nt4fft)
-                log_print(2, 'Finished.')
-                log_print(2, 'znert_mat_f32: ', znert_mat_f32.shape, znert_mat_f32.dtype, flush=True)
-        ############################################################################################################
-        #### whiten the input data in time series
-        if (not self.dummy_cc):
-            if self.wtlen:
-                with Timer(tag='wt', verbose=False, summary=local_time_summary):
-                    log_print(1, 'Temporal normalization for the ZNERT matrix...')
-                    for xs in znert_mat_f32:
-                        if xs.max() > xs.min():
-                            tnorm_f32(xs[:local_sz],   self.delta, self.wtlen, self.wt_f1, self.wt_f2, 1.0e-5, self.whiten_taper_halfsize)
-                    log_print(2, 'Finished.', flush=True)
-            if self.wflen:
-                with Timer(tag='wf', verbose=False, summary=local_time_summary):
-                    su_wf_i1, su_wf_i2 = self.whiten_speedup_spectra_index_range # default is (-1, -1) to disable speedup
-                    log_print(1, 'Spectral whitening for the ZNERT matrix...')
-                    log_print(2, 'wf_fftsize:                        ', self.wf_fftsize )
-                    log_print(2, 'whiten_speedup_spectra_index_range:', (su_wf_i1, su_wf_i2) )
-                    wf_fftsize = self.wf_fftsize
-                    for xs in znert_mat_f32:
-                        if xs.max() > xs.min():
-                            fwhiten_f32(xs[:local_sz], self.delta, self.wflen, 1.0e-5, self.whiten_taper_halfsize,
-                                        su_wf_i1, su_wf_i2, wf_fftsize )
-                    log_print(2, 'Finished.', flush=True)
-        ############################################################################################################
-        #### remove Nan of Inf
-        if (not self.dummy_cc):
-            not_valid = lambda xs: np.any( np.isnan(xs) ) or np.any( np.isinf(xs) ) or (np.max(xs) == np.min(xs) )
-            with Timer(tag='fix_nan', verbose=False, summary=local_time_summary):
-                log_print(1, 'Zeroing the stations with any Nan of Inf in any of ZNERT...')
-                invalid_stas = [idx//5 for idx, xs in enumerate(znert_mat_f32) if not_valid(xs) ]
-                invalid_stas = list(set(invalid_stas) )
-                for ista in invalid_stas:
-                    znert_mat_f32[ista*5,   :] = 0.0
-                    znert_mat_f32[ista*5+1, :] = 0.0
-                    znert_mat_f32[ista*5+2, :] = 0.0
-                    znert_mat_f32[ista*5+3, :] = 0.0
-                    znert_mat_f32[ista*5+4, :] = 0.0
-                log_print(2, 'Finished.', flush=True)
-        ############################################################################################################
-        #### fft
-        if (not self.dummy_cc):
-            with Timer(tag='fft', verbose=False, summary=local_time_summary):
-                log_print(1, 'FFTing...')
-                nrow = znert_mat_f32.shape[0]
-                i1, i2 = self.cc_speedup_spectra_index_range
-                if FLAG_PYFFTW_USED:
-                    spectra_c64 = pyfftw.zeros_aligned((nrow, i2-i1), dtype=np.complex64)
-                else:
-                    spectra_c64 = np.zeros(            (nrow, i2-i1), dtype=np.complex64)
-                ####
-                if FLAG_PYFFTW_USED:
-                    ####method: pyfftw interface fft
-                    ###pyffftw_interfaces_cache.enable()
-                    ###for irow in range(nrow): # do fft one by one may save some memory
-                    ###    spectra_c64[irow] = rfft(znert_mat_f32[irow], self.cc_fftsize)[i1:i2]
-                    #method: pyfftw builder fft
-                    buf_spec = self.pyfftw_buf_spec
-                    rfft_obj = self.pyfftw_rfft_obj
-                    for irow in range(nrow):
-                        rfft_obj(znert_mat_f32[irow], buf_spec, normalise_idft=True)
-                        spectra_c64[irow] = buf_spec[i1:i2]
-                else:
-                    #method: scipy fft
-                    for irow in range(nrow):
-                        spectra_c64[irow] = rfft(znert_mat_f32[irow], self.cc_fftsize)[i1:i2]# method: scipy.fft.rfft
-                del znert_mat_f32
-                log_print(2, 'Finished.')
-                log_print(2, 'spectra_c64: ', spectra_c64.shape, spectra_c64.dtype, flush=True)
-        ############################################################################################################
+        # start selection correlation pairs
         if self.inter_src: # inter-source correlation
             cc_lo, cc_la   = evlo_rad, evla_rad
             ref_lo, ref_la = stlo_rad, stla_rad
@@ -1288,17 +1194,6 @@ class CS_InterRcv:
                 log_print(2, 'gc_center_selection_mat: ', gc_center_selection_mat.shape, gc_center_selection_mat.dtype)
                 log_print(2, 'Finished.', flush=True)
         ############################################################################################################
-        #### Finish the correlation selection
-        with Timer(tag='cc_pair_select', verbose=False, summary=local_time_summary):
-            log_print(1, 'Finish obtaining cc pair selections matrix...')
-            if (not self.dummy_cc):
-                for ista in invalid_stas:
-                    ccpairs_selection_mat[ista,:] = 0
-                    ccpairs_selection_mat[:,ista] = 0
-            dict_output_inter_mediate_data['ccpairs_selection_mat'] = ccpairs_selection_mat
-            log_print(2, 'ccpairs_selection_mat: ', ccpairs_selection_mat.shape, ccpairs_selection_mat.dtype)
-            log_print(2, 'Finished.', flush=True)
-        ############################################################################################################
         #### stack index
         with Timer(tag='get_stack_index', verbose=False, summary=local_time_summary):
             log_print(1, 'Computing the stack index...')
@@ -1307,6 +1202,93 @@ class CS_InterRcv:
             get_stack_index_mat(cc_lo.size, cc_lo, cc_la, dist_min, dist_step, stack_index_mat_nn)
             dict_output_inter_mediate_data['stack_index_mat_nn'] = stack_index_mat_nn
             log_print(2, 'stack_index_mat_nn: ', stack_index_mat_nn.shape, stack_index_mat_nn.dtype)
+            log_print(2, 'Finished.', flush=True)
+        ############################################################################################################
+        #### get ZNERT if necessary, the RT here refers to event-receiver R and T (ERR, ERT)
+        if (not self.dummy_cc):
+            with Timer(tag='zne2znert', verbose=False, summary=local_time_summary):
+                log_print(1, 'Cutting and making ZNERT matrix from the ZNE...')
+                idx0, idx1 = self.cut_idx_range
+                idx0 = max(idx0, 0)
+                idx1 = min(idx1, zne_mat_f32.shape[1])
+                local_sz = idx1-idx0
+                if FLAG_PYFFTW_USED:
+                    znert_mat_f32  = pyfftw.zeros_aligned((zne_mat_f32.shape[0]//3*5, self.nt4mem), dtype=np.float32)
+                else:
+                    znert_mat_f32  = np.zeros(            (zne_mat_f32.shape[0]//3*5, self.nt4mem), dtype=np.float32)
+                ### Note: the nt4mem is different from nt4cut.
+                ### nt4mem is used for cc_fftsize and address-aligned memory allocation
+                ### nt4cut is for cutting the input time series.
+                ### nt4mem >= nt4cut, and zeros are padded for those additional slots in nt4mem compared to nt4cut.
+                ### nt4cut == self.cut_idx_range[1]-self.cut_idx_range[0]
+                ### nt4mem != self.cut_idx_range[1]-self.cut_idx_range[0]
+                zne2znert(zne_mat_f32[:, idx0:idx1], znert_mat_f32, stlo_rad, stla_rad, evlo_rad, evla_rad)
+                del zne_mat_f32
+                log_print(2, 'cut_idx here:  [%d, %d)' % (idx0, idx1) )
+                log_print(2, 'nt here:       ', local_sz)
+                log_print(2, 'cut_idx_range: [%d, %d)' % (self.cut_idx_range[0], self.cut_idx_range[1]) )
+                log_print(2, 'nt4cut:        ', self.nt4cut)
+                log_print(2, 'nt4fft:        ', self.nt4fft)
+                log_print(2, 'Finished.')
+                log_print(2, 'znert_mat_f32: ', znert_mat_f32.shape, znert_mat_f32.dtype, flush=True)
+        ############################################################################################################
+        #### whiten the input data in time series
+        if (not self.dummy_cc):
+            ### only need to whiten those time series for the selected correlation pairs
+            flag_used = np.zeros(cc_lo.size*5, dtype=np.uint8)
+            for ind in range(cc_lo.size):
+                v = np.any(ccpairs_selection_mat[ind, :]) & np.any(ccpairs_selection_mat[:, ind])
+                flag_used[ind]   = v
+            ind_selected = [ind*5+j for ind, v in enumerate(flag_used) if v for j in range(5)]
+            ###
+            if self.wtlen:
+                with Timer(tag='wt', verbose=False, summary=local_time_summary):
+                    log_print(1, 'Temporal normalization for the ZNERT matrix...')
+                    for ind in ind_selected:
+                        xs = znert_mat_f32[ind]
+                        if xs.max() > xs.min():
+                            tnorm_f32(xs[:local_sz],   self.delta, self.wtlen, self.wt_f1, self.wt_f2, 1.0e-5, self.whiten_taper_halfsize)
+                    log_print(2, 'Finished.', flush=True)
+            if self.wflen:
+                with Timer(tag='wf', verbose=False, summary=local_time_summary):
+                    su_wf_i1, su_wf_i2 = self.whiten_speedup_spectra_index_range # default is (-1, -1) to disable speedup
+                    log_print(1, 'Spectral whitening for the ZNERT matrix...')
+                    log_print(2, 'wf_fftsize:                        ', self.wf_fftsize )
+                    log_print(2, 'whiten_speedup_spectra_index_range:', (su_wf_i1, su_wf_i2) )
+                    wf_fftsize = self.wf_fftsize
+                    for ind in ind_selected:
+                        xs = znert_mat_f32[ind]
+                        if xs.max() > xs.min():
+                            fwhiten_f32(xs[:local_sz], self.delta, self.wflen, 1.0e-5, self.whiten_taper_halfsize,
+                                        su_wf_i1, su_wf_i2, wf_fftsize )
+                    log_print(2, 'Finished.', flush=True)
+        ############################################################################################################
+        #### remove Nan of Inf (update ccpairs_selection_mat accordingly)
+        nan_ind = list()
+        if (not self.dummy_cc):
+            not_valid = lambda xs: np.any( np.isnan(xs) ) or np.any( np.isinf(xs) ) or (np.max(xs) == np.min(xs) )
+            with Timer(tag='fix_nan', verbose=False, summary=local_time_summary):
+                log_print(1, 'Zeroing the stations with any Nan of Inf in any of ZNERT...')
+                nan_ind = [idx//5 for idx, xs in enumerate(znert_mat_f32) if not_valid(xs) ]
+                nan_ind = list(set(nan_ind) )
+                for ista in nan_ind:
+                    znert_mat_f32[ista*5,   :] = 0.0
+                    znert_mat_f32[ista*5+1, :] = 0.0
+                    znert_mat_f32[ista*5+2, :] = 0.0
+                    znert_mat_f32[ista*5+3, :] = 0.0
+                    znert_mat_f32[ista*5+4, :] = 0.0
+                    ccpairs_selection_mat[ista, :] = 0
+                    ccpairs_selection_mat[:, ista] = 0
+                log_print(2, 'Finished.', flush=True)
+        if len(nan_ind) > 0:
+            ind_selected = set(ind_selected) - set( [it*5+j for it in nan_ind for j in range(5)] )
+            ind_selected = sorted(ind_selected)
+        ############################################################################################################
+        #### Finish the correlation selection
+        with Timer(tag='cc_pair_select', verbose=False, summary=local_time_summary):
+            log_print(1, 'Finish obtaining cc pair selections matrix...')
+            dict_output_inter_mediate_data['ccpairs_selection_mat'] = ccpairs_selection_mat
+            log_print(2, 'ccpairs_selection_mat: ', ccpairs_selection_mat.shape, ccpairs_selection_mat.dtype)
             log_print(2, 'Finished.', flush=True)
         ############################################################################################################
         #### Output the intermediate data
@@ -1334,6 +1316,8 @@ class CS_InterRcv:
                     grp['gc_center_selection_mat'].attrs['shape'] = gc_center_selection_mat.shape
                     grp['gc_center_selection_mat'].attrs['gc_center_rect_boxes_rad'] = np.reshape(self.gc_center_rect_boxes_rad, (-1, 4) )
                     grp['gc_center_selection_mat'].attrs['gc_center_circles_rad']    = np.reshape(self.gc_center_circles_rad,    (-1, 3) )
+                if len(nan_ind) > 0:
+                    grp.create_dataset('nan_ind', data=np.array(nan_ind, dtype=np.int32) )
                 if np.sum(ccpairs_selection_mat==0) > 0:
                     grp.create_dataset('ccpairs_selection_mat', data=np.packbits(ccpairs_selection_mat.flatten() ) )
                     grp['ccpairs_selection_mat'].attrs['shape'] = ccpairs_selection_mat.shape
@@ -1344,6 +1328,38 @@ class CS_InterRcv:
             del gcd_selection_mat
             del daz_selection_mat
             del gc_center_selection_mat
+        ############################################################################################################
+        #### fft
+        if (not self.dummy_cc):
+            with Timer(tag='fft', verbose=False, summary=local_time_summary):
+                log_print(1, 'FFTing...')
+                nrow = znert_mat_f32.shape[0]
+                i1, i2 = self.cc_speedup_spectra_index_range
+                if FLAG_PYFFTW_USED:
+                    spectra_c64 = pyfftw.zeros_aligned((nrow, i2-i1), dtype=np.complex64)
+                else:
+                    spectra_c64 = np.zeros(            (nrow, i2-i1), dtype=np.complex64)
+                ####
+                if FLAG_PYFFTW_USED:
+                    ####method: pyfftw interface fft
+                    ###pyffftw_interfaces_cache.enable()
+                    ###for irow in range(nrow): # do fft one by one may save some memory
+                    ###    spectra_c64[irow] = rfft(znert_mat_f32[irow], self.cc_fftsize)[i1:i2]
+                    #method: pyfftw builder fft
+                    buf_spec = self.pyfftw_buf_spec
+                    rfft_obj = self.pyfftw_rfft_obj
+                    #for irow in range(nrow):
+                    for irow in ind_selected: # only need those valid ind
+                        rfft_obj(znert_mat_f32[irow], buf_spec, normalise_idft=True)
+                        spectra_c64[irow] = buf_spec[i1:i2]
+                else:
+                    #method: scipy fft
+                    #for irow in range(nrow):
+                    for irow in ind_selected: # only need those valid ind
+                        spectra_c64[irow] = rfft(znert_mat_f32[irow], self.cc_fftsize)[i1:i2]# method: scipy.fft.rfft
+                del znert_mat_f32
+                log_print(2, 'Finished.')
+                log_print(2, 'spectra_c64: ', spectra_c64.shape, spectra_c64.dtype, flush=True)
         ############################################################################################################
         #### cc & stack
         if (not self.dummy_cc):
