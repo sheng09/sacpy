@@ -2288,13 +2288,13 @@ class H5Src2H5Rcv:
         if filename_wildcard is not None:
             fnms = sorted(glob(filename_wildcard))
             self.add_src_fnms(fnms, channels=channels)
-    def run(self, force_same_stnm=False, critical_distance_meter=10, critical_depth_dif_meter=1, minimal_nsrc_per_rcv=20, output_prefix='./junk/', debug_n=-1 ):
+    def run(self, force_same_stnm=False, critical_distance_meter=10, critical_depth_dif_meter=1, minimal_nsrc_per_rcv=20, output_prefix='./junk/', verbose=True, debug_max_nof=-1 ):
         dict_s2r = self.get_dict_s2r()
         dict_r2s = self.get_dict_r2s(dict_s2r)
-        dict_r2r = self.merge_rcvs(dict_r2s, force_same_stnm=force_same_stnm,
+        dict_g2r = self.merge_rcvs(dict_r2s, force_same_stnm=force_same_stnm,
                                    critical_distance_meter=critical_distance_meter,
                                    critical_depth_dif_meter=critical_depth_dif_meter)
-        self.write_h5rcv(dict_r2r, dict_r2s, minimal_nsrc_per_rcv=minimal_nsrc_per_rcv, output_prefix=output_prefix, debug_n=debug_n )
+        self.write_h5rcv(dict_g2r, dict_r2s, minimal_nsrc_per_rcv=minimal_nsrc_per_rcv, output_prefix=output_prefix, verbose=verbose, debug_max_nof=debug_max_nof )
     def add_src_fnms(self, lst_of_fnms, channels):
         """
         Add a h5 file for a single source (event) and many stations.
@@ -2346,21 +2346,20 @@ class H5Src2H5Rcv:
         #
         critical_distance_deg = critical_distance_meter / 110000 # meter to degree
         if force_same_stnm:
-            dict_r2r = { (itla,itlo,itdp):[it] for itlo, itla, itdp, it in zip(stlo, stla, stdp, rcvs) }
+            dict_g2r = { (itla,itlo,itdp):[it] for itlo, itla, itdp, it in zip(stlo, stla, stdp, rcvs) }
         else:
             dict_merged = decluster_spherical_pts3d(stlo, stla, stdp, approximate_lo_dif=critical_distance_deg, approximate_la_dif=critical_distance_deg, approximate_dp_dif=critical_depth_dif_meter, key_type='float')
-            dict_r2r = dict() # rcv to rcvs. dict: (grp_stla, grp_stlo, grp_stdp) --> list of rcvs [(stnm, IKstlo, IKstla, IKstdp),...]
+            dict_g2r = dict() # rcv to rcvs. dict: (grp_stla, grp_stlo, grp_stdp) --> list of rcvs [(stnm, IKstlo, IKstla, IKstdp),...]
             for grp_lalodp, inds in dict_merged.items():
-                dict_r2r[grp_lalodp] =  [rcvs[it] for it in inds]
-        return dict_r2r
-    def write_h5rcv(self, dict_r2r, dict_r2s, minimal_nsrc_per_rcv=10, output_prefix='./junk/', debug_n=-1 ):
+                dict_g2r[grp_lalodp] =  [rcvs[it] for it in inds]
+        return dict_g2r
+    def write_h5rcv(self, dict_g2r, dict_r2s, minimal_nsrc_per_rcv=10, output_prefix='./junk/', verbose=False, debug_max_nof=-1 ):
         def write_single_rcv(similar_rcvs, dict_r2s, output_h5fnm, metadict):
             nch = len(self.channels)
             #####
             nsrc = np.sum([len(dict_r2s[rcv]) for rcv in similar_rcvs])
             if nsrc < minimal_nsrc_per_rcv:
-                print(nsrc)
-                return
+                return nsrc
             #####
             az   = np.zeros(nsrc, dtype=np.float64)
             baz  = np.zeros(nsrc, dtype=np.float64)
@@ -2378,7 +2377,7 @@ class H5Src2H5Rcv:
             gind = 0
             for rcv in similar_rcvs:
                 for filename, ind in dict_r2s[rcv]:
-                    print(filename, ind)
+                    #print(filename, ind)
                     with h5_File(filename, 'r') as fid:
                         az[gind]   = fid['hdr/az'][ind]
                         baz[gind]  = fid['hdr/baz'][ind]
@@ -2423,22 +2422,32 @@ class H5Src2H5Rcv:
                         grp.create_dataset('dist', data=dist, dtype=np.float64)
                         grp.create_dataset('az',   data=az,   dtype=np.float64)
                         grp.create_dataset('baz',  data=baz,  dtype=np.float64)
+            return nsrc
         #############################################
-        for grp_lalodp, similar_rcvs in list(dict_r2r.items())[:debug_n]:
+        n_finished = 0
+        for grp_lalodp, similar_rcvs in list(dict_g2r.items()): # dict: (grp_stla, grp_stlo, grp_stdp) --> list of rcvs [(stnm, IKstlo, IKstla, IKstdp),...]
             grpla, grplo, grpdp = grp_lalodp
             metadict = {'average_stla': grpla, 'average_stlo': grplo, 'average_stdp': grpdp}
             ####
-            tmp = [rcv[0] for rcv in similar_rcvs]
-            count = {}
-            for s in tmp:
-                count[s] = count.get(s, 0) + 1
-            most_common_stnm = max(count, key=count.get)
+            tmp = [len(dict_r2s[rcv]) for rcv in similar_rcvs] # similar_rcvs: lists of rcvs: [(stnm, IKstlo, IKstla, IKstdp),...]
+            most_common_idx  = np.argmax(tmp)
+            most_common_stnm = similar_rcvs[most_common_idx][0]
             most_common_stnm = most_common_stnm.decode() if type(most_common_stnm) is bytes else most_common_stnm
+            ####
             ofnm = '%s%s.h5' % (output_prefix, most_common_stnm)
             wd = '/'.join(ofnm.split('/')[:-1])
             mpi_makedirs(mpi_comm=self.mpi_comm, wd=wd)
             ####
-            write_single_rcv(similar_rcvs, dict_r2s, ofnm, metadict)
+            nsrc = write_single_rcv(similar_rcvs, dict_r2s, ofnm, metadict)
+            ####
+            if nsrc >= minimal_nsrc_per_rcv:
+                n_finished += 1
+            if verbose:
+                msg1 = f'nsrc: {nsrc:5d}; nrcv: {len(similar_rcvs):5d}; Loc: (la:{grpla:8.4f}, lo:{grplo:9.4f}, dp:{grpdp:5.1f}) -->'
+                msg2 = f'Saved: {ofnm}' if nsrc >= minimal_nsrc_per_rcv else 'Skipped'
+                print(msg1, msg2)
+            if debug_max_nof > 0 and n_finished >= debug_max_nof:
+                break
         pass
     @property
     def channels(self):
@@ -2462,7 +2471,7 @@ class H5Src2H5Rcv:
     @staticmethod
     def benchmark():
         app = H5Src2H5Rcv(filename_wildcard='605_wd/605a/01a_ot0-32400s-dt1.00s_ZNE/202?-*.h5', channels='ZNE')
-        app.run(force_same_stnm=False, critical_distance_meter=10, critical_depth_dif_meter=1, minimal_nsrc_per_rcv=20, output_prefix='./junk/', debug_n=5 )
+        app.run(force_same_stnm=False, critical_distance_meter=10, critical_depth_dif_meter=1, minimal_nsrc_per_rcv=20, output_prefix='./junk/', debug_max_nof=5 )
 
 #####################################################################################################################
 # For processing station metadata based on obspy.Inventory or obspy.Station objects
