@@ -2288,13 +2288,13 @@ class H5Src2H5Rcv:
         if filename_wildcard is not None:
             fnms = sorted(glob(filename_wildcard))
             self.add_src_fnms(fnms, channels=channels)
-    def run(self, force_same_stnm=False, critical_distance_meter=10, critical_depth_dif_meter=1, minimal_nsrc_per_rcv=20, output_prefix='./junk/', verbose=True, debug_max_nof=-1 ):
+    def run(self, force_same_stnm=False, critical_distance_meter=10, critical_depth_dif_meter=1, minimal_nsrc_per_rcv=20, output_prefix='./junk/', verbose=True, debug_max_nof=-1, overwrite=True ):
         dict_s2r = self.get_dict_s2r()
         dict_r2s = self.get_dict_r2s(dict_s2r)
         dict_g2r = self.merge_rcvs(dict_r2s, force_same_stnm=force_same_stnm,
                                    critical_distance_meter=critical_distance_meter,
                                    critical_depth_dif_meter=critical_depth_dif_meter)
-        self.write_h5rcv(dict_g2r, dict_r2s, minimal_nsrc_per_rcv=minimal_nsrc_per_rcv, output_prefix=output_prefix, verbose=verbose, debug_max_nof=debug_max_nof )
+        self.write_h5rcv(dict_g2r, dict_r2s, minimal_nsrc_per_rcv=minimal_nsrc_per_rcv, output_prefix=output_prefix, verbose=verbose, debug_max_nof=debug_max_nof, overwrite=overwrite )
     def add_src_fnms(self, lst_of_fnms, channels):
         """
         Add a h5 file for a single source (event) and many stations.
@@ -2353,13 +2353,18 @@ class H5Src2H5Rcv:
             for grp_lalodp, inds in dict_merged.items():
                 dict_g2r[grp_lalodp] =  [rcvs[it] for it in inds]
         return dict_g2r
-    def write_h5rcv(self, dict_g2r, dict_r2s, minimal_nsrc_per_rcv=10, output_prefix='./junk/', verbose=False, debug_max_nof=-1 ):
-        def write_single_rcv(similar_rcvs, dict_r2s, output_h5fnm, metadict):
+    def write_h5rcv(self, dict_g2r, dict_r2s, minimal_nsrc_per_rcv=10, output_prefix='./junk/', verbose=False, debug_max_nof=-1, overwrite=True):
+        def write_single_rcv(similar_rcvs, dict_r2s, output_h5fnm, metadict, overwrite=True):
             nch = len(self.channels)
             #####
             nsrc = np.sum([len(dict_r2s[rcv]) for rcv in similar_rcvs])
             if nsrc < minimal_nsrc_per_rcv:
-                return nsrc
+                return nsrc, 'skipped'
+            if os.path.exists(ofnm) and (not overwrite):
+                return nsrc, 'existed %s' % output_h5fnm
+            #####
+            wd = '/'.join(output_h5fnm.split('/')[:-1])
+            mpi_makedirs(mpi_comm=self.mpi_comm, wd=wd)
             #####
             az   = np.zeros(nsrc, dtype=np.float64)
             baz  = np.zeros(nsrc, dtype=np.float64)
@@ -2422,7 +2427,7 @@ class H5Src2H5Rcv:
                         grp.create_dataset('dist', data=dist, dtype=np.float64)
                         grp.create_dataset('az',   data=az,   dtype=np.float64)
                         grp.create_dataset('baz',  data=baz,  dtype=np.float64)
-            return nsrc
+            return nsrc, 'saved %s' % output_h5fnm
         #############################################
         n_finished = 0
         for grp_lalodp, similar_rcvs in list(dict_g2r.items()): # dict: (grp_stla, grp_stlo, grp_stdp) --> list of rcvs [(stnm, IKstlo, IKstla, IKstdp),...]
@@ -2435,17 +2440,13 @@ class H5Src2H5Rcv:
             most_common_stnm = most_common_stnm.decode() if type(most_common_stnm) is bytes else most_common_stnm
             ####
             ofnm = '%s%s.h5' % (output_prefix, most_common_stnm)
-            wd = '/'.join(ofnm.split('/')[:-1])
-            mpi_makedirs(mpi_comm=self.mpi_comm, wd=wd)
-            ####
-            nsrc = write_single_rcv(similar_rcvs, dict_r2s, ofnm, metadict)
+            nsrc, status = write_single_rcv(similar_rcvs, dict_r2s, ofnm, metadict, overwrite)
             ####
             if nsrc >= minimal_nsrc_per_rcv:
                 n_finished += 1
             if verbose:
-                msg1 = f'nsrc: {nsrc:5d}; nrcv: {len(similar_rcvs):5d}; Loc: (la:{grpla:8.4f}, lo:{grplo:9.4f}, dp:{grpdp:5.1f}) -->'
-                msg2 = f'Saved: {ofnm}' if nsrc >= minimal_nsrc_per_rcv else 'Skipped'
-                print(msg1, msg2)
+                msg = f'nsrc: {nsrc:5d}; nrcv: {len(similar_rcvs):5d}; Loc: (la:{grpla:8.4f}, lo:{grplo:9.4f}, dp:{grpdp:5.1f}) --> {status}'
+                print(msg)
             if debug_max_nof > 0 and n_finished >= debug_max_nof:
                 break
         pass
