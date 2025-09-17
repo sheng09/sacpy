@@ -1455,18 +1455,20 @@ class beachball3d:
                 3(E)   p(E)=3   z(D)=-1  z(U)= 1
         """
         if gcmt is not None:
-            self.matENU = beachball3d.gcmt2matENU(gcmt, normalize=normalize)
+            self.matENU = beachball3d.gcmt2matENU(gcmt)
         elif matENU is not None:
             self.matENU = matENU
         elif strike_dip_slip is not None:
             strike, dip, slip = strike_dip_slip
             self.matENU = beachball3d.strike_dip_slip2matENU(strike, dip, slip)
+        if normalize:
+            self.matENU /= beachball3d.frobenius_norm(self.matENU)
     @property
     def gcmt(self):   # the gcmt array (M11, M22, M33, M12, M13, M23) in USE coordinate
         """
         Return the gcmt array in USE coordinate (also Harvard GCMT convention).
         """
-        return beachball3d.matENU2gcmt(self.matENU, normalize=False)
+        return beachball3d.matENU2gcmt(self.matENU)
     @property
     def matUSE(self):
         m11, m22, m33, m12, m13, m23 = self.gcmt
@@ -1477,7 +1479,7 @@ class beachball3d:
         """
         Return the 3x3 matrix moment tensor in ijk (e.g., 'USE', 'NED',...) coordinate.
         """
-        return beachball3d.xyz2uvw(self.matENU, xyz='ENU', uvw=ijk, normalize=False)
+        return beachball3d.xyz2uvw(self.matENU, xyz='ENU', uvw=ijk)
     @property
     def norm(self): # IS this Correct?
         return beachball3d.frobenius_norm(self.matENU)
@@ -1621,7 +1623,7 @@ class beachball3d:
                 pair_strike_dip_slip[this_idx] = (new_strike, 0.0, new_slip)
         return pair_strike_dip_slip
     ##########################################################################################
-    def __radiation(self, thetas, phis, binarization=False):
+    def radiation(self, thetas, phis, binarization=False):
         """
         Compute the P-, SV- and SH-wave radiations given a list of points on a unit sphere.
 
@@ -1781,7 +1783,7 @@ class beachball3d:
         idxs = np.where(phis<=phi_max)
         thetas, phis = thetas[idxs], phis[idxs]
         #########
-        loc_xyz, P_pol, SV_pol, SH_pol, P_amp, SV_amp, SH_amp = self.__radiation(thetas, phis)
+        loc_xyz, P_pol, SV_pol, SH_pol, P_amp, SV_amp, SH_amp = self.radiation(thetas, phis)
         dict_pol = {'P': P_pol, 'SV': SV_pol, 'SH': SH_pol}
         dict_amp = {'P': P_amp, 'SV': SV_amp, 'SH': SH_amp}
         #########
@@ -1812,7 +1814,6 @@ class beachball3d:
         scale = np.abs(scale)*radius*0.5
         app = Scene3D(pv_plotter=p, number_of_peels=-1)
         #p.disable_depth_peeling() # important for efficient rendering
-        print(wave_type, loc_xyz.shape, center )
         loc_xyz *= radius #+= center
         loc_xyz += center
         for loc, pol, amp in zip(loc_xyz, dict_pol[wave_type], dict_amp[wave_type]*scale ):
@@ -1869,7 +1870,7 @@ class beachball3d:
         elif hemisphere=='lower':
             phi = np.arange(90, 180.001, resolution_step_deg)
         theta_mesh, phi_mesh = np.meshgrid(theta, phi)
-        loc_xyz, P_pol, SV_pol, SH_pol, P_amp, SV_amp, SH_amp = self.__radiation(np.deg2rad(theta_mesh.ravel() ), np.deg2rad(phi_mesh.ravel() ), binarization=binarization)
+        loc_xyz, P_pol, SV_pol, SH_pol, P_amp, SV_amp, SH_amp = self.radiation(np.deg2rad(theta_mesh.ravel() ), np.deg2rad(phi_mesh.ravel() ), binarization=binarization)
         P_amp  = P_amp.reshape(theta_mesh.shape)
         SV_amp = SV_amp.reshape(theta_mesh.shape)
         SH_amp = SH_amp.reshape(theta_mesh.shape)
@@ -1967,7 +1968,7 @@ class beachball3d:
                 plot_zero_contour=True, color_zero_contour='k', plot_zero_contour_width=0.5,
                 plot_tbp=True, color_tbp='y', plot_dc_nodal_planes=True, color_nodal_planes='gray',
                 cmap='RdBu_r', diverging_clim=True, radius=1.0, resolution_step_deg=1, markersize=5,
-                figname=None, show=False, **kwargs ):
+                figname=None, show=False, cax=None, **kwargs ):
         """
         """
         if self.norm <= 0 or hemisphere not in ('lower', 'upper'):
@@ -1979,7 +1980,7 @@ class beachball3d:
         else:
             phi = np.deg2rad(np.arange(0, 90.001, resolution_step_deg))
         theta_mesh, phi_mesh = np.meshgrid(theta, phi)
-        loc_xyz, P_pol, SV_pol, SH_pol, P_amp, SV_amp, SH_amp = self.__radiation(theta_mesh.ravel(), phi_mesh.ravel(), binarization=binarization)
+        loc_xyz, P_pol, SV_pol, SH_pol, P_amp, SV_amp, SH_amp = self.radiation(theta_mesh.ravel(), phi_mesh.ravel(), binarization=binarization)
         #dict_radiation = {'P': P_amp, 'SV': np.abs(SV_amp), 'SH': np.abs(SH_amp) }
         dict_radiation = {'P': P_amp, 'SV': SV_amp, 'SH': SH_amp }
         if wave_type == 'S':
@@ -1998,12 +1999,15 @@ class beachball3d:
                 fig, ax_polar = plt.subplots(subplot_kw={'projection': 'polar'})
             if diverging_clim:
                 vmax, vmin = np.max(dict_radiation[wave_type]), np.min(dict_radiation[wave_type])
+                #print('%s %.2f %.2f'% (wave_type, vmin, vmax))
                 cmax = max(vmax, -vmin)
                 clim = kwargs.pop('clim', (-cmax, cmax) )
             else:
                 clim = kwargs.pop('clim', (None, None))
             ########## plot radiations
             im = ax_polar.pcolormesh(tt, rr, values, shading='gouraud', cmap=cmap, vmin=clim[0], vmax=clim[1] )
+            if cax is not None:
+                plt.colorbar(im, cax=cax, orientation='horizontal')
             if plot_zero_contour:
                 if values.min() < 0.0 < values.max():
                     contours = ax_polar.contour(tt, rr, values, levels=[0.0], colors=color_zero_contour, linewidths=plot_zero_contour_width)
@@ -2040,7 +2044,7 @@ class beachball3d:
         (vt, vb, vp), (n1, d1), (n2, d2) = self.getTBPND()
         ####
         if hemisphere == 'lower':
-            marker_t='X' # going into the paper
+            marker_t='x' # going into the paper
             marker_p='o' # going out of the paper
             marker_b='s'
         else:
@@ -2176,7 +2180,7 @@ class beachball3d:
     # some math in lambda1-lambda2-lambda3 space
     @staticmethod
     def frobenius_norm(tensor_mat): # return the sqrt of squared summation of a matrix
-        return np.sqrt( np.linalg.norm(tensor_mat ) )
+        return np.linalg.norm(tensor_mat )
     @staticmethod
     def sorted_right_handed_eig(tensor_mat): # return sorted l=(l1,l2,l3) and U=(u1,u2,u3) l1>=l2>=l3, and u1xu2=u3
         """
@@ -2224,7 +2228,7 @@ class beachball3d:
     ##########################################################################################
     # Conversion between gcmt (M11,M22,M33,M12,M13,M23), matUSE(3x3matrix), and matENU(3x3matrix)
     @staticmethod
-    def gcmt2matENU(gcmt, normalize=False):
+    def gcmt2matENU(gcmt):
         """
         Convert GCMT moment tensor components to a 3 by 3 moment tensor in East-North-Up coordinates.
 
@@ -2242,17 +2246,19 @@ class beachball3d:
             1(U)   r(U)=1   x(N)=-2  x(E)= 3
             2(S)   t(S)=2   y(E)= 3  y(N)=-2
             3(E)   p(E)=3   z(D)=-1  z(U)= 1
-        : param normalize: whether to normalize the output moment tensor. After normalization, the frobenius_norm will be 1.
 
         :return mENU: a 3by3 matrix for the moment tensor in East-North-Up coordinates
         """
         M11, M22, M33, M12, M13, M23 = gcmt
         mat = np.array(((M33, -M23, M13), (-M23, M22, -M12), (M13, -M12, M11)), dtype=np.float64)
-        if normalize:
-            norm = beachball3d.frobenius_norm(mat)
-            if norm > 0:
-                mat *= (1.0/norm)
         return mat
+    @staticmethod
+    def matENU2gcmt(matENU):
+        mee, men, meu = matENU[0]
+        mne, mnn, mnu = matENU[1]
+        mue, mun, muu = matENU[2]
+        mus, mss, mse = -mue, mnn, -mne
+        return np.array( (muu, mss, mee, mus, mue, mse), dtype=np.float64 )
     @staticmethod
     def xyz2uvw(matxyz, xyz='ENU', uvw='USE'):
         # 1. make sure both xyz and uvw are valid
@@ -2285,8 +2291,9 @@ class beachball3d:
     def benchmark7(): # test the P, SV, SH, and S polarity (vectors) for a DC source
         app = Scene3D()
         cmap = plt.get_cmap('RdBu_r', 11)
-        gcmt = (0,0,0,0,1,0)
-        bb = beachball3d(gcmt=gcmt, normalize=False)
+        gcmt = (1,0,-1,0,0,0)
+        bb = beachball3d(gcmt=gcmt, normalize=True)#.get_dc()
+        print(bb.norm)
         bb.plot3d(    p=app.pv_plotter, wave_type='P',  center=(  0,0,0), cmap=cmap )
         bb.plot3d_pol(p=app.pv_plotter, wave_type='P',  center=(  0,0,0), cmap=cmap )
         #
@@ -2515,7 +2522,7 @@ class beachball3d:
 if __name__ == '__main__':
     #Scene3D.benchmark()
     #sys.exit(0)
-    beachball3d.benchmark6()
+    beachball3d.benchmark7()
     sys.exit(0)
     beachball3d.benchmark3()
     sys.exit(0)

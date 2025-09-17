@@ -22,9 +22,10 @@ import sys, traceback, os, os.path
 import warnings
 
 from .geomath import haversine_rad, azimuth_rad, point_distance_to_great_circle_plane_rad, great_circle_plane_center_triple_rad
-from .utils import Logger, Timer, TimeSummary
+from .utils import Logger, Timer, TimeSummary, mpi_makedirs
 from .processing import fwhiten_f32, tnorm_f32, iirfilter_f32, taper, detrend, get_rfft_spectra_bound, cut, cut2d, norm_mat2d, mask2d_time_window
 from .processing import TSFuncs
+from .plot3dEarth import beachball3d
 
 class StackBins:
     """
@@ -610,6 +611,7 @@ def gc_center_selection(n, lo_rad, la_rad, ptlo_rad, ptla_rad,
         gc_center_selection_mat_nn[ista1, ista1:] = rect_mat_row[ista1:] # only modify the upper triangle including the diagonal
     #### make it symmetric
     gc_center_selection_mat_nn |= gc_center_selection_mat_nn.T
+@jit(nopython=True, nogil=True)
 def pair_loc_selection(n, lo_rad, la_rad, loc_rect_boxes_rad, pair_loc_selection_mat_nn):
     """
     Compute a NxN matrix with values of 1 or 0 for selecting the pairs of stations or not given
@@ -689,7 +691,7 @@ def get_stack_index_mat(n, lo_rad, la_rad, dist_min_deg, dist_step_deg, stack_in
         stack_index_mat_nn[ista1, ista1:] = istack
         stack_index_mat_nn[ista1:, ista1] = istack
 @jit(nopython=True, nogil=True)
-def cc_stack(ch1, ch2, znert_mat_spec_c64, lo_rad, la_rad, stack_mat_spec_c64, stack_count, stack_index_mat_nn, selection_mat_nn):
+def cc_stack(ch1, ch2, znert_mat_spec_c64, lo_rad, la_rad, stack_mat_spec_c64, stack_count, stack_index_mat_nn, selection_mat_nn, wmat_nn):
     """
     Compute the cross-correlation and stack in spectral domain.
     #
@@ -711,6 +713,7 @@ def cc_stack(ch1, ch2, znert_mat_spec_c64, lo_rad, la_rad, stack_mat_spec_c64, s
     stack_count:        the output stack count matrix in int32/int64 dtype.
     stack_index_mat_nn: the stack index matrix. It can be returned from `get_stack_index_mat(...)`.
     selection_mat_nn:   the selection matrix. It can be returned from `gcd_selection_rad(...)` and `daz_selection_rad(...)` .
+    wmat_nn:            the weight matrix.
     """
     mat_spec = znert_mat_spec_c64
     flag_IR = (ch1==1 or ch1==2 or ch2==1 or ch2==2)
@@ -745,7 +748,7 @@ def cc_stack(ch1, ch2, znert_mat_spec_c64, lo_rad, la_rad, stack_mat_spec_c64, s
             err2 = mat_spec[ista2*ncmp+3]
             ert2 = mat_spec[ista2*ncmp+4]
             ####
-            if selection_mat_nn[ista1, ista2] > 0:
+            if (selection_mat_nn[ista1, ista2] > 0) and (np.abs(wmat_nn[ista1, ista2]) >1e-10):
                 if flag_IR:
                     # rotate to get IRR and IRT along the great-circle-path between the two stations
                     # virtual event -> station #1 -> station #2
@@ -781,7 +784,7 @@ def cc_stack(ch1, ch2, znert_mat_spec_c64, lo_rad, la_rad, stack_mat_spec_c64, s
                 s1 = [z1, irr1, irt1, n1, e1, err1, ert1]
                 s2 = [z2, irr2, irt2, n2, e2, err2, ert2]
                 ss = s1[ch1] * s2[ch2].conj() # of complex64 (8 bytes)
-                ss *= selection_mat_nn[ista1, ista2]
+                ss *= (selection_mat_nn[ista1, ista2] * wmat_nn[ista1, ista2])
                 #ss.view(dtype=np.uint64)[:] #&= selection_mat_nn[ista1, ista2] # select or discard for 0xFFFFFFFFFFFFFFFF or 0
                 #### stack
                 istack = stack_index_mat_nn[ista1, ista2]
@@ -1110,7 +1113,7 @@ class CS_InterRcv:
     def __del__(self):
         if self.intermediate_out_h5fid is not None:
             self.intermediate_out_h5fid.close()
-    def add(self, zne_mat_f32, stlo_rad, stla_rad, evlo_rad, evla_rad, event_name=None, local_time_summary=None):
+    def add(self, zne_mat_f32, stlo_rad, stla_rad, evlo_rad, evla_rad, event_name=None, local_time_summary=None, wmat_nn=None):
         """
         local_time_summary: a TimeSummary object to record the time consumption for this function.
                             If `None`, a internal empty TimeSummary object will be created.
@@ -1194,6 +1197,14 @@ class CS_InterRcv:
                 log_print(2, 'gc_center_selection_mat: ', gc_center_selection_mat.shape, gc_center_selection_mat.dtype)
                 log_print(2, 'Finished.', flush=True)
         ############################################################################################################
+        #### The weight matrix
+        if wmat_nn is None:
+            flag_wmat_nn=False
+            wmat_nn = np.ones( (cc_lo.size, cc_lo.size), dtype=np.int8)
+        else:
+            flag_wmat_nn=True
+            wmat_nn = wmat_nn.reshape( (cc_lo.size, cc_lo.size) )
+        ############################################################################################################
         #### stack index
         with Timer(tag='get_stack_index', verbose=False, summary=local_time_summary):
             log_print(1, 'Computing the stack index...')
@@ -1232,15 +1243,20 @@ class CS_InterRcv:
                 log_print(2, 'Finished.')
                 log_print(2, 'znert_mat_f32: ', znert_mat_f32.shape, znert_mat_f32.dtype, flush=True)
         ############################################################################################################
-        #### whiten the input data in time series
+        ### only need to take care of those time series for the selected correlation pairs and with non-zero weights
+        ### only need for non-dummy-cc mode
         if (not self.dummy_cc):
-            ### only need to whiten those time series for the selected correlation pairs
             flag_used = np.zeros(cc_lo.size*5, dtype=np.uint8)
             for ind in range(cc_lo.size):
                 v = np.any(ccpairs_selection_mat[ind, :]) & np.any(ccpairs_selection_mat[:, ind])
-                flag_used[ind]   = v
+                v2 = True
+                if flag_wmat_nn:
+                    v2 = np.any(np.abs(wmat_nn[ind, :])>1e-10) & np.any(np.abs(wmat_nn[:, ind])>1e-10)
+                flag_used[ind]   = (v & v2)
             ind_selected = [ind*5+j for ind, v in enumerate(flag_used) if v for j in range(5)]
-            ###
+        ############################################################################################################
+        #### whiten the input data in time series
+        if (not self.dummy_cc):
             if self.wtlen:
                 with Timer(tag='wt', verbose=False, summary=local_time_summary):
                     log_print(1, 'Temporal normalization for the ZNERT matrix...')
@@ -1321,6 +1337,8 @@ class CS_InterRcv:
                 if np.sum(ccpairs_selection_mat==0) > 0:
                     grp.create_dataset('ccpairs_selection_mat', data=np.packbits(ccpairs_selection_mat.flatten() ) )
                     grp['ccpairs_selection_mat'].attrs['shape'] = ccpairs_selection_mat.shape
+                if flag_wmat_nn:
+                    grp.create_dataset('wmat', data=wmat_nn, dtype=wmat_nn.dtype)
                 # stack_index_mat_nn values are not binary, hence CANNOT support packbits(...)
                 grp.create_dataset('stack_index_mat_nn', data=stack_index_mat_nn)
                 grp['stack_index_mat_nn'].attrs['bin_settings']    = (self.stack_bins.centers[0], self.stack_bins.step, self.stack_bins.centers.size)
@@ -1369,7 +1387,7 @@ class CS_InterRcv:
                 stack_count = self.stack_count
                 stack_mat_spec = self.stack_mat_spec
                 #print(spectra_c64.dtype, stack_mat_spec.dtype, stack_count.dtype, stack_index_mat_nn.dtype, selection_mat.dtype, flush=True)
-                cc_stack(ch1, ch2, spectra_c64, cc_lo, cc_la, stack_mat_spec, stack_count, stack_index_mat_nn, ccpairs_selection_mat)
+                cc_stack(ch1, ch2, spectra_c64, cc_lo, cc_la, stack_mat_spec, stack_count, stack_index_mat_nn, ccpairs_selection_mat, wmat_nn)
                 log_print(2, 'Finished.', flush=True)
         ############################################################################################################
         #t_total = time_time() - t0
@@ -1592,6 +1610,229 @@ class CS_InterRcv:
             if not os.path.exists(folder):
                 os.makedirs(folder)
 
+
+class SingleSrc(beachball3d):
+    def __init__(self, gcmt, evlo_rad, evla_rad, evdp_km, evnm, model='ak135'):
+        super().__init__(gcmt=gcmt, normalize=False)
+        self.evlo = evlo_rad
+        self.evla = evla_rad
+        self.evdp = evdp_km
+        self.evnm = evnm
+        #### get max absolute amplitude for P, SV, and SH radiations.
+        theta = np.linspace(0, 2*np.pi, 181)
+        phi   = np.linspace(0, np.pi, 91)
+        tt, pp = np.meshgrid(theta, phi)
+        _, _, _, _, P_amp, SV_amp, SH_amp= self.radiation(tt.ravel(), pp.ravel(), binarization=False)
+        self.P_amp_range  = (np.min(P_amp),  np.max(P_amp) )
+        self.SV_amp_range = (np.min(SV_amp), np.max(SV_amp))
+        self.SH_amp_range = (np.min(SH_amp), np.max(SH_amp))
+        self.P_amp_absmax  = max(-self.P_amp_range[0], self.P_amp_range[1])
+        self.SV_amp_absmax = max(-self.SV_amp_range[0], self.SV_amp_range[1])
+        self.SH_amp_absmax = max(-self.SH_amp_range[0], self.SH_amp_range[1])
+        ####
+        model_tab = SingleSrc.__dict_mod1d[model]
+        self.vp_at_evdp = np.interp(self.evdp, model_tab[0], model_tab[1])
+        self.vs_at_evdp = np.interp(self.evdp, model_tab[0], model_tab[2])
+    def set_cutoff_amp(self, cutoff_amp_ratio):
+        self.cutoff_amp_ratio = cutoff_amp_ratio
+        self.P_amp_cutoff  = cutoff_amp_ratio * self.P_amp_absmax
+        self.SV_amp_cutoff = cutoff_amp_ratio * self.SV_amp_absmax
+        self.SH_amp_cutoff = cutoff_amp_ratio * self.SH_amp_absmax
+    #####
+    def slowness2phi(self, slowness_km_s, wave_type='P'): # return in rad
+        if wave_type=='P':
+            takeoff_angle_rad = np.arcsin( np.clip(slowness_km_s * self.vp_at_evdp, -1, 1) )
+        else:
+            takeoff_angle_rad = np.arcsin( np.clip(slowness_km_s * self.vs_at_evdp, -1, 1) )
+        phi = np.pi - takeoff_angle_rad
+        return phi
+    def get_theta_phi_mesh_bblh_Circle(self, smax, ntheta=20, ns=5):        # get points for a circular area centered at (phi=180degree) on the lower half of beachball for P and S waves
+        if smax <= 0.0:
+            raise ValueError('smax must be >0.', smax)
+        theta = np.linspace(0, 2*np.pi, ntheta, endpoint=False)
+        s = np.linspace(0, smax, ns)
+        p_phi = self.slowness2phi(s, wave_type='P')
+        s_phi = self.slowness2phi(s, wave_type='S')
+        pmesh_theta, pmesh_phi = np.meshgrid(theta, p_phi)
+        smesh_theta, smesh_phi = np.meshgrid(theta, s_phi)
+        return (pmesh_theta.ravel(), pmesh_phi.ravel()), (smesh_theta.ravel(), smesh_phi.ravel())
+    def get_theta_phi_mesh_bblh_Pie(self, azmin, azmax, smin, smax, naz=5, ns=5 ): # get points for a Pie-shape area on the lower half of beachball for P and S waves
+        if not (0<smin<smax):
+            raise ValueError('Must meet: 0<smin<smax.', (smin, smax))
+        theta = 0.5*np.pi - np.linspace(azmin, azmax, naz)
+        s     = np.linspace(smin, smax, ns)
+        p_phi = self.slowness2phi(s, wave_type='P')
+        s_phi = self.slowness2phi(s, wave_type='S')
+        pmesh_theta, pmesh_phi = np.meshgrid(theta, p_phi)
+        smesh_theta, smesh_phi = np.meshgrid(theta, s_phi)
+        return (pmesh_theta.ravel(), pmesh_phi.ravel()), (smesh_theta.ravel(), smesh_phi.ravel())
+    def get_amp_PSVSH(self, theta, phi, binary=True, fignm=None):      # get -1, 0 or 1 in an area defined by many points on beachball surface.
+        _, _, _, _, P_amp, SV_amp, SH_amp = self.radiation(theta, phi)
+        #
+        cP, cSV, cSH = self.P_amp_cutoff, self.SV_amp_cutoff, self.SH_amp_cutoff
+        P_amp  = int(np.all(P_amp  > cP)) - int(np.all(P_amp  < -cP))
+        SV_amp = int(np.all(SV_amp > cSV)) - int(np.all(SV_amp < -cSV))
+        SH_amp = int(np.all(SH_amp > cSH)) - int(np.all(SH_amp < -cSH))
+        if not binary:
+            P_amp  = P_amp  * np.max(np.abs(P_amp)) # should I use mean here?
+            SV_amp = SV_amp * np.max(np.abs(SV_amp))
+            SH_amp = SH_amp * np.max(np.abs(SH_amp))
+        self.plot_PSVSH2d(theta, phi, theta, phi, P_amp, SV_amp, SH_amp, fignm=fignm)
+        return P_amp, SV_amp, SH_amp
+    def get_amp_PSVSH_Circle(self, smax, ntheta=20, ns=5, binary=True, fignm=None):
+        (theta_p, phi_p), (theta_s, phi_s) = self.get_theta_phi_mesh_bblh_Circle(smax, ntheta=ntheta, ns=ns)
+        P_amp, junk, junk    = self.get_amp_PSVSH(theta_p, phi_p, binary=binary, fignm=None)
+        junk, SV_amp, SH_amp = self.get_amp_PSVSH(theta_s, phi_s, binary=binary, fignm=None)
+        self.plot_PSVSH2d(theta_p, phi_p, theta_s, phi_s, P_amp, SV_amp, SH_amp, fignm=fignm)
+        return P_amp, SV_amp, SH_amp
+    def get_amp_PSVSH_Pie(self, azmin, azmax, smin, smax, naz=5, ns=5, binary=True, fignm=None):
+        (theta_p, phi_p), (theta_s, phi_s) = self.get_theta_phi_mesh_bblh_Pie(azmin, azmax, smin, smax, naz=naz, ns=ns)
+        P_amp, junk, junk    = self.get_amp_PSVSH(theta_p, phi_p, binary=binary, fignm=None)
+        junk, SV_amp, SH_amp = self.get_amp_PSVSH(theta_s, phi_s, binary=binary, fignm=None)
+        self.plot_PSVSH2d(theta_p, phi_p, theta_s, phi_s, P_amp, SV_amp, SH_amp, fignm=fignm)
+        return P_amp, SV_amp, SH_amp
+    def plot_PSVSH2d(self, theta_p, phi_p, theta_s, phi_s, P_amp, SV_amp, SH_amp, fignm=None):
+        if fignm is not None:
+            fig = plt.figure(figsize=(12, 4))
+            gs = fig.add_gridspec(2, 3, height_ratios=(10, 1) )
+            ax1 = fig.add_subplot(gs[0, 0], projection='polar')
+            ax2 = fig.add_subplot(gs[0, 1], projection='polar')
+            ax3 = fig.add_subplot(gs[0, 2], projection='polar')
+            cax1 = fig.add_subplot(gs[1, 0])
+            cax2 = fig.add_subplot(gs[1, 1])
+            cax3 = fig.add_subplot(gs[1, 2])
+            cmap = plt.get_cmap('RdBu_r', 11)
+            self.plot2d(ax1, wave_type='P',  radius=1, cmap=cmap, cax=cax1)
+            self.plot2d(ax2, wave_type='SV', radius=1, cmap=cmap, cax=cax2)
+            self.plot2d(ax3, wave_type='SH', radius=1, cmap=cmap, cax=cax3)
+            ax1.set_title('P %s' % P_amp)
+            ax2.set_title('SV %s' % SV_amp)
+            ax3.set_title('SH %s' % SH_amp)
+            for ax in (ax1, ):
+                ax.plot(theta_p, np.sqrt(2)*np.sin((np.pi-phi_p)*0.5), linestyle='', marker='.', color='c')
+            for ax in (ax2, ax3 ):
+                ax.plot(theta_s, np.sqrt(2)*np.sin((np.pi-phi_s)*0.5), linestyle='', marker='.', color='c')
+            plt.savefig(fignm, bbox_inches='tight', pad_inches = 0.05, transparent=True, dpi=200)
+            plt.close(fig)
+    #####
+    #def is_thrust(self, max_slowness_s_km=0.05, cutoff_amp_ratio=0.05, fignm=None):
+    #    (theta_p, phi_p), junk = self.get_theta_phi_mesh_bblh_Circle(max_slowness_s_km=max_slowness_s_km, grd_ns=5, grd_naz=20)
+    #    P_sign, junk, junk     = self.get_amp_PSVSH(theta_p, phi_p, cutoff_amp_ratio, binary=True, fignm=fignm)
+    #    return P_sign==1
+    #def is_normal(self, max_slowness_s_km=0.05, cutoff_amp_ratio=0.05, fignm=None):
+    #    (theta_p, phi_p), junk = self.get_theta_phi_mesh_bblh_Circle(max_slowness_s_km=max_slowness_s_km, grd_ns=5, grd_naz=20)
+    #    sign_P, junk, junk     = self.get_amp_PSVSH(theta_p, phi_p, cutoff_amp_ratio, binary=True, fignm=fignm)
+    #    return sign_P==-1
+    ###################################################################################################################################################
+    __dict_mod1d = {'prem': np.array([  [0.000, 3.000, 15.000, 15.000, 24.400, 24.400, 71.000, 80.000, 80.000, 171.000, 220.000, 220.000, 271.000, 371.000, 400.000, 400.000, 471.000, 571.000, 600.000, 600.000, 670.000, 670.000, 771.000,],
+                                        [5.800, 5.800, 5.800, 6.800, 6.800, 8.110, 8.080, 8.080, 8.080, 8.020, 7.990, 8.560, 8.660, 8.850, 8.910, 9.130, 9.500, 10.010, 10.160, 10.160, 10.270, 10.750, 11.070,],
+                                        [3.200, 3.200, 3.200, 3.900, 3.900, 4.490, 4.470, 4.470, 4.470, 4.440, 4.420, 4.640, 4.680, 4.750, 4.770, 4.930, 5.140, 5.430, 5.520, 5.520, 5.570, 5.950, 6.240,]] ),
+                    'ak135': np.array([ [0.000, 3.300, 10.000, 10.000, 18.000, 18.000, 43.000, 80.000, 80.000, 120.000, 120.000, 165.000, 210.000, 210.000, 260.000, 310.000, 360.000, 410.000, 410.000, 460.000, 510.000, 560.000, 610.000, 660.000, 660.000, 710.000, 760.000, 809.500, 859.000, 908.500, 958.000,],
+                                        [5.800, 5.800, 5.800, 6.800, 6.800, 8.036, 8.038, 8.040, 8.045, 8.050, 8.050, 8.175, 8.301, 8.301, 8.482, 8.665, 8.848, 9.030, 9.360, 9.528, 9.696, 9.864, 10.032, 10.200, 10.791, 10.922, 11.055, 11.135, 11.223, 11.307, 11.390,],
+                                        [3.200, 3.200, 3.200, 3.900, 3.900, 4.484, 4.486, 4.480, 4.490, 4.500, 4.500, 4.509, 4.518, 4.518, 4.609, 4.696, 4.783, 4.870, 5.081, 5.186, 5.292, 5.399, 5.505, 5.610, 5.961, 6.090, 6.210, 6.242, 6.280, 6.316, 6.352,]])
+                    }
+class ManySrcs(list):
+    def __init__(self, gcmt=None, evlo_rad=None, evla_rad=None, evdp_km=None, evnm=None, model='ak135', lst_of_ssrc=None):
+        """
+        There are two ways to initialize this class:
+        1. Provide a list of SingleSrc objects via `lst_of_ssrc`.
+        2. Provide the parameters to create SingleSrc objects via `gcmt`, `evlo_rad`, `evla_rad`, `evdp_km`, `evnm`, and a single string `model`.
+        """
+        if lst_of_ssrc is None:
+            lst_of_ssrc = [ SingleSrc(gcmt[i], evlo_rad[i], evla_rad[i], evdp_km[i], evnm[i], model=model) for i in range(len(evnm)) ]
+        super().__init__(lst_of_ssrc)
+    def set_cutoff_amp(self, cutoff_amp_ratio):
+        for it in self:
+            it.set_cutoff_amp(cutoff_amp_ratio)
+    def get_amps_PSVSH_Circle(self, smax_s_km, ntheta=20, ns=5, binary=True, fignm_prefix=None):
+        if fignm_prefix is not None:
+            wd = '/'.join(fignm_prefix.split('/')[:-1])
+            mpi_makedirs(None, wd)
+        P_amps  = np.zeros(len(self), dtype=np.int8 if binary else np.float32)
+        SV_amps = np.zeros(len(self), dtype=np.int8 if binary else np.float32)
+        SH_amps = np.zeros(len(self), dtype=np.int8 if binary else np.float32)
+        for isrc, it_src in enumerate(self):
+            fignm = None
+            if fignm_prefix is not None:
+                fignm = '%s_%06d_%s.png' % (fignm_prefix, isrc, it_src.evnm)
+            P_amps[isrc], SV_amps[isrc], SH_amps[isrc] = it_src.get_amp_PSVSH_Circle(smax_s_km, ntheta=ntheta, ns=ns, binary=binary, fignm=fignm)
+        return P_amps, SV_amps, SH_amps
+    def get_amps_PSVSH_Pie(self, stlo_rad, stla_rad, az_err_rad, smin_s_km, smax_s_km, naz=5, ns=5, binary=True, fignm_prefix=None):
+        """
+        stlo_rad, stla_rad: longitude and latitude of the station(s). Could be a single station, or
+                            an array with the same length as the number of sources.
+        """
+        if fignm_prefix is not None:
+            wd = '/'.join(fignm_prefix.split('/')[:-1])
+            mpi_makedirs(None, wd)
+        P_amps  = np.zeros(len(self), dtype=np.int8 if binary else np.float32)
+        SV_amps = np.zeros(len(self), dtype=np.int8 if binary else np.float32)
+        SH_amps = np.zeros(len(self), dtype=np.int8 if binary else np.float32)
+        evlos = np.array( [it.evlo for it in self] )
+        evlas = np.array( [it.evla for it in self] )
+        az    = azimuth_rad(evlos, evlas, stlo_rad, stla_rad)
+        azmin = az - az_err_rad
+        azmax = az + az_err_rad
+        for isrc, it_src in enumerate(self):
+            fignm = None
+            if fignm_prefix is not None:
+                fignm = '%s_%06d_%s.png' % (fignm_prefix, isrc, it_src.evnm)
+            P_amps[isrc], SV_amps[isrc], SH_amps[isrc] = it_src.get_amp_PSVSH_Pie(azmin[isrc], azmax[isrc], smin_s_km, smax_s_km, naz=naz, ns=ns, binary=binary, fignm=fignm)
+        return P_amps, SV_amps, SH_amps
+    ####
+    def get_cc_mat1(self, method='thrust', smax_s_km=0.045, ntheta=20, ns=5, fignm_prefix=None): # 'thrust', 'normal', 'thrust_normal', or 'other'
+        P_amps, SV_amps, SH_amps = self.get_amps_PSVSH_Circle(smax_s_km, ntheta=ntheta, ns=ns, binary=True, fignm_prefix=fignm_prefix)
+        if method == 'thrust':
+            signs = np.where(P_amps>0, P_amps, 0)
+        elif method == 'normal':
+            signs = np.where(P_amps<0, P_amps, 0)
+        elif method == 'thrust_normal':
+            signs = P_amps
+        elif method == 'other':
+            signs = np.where(P_amps==0, 1, 0) # other
+        else:
+            raise ValueError('method must be "thrust", "normal", "thrust_normal", or "other".', method)
+        #####
+        nsrc  = len(self)
+        mat = np.ones( (nsrc, nsrc), dtype=np.int8)
+        for i1, s1 in enumerate(signs):
+            for i2, s2 in enumerate(signs):
+                mat[i1, i2] = s1 * s2
+        return mat
+    def get_cc_mat2(self, stlo_rad, stla_rad, az_err_rad=10./180.*np.pi, smin_s_km=0.0045, smax_s_km=0.045, naz=5, ns=5, binary=True, fignm_prefix=None, wave1='P', wave2='P'):
+        P_amps, SV_amps, SH_amps = self.get_amps_PSVSH_Pie(stlo_rad, stla_rad, az_err_rad, smin_s_km, smax_s_km, naz=naz, ns=ns, binary=binary, fignm_prefix=fignm_prefix)
+        dict_amps = {'P': P_amps, 'SV': SV_amps, 'SH': SH_amps}
+        amp1 = dict_amps[wave1]
+        amp2 = dict_amps[wave2]
+        #####
+        nsrc  = len(self)
+        mat = np.ones( (nsrc, nsrc), dtype=np.int8 if binary else np.float32)
+        for i1, s1 in enumerate(amp1):
+            for i2, s2 in enumerate(amp2):
+                mat[i1, i2] = s1 * s2
+        return mat
+    @staticmethod
+    def benchmark():
+        evnm = 'ev1', 'ev2', 'ev3'
+        evlo_rad = np.deg2rad( (0, 30, 60) )
+        evla_rad = np.deg2rad( (0, 0,  0) )
+        evdp_km = (30, 30, 30)
+        gcmt = [(1,0,-1,0,0,0), (-1,0,1,0,0,0), (0,0,0,0,2,0) ]
+        app = ManySrcs(gcmt=gcmt, evlo_rad=evlo_rad, evla_rad=evla_rad, evdp_km=evdp_km, evnm=evnm)
+        app.set_cutoff_amp(0.05)
+        ####
+        mat1 = app.get_cc_mat1(method='thrust',        smax_s_km=0.045, ntheta=20, ns=5, fignm_prefix='tmp/1thrust')
+        mat2 = app.get_cc_mat1(method='normal',        smax_s_km=0.045, ntheta=20, ns=5, fignm_prefix='tmp/2normal')
+        mat3 = app.get_cc_mat1(method='thrust_normal', smax_s_km=0.045, ntheta=20, ns=5, fignm_prefix='tmp/3thrust_normal')
+        mat4 = app.get_cc_mat1(method='other',         smax_s_km=0.045, ntheta=20, ns=5, fignm_prefix='tmp/4other')
+        ####
+        stlo, stla = 50/180*np.pi, 0
+        mat5 = app.get_cc_mat2(stlo, stla, az_err_rad=10./180.*np.pi, smin_s_km=0.0045, smax_s_km=0.045, naz=5, ns=5, binary=True,
+                               fignm_prefix='tmp/5PP', wave1='P',  wave2='P' )
+        ####
+        for it in (mat1, mat2, mat3, mat4, mat5):
+            print(it)
+
 class CS_InterSrc(CS_InterRcv):
     def __init__(self, ch_pair_type, delta, nt, **kwargs):
         """
@@ -1599,8 +1840,28 @@ class CS_InterSrc(CS_InterRcv):
         """
         self.inter_src = True
         super().__init__(ch_pair_type, delta, nt, **kwargs)
+    def set_src(self, gcmt, evlo_rad, evla_rad, evdp_km, evnm, cutoff_amp_ratio=0.05, model='ak135'):
+        self.lst_src = ManySrcs(gcmt, evlo_rad, evla_rad, evdp_km, evnm, model=model)
+        self.lst_src.set_cutoff_amp(cutoff_amp_ratio)
+        self.dict_src = {it.evnm: it for it in self.lst_src}
+    def get_weight_mat1(self, evnms, method='thrust_normal', smax_s_km=0.045, ntheta=20, ns=5, fignm_prefix=None):
+        srcs = ManySrcs(lst_of_ssrc=[self.dict_src[evnm] for evnm in evnms] )
+        wmatNN = srcs.get_cc_mat1(method=method, smax_s_km=smax_s_km, ntheta=ntheta, ns=ns, fignm_prefix=fignm_prefix)
+        vmax = max(-np.min(wmatNN), np.max(wmatNN) )
+        wmatNN *= (1/vmax)
+        return wmatNN
+    def get_weight_mat2(self, evnms, single_stlo_rad, single_stla_rad, az_err_rad=10./180.*np.pi, smin_s_km=0.0045, smax_s_km=0.045, naz=5, ns=5, binary=True, fignm_prefix=None, wave1='P', wave2='P'):
+        srcs = ManySrcs(lst_of_ssrc=[self.dict_src[evnm] for evnm in evnms] )
+        wmatNN = srcs.get_cc_mat2(single_stlo_rad, single_stla_rad, az_err_rad=az_err_rad, smin_s_km=smin_s_km, smax_s_km=smax_s_km,
+                                  naz=naz, ns=ns, binary=binary,fignm_prefix=fignm_prefix, wave1=wave1, wave2=wave2)
+        vmax = max(-np.min(wmatNN), np.max(wmatNN) )
+        wmatNN *= (1/vmax)
+        return wmatNN
+
 
 if __name__ == "__main__":
+    if True:
+        ManySrcs.benchmark()
     if False:
         bins = StackBins(0, 10, 1)
         print(bins.centers)
