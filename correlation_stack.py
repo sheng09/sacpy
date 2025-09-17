@@ -1788,10 +1788,12 @@ class ManySrcs(list):
             signs = np.where(P_amps<0, P_amps, 0)
         elif method == 'thrust_normal':
             signs = P_amps
+        elif method == 'thrust_normal2':
+            signs = np.where(P_amps==0, 0, 1) # treat thrust and normal as the same!
         elif method == 'other':
             signs = np.where(P_amps==0, 1, 0) # other
         else:
-            raise ValueError('method must be "thrust", "normal", "thrust_normal", or "other".', method)
+            raise ValueError('method must be "thrust", "normal", "thrust_normal", "thrust_normal2", or "other".', method)
         #####
         nsrc  = len(self)
         mat = np.ones( (nsrc, nsrc), dtype=np.int8)
@@ -1824,13 +1826,14 @@ class ManySrcs(list):
         mat1 = app.get_cc_mat1(method='thrust',        smax_s_km=0.045, ntheta=20, ns=5, fignm_prefix='tmp/1thrust')
         mat2 = app.get_cc_mat1(method='normal',        smax_s_km=0.045, ntheta=20, ns=5, fignm_prefix='tmp/2normal')
         mat3 = app.get_cc_mat1(method='thrust_normal', smax_s_km=0.045, ntheta=20, ns=5, fignm_prefix='tmp/3thrust_normal')
+        mat3b= app.get_cc_mat1(method='thrust_normal2',smax_s_km=0.045, ntheta=20, ns=5, fignm_prefix='tmp/3thrust_normal2')
         mat4 = app.get_cc_mat1(method='other',         smax_s_km=0.045, ntheta=20, ns=5, fignm_prefix='tmp/4other')
         ####
         stlo, stla = 50/180*np.pi, 0
         mat5 = app.get_cc_mat2(stlo, stla, az_err_rad=10./180.*np.pi, smin_s_km=0.0045, smax_s_km=0.045, naz=5, ns=5, binary=True,
                                fignm_prefix='tmp/5PP', wave1='P',  wave2='P' )
         ####
-        for it in (mat1, mat2, mat3, mat4, mat5):
+        for it in (mat1, mat2, mat3, mat3b, mat4, mat5):
             print(it)
 
 class CS_InterSrc(CS_InterRcv):
@@ -1845,17 +1848,21 @@ class CS_InterSrc(CS_InterRcv):
         self.lst_src.set_cutoff_amp(cutoff_amp_ratio)
         self.dict_src = {it.evnm: it for it in self.lst_src}
     def get_weight_mat1(self, evnms, method='thrust_normal', smax_s_km=0.045, ntheta=20, ns=5, fignm_prefix=None):
+        """
+        method: 'thrust', 'normal', 'thrust_normal', 'thrust_normal2', or 'other'
+        """
         srcs = ManySrcs(lst_of_ssrc=[self.dict_src[evnm] for evnm in evnms] )
         wmatNN = srcs.get_cc_mat1(method=method, smax_s_km=smax_s_km, ntheta=ntheta, ns=ns, fignm_prefix=fignm_prefix)
-        vmax = max(-np.min(wmatNN), np.max(wmatNN) )
-        wmatNN *= (1/vmax)
+        #vmax = max(-np.min(wmatNN), np.max(wmatNN) ) ## wamtNN is  already  many of -1, 0, or 1
+        #wmatNN *= (1/vmax)
         return wmatNN
     def get_weight_mat2(self, evnms, single_stlo_rad, single_stla_rad, az_err_rad=10./180.*np.pi, smin_s_km=0.0045, smax_s_km=0.045, naz=5, ns=5, binary=True, fignm_prefix=None, wave1='P', wave2='P'):
         srcs = ManySrcs(lst_of_ssrc=[self.dict_src[evnm] for evnm in evnms] )
         wmatNN = srcs.get_cc_mat2(single_stlo_rad, single_stla_rad, az_err_rad=az_err_rad, smin_s_km=smin_s_km, smax_s_km=smax_s_km,
                                   naz=naz, ns=ns, binary=binary,fignm_prefix=fignm_prefix, wave1=wave1, wave2=wave2)
-        vmax = max(-np.min(wmatNN), np.max(wmatNN) )
-        wmatNN *= (1/vmax)
+        if not binary:
+            vmax = max(-np.min(wmatNN), np.max(wmatNN) )
+            wmatNN *= (1/vmax)
         return wmatNN
 
 
