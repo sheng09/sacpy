@@ -1795,7 +1795,14 @@ class ManySrcs(dict):
                 fignm = '%s%s.png' % (fignm_prefix, it.evnm)
             it.sign_thrust_normal = it.is_thrust_normal(smax_s_km, ntheta=ntheta, ns=ns, fignm=fignm) # return 1, -1 or 0
     ####
-    def cc_wmat_glob(self, evnms, method='thrust'): # 'thrust', 'normal', 'thrust_normal', 'thrust_normal2', or 'other'
+    @staticmethod
+    @jit(nopython=True, cache=True)
+    def __fast_arr2mat(arr1, arr2, mat):
+        for i1, s1 in enumerate(arr1):
+            for i2, s2 in enumerate(arr2):
+                mat[i1, i2] = s1 * s2
+        return mat
+    def cc_wmat_glob(self, evnms, method='thrust'): # 'thrust', 'normal', 'thrust_normal', 'thrust_normal2', or 'other', or None
         """
         Call self.set_sign_thrust_normal(...) before calling this method.
         """
@@ -1811,14 +1818,14 @@ class ManySrcs(dict):
             signs = np.where(P_amps==0, 0, 1) # treat thrust and normal as the same!
         elif method == 'other':
             signs = np.where(P_amps==0, 1, 0) # other
+        elif (method is None) or (method == 'None'):
+            return None
         else:
             raise ValueError('method must be "thrust", "normal", "thrust_normal", "thrust_normal2", or "other".', method)
         #####
         nsrc  = len(srcs)
         mat = np.ones( (nsrc, nsrc), dtype=np.int8)
-        for i1, s1 in enumerate(signs):
-            for i2, s2 in enumerate(signs):
-                mat[i1, i2] = s1 * s2
+        ManySrcs.__fast_arr2mat(signs, signs, mat)
         return mat
     def cc_wmat_wise(self, evnms, stlo_rad, stla_rad, az_err_rad=10./180.*np.pi, smin_s_km=0.0045, smax_s_km=0.045, naz=5, ns=5, binary=True, fignm_prefix=None, wave1='P', wave2='P'):
         """
@@ -1846,9 +1853,10 @@ class ManySrcs(dict):
         ######
         nsrc  = len(srcs)
         mat   = np.ones( (nsrc, nsrc), dtype=np.int8 if binary else np.float32)
-        for i1, s1 in enumerate(amp1):
-            for i2, s2 in enumerate(amp2):
-                mat[i1, i2] = s1 * s2
+        ManySrcs.__fast_arr2mat(amp1, amp2, mat)
+        #for i1, s1 in enumerate(amp1):
+        #    for i2, s2 in enumerate(amp2):
+        #        mat[i1, i2] = s1 * s2
         ######
         if not binary:
             vmax = max(-mat.min(), mat.max())
@@ -1930,6 +1938,12 @@ class CS_InterSrc(CS_InterRcv):
         """
         method: 'thrust', 'normal', 'thrust_normal', 'thrust_normal2', or 'other'
         """
+        log_print = self.logger
+        log_print(-1, 'Set glob s2s correlation weight mat')
+        log_print( 1, 'method:', method)
+        log_print( 1, 'smax_s_km:', smax_s_km)
+        log_print( 1, 'fignm_prefix:', fignm_prefix)
+        ####
         if not hasattr(self, 'param_set_sign_thrust_normal'):
             self.srcs.set_sign_thrust_normal(smax_s_km=smax_s_km, ntheta=ntheta, ns=ns, fignm_prefix=fignm_prefix)
             self.param_set_sign_thrust_normal = smax_s_km
@@ -1937,11 +1951,24 @@ class CS_InterSrc(CS_InterRcv):
             self.srcs.set_sign_thrust_normal(smax_s_km=smax_s_km, ntheta=ntheta, ns=ns, fignm_prefix=fignm_prefix)
             self.param_set_sign_thrust_normal = smax_s_km
         wmat_nn = self.srcs.cc_wmat_glob(evnms, method=method)
+        ####
+        log_print( 1, 'wmat_nn:', wmat_nn.shape, flush=True)
         return wmat_nn
     def cc_wmat_wise(self, evnms, single_stlo_rad, single_stla_rad, az_err_rad=10./180.*np.pi, smin_s_km=0.0045, smax_s_km=0.045, naz=5, ns=5, binary=True, fignm_prefix=None, wave1='P', wave2='P'):
+        log_print = self.logger
+        log_print(-1, 'Set rcv_wise s2s correlation weight mat')
+        log_print( 1, 'single_stlo_rad, single_stla_rad:', single_stlo_rad, single_stla_rad)
+        log_print( 1, 'az_err_rad(deg):', np.rad2deg(az_err_rad))
+        log_print( 1, 'smin_s_km, smax_s_km:', smin_s_km, smax_s_km)
+        log_print( 1, 'binary:', binary)
+        log_print( 1, 'fignm_prefix:', fignm_prefix)
+        log_print( 1, 'wave1, wave2:', wave1, wave2)
+        ####
         wmat_nn = self.srcs.cc_wmat_wise(evnms, stlo_rad=single_stlo_rad, stla_rad=single_stla_rad, az_err_rad=az_err_rad,
                                         smin_s_km=smin_s_km, smax_s_km=smax_s_km, naz=naz, ns=ns,
                                         binary=binary, fignm_prefix=fignm_prefix, wave1=wave1, wave2=wave2)
+        ####
+        log_print( 1, 'wmat_nn:', wmat_nn.shape, flush=True)
         return wmat_nn
 if __name__ == "__main__":
     if True:
@@ -1977,14 +2004,21 @@ if __name__ == "__main__":
                             speedup_critical_frequency_band=speedup_critical_frequency_band, speedup_critical_level=0.01,
                             intermediate_outfnm_prefix=None,
                             log_print=logger, mpi_comm = mpi_comm)
-        with Timer(tag='set_src_from_xml'):
-            app.set_src2('test_s2s/M6.5+_1960-2024.xml', model='ak135', cutoff_amp_ratio=0.05, max_nsrc=50)
+        with Timer(tag='set_src_from_xml', verbose=True):
+            app.set_src2('test_s2s/M6.5+_1960-2024.xml', model='ak135', cutoff_amp_ratio=0.05, max_nsrc=-1)
         ####
         evnms = [it.evnm for it in app.srcs.values()]
-        evnms = sorted(evnms)[:50]
-        print(evnms)
-        wmat = app.cc_wmat_glob(evnms, method='thrust_normal', fignm_prefix='tmp3/tn_')
-        print(wmat)
+        #evnms = sorted(evnms)[:500]
+        #print(evnms)
+        with Timer(tag='cc_wmat_glob', verbose=True):
+            wmat = app.cc_wmat_glob(evnms, method='thrust_normal') #, fignm_prefix='tmp3/tn_')
+        with Timer(tag='cc_wmat_glob2', verbose=True):
+            wmat = app.cc_wmat_glob(evnms, method='thrust_normal') #, fignm_prefix='tmp3/tn_')
+        with Timer(tag='cc_wmat_glob3', verbose=True):
+            wmat = app.cc_wmat_glob(evnms, method='thrust_normal') #, fignm_prefix='tmp3/tn_')
+        with Timer(tag='cc_wmat_glob4', verbose=True):
+            wmat = app.cc_wmat_glob(evnms, method='thrust_normal') #, fignm_prefix='tmp3/tn_')
+        #print(wmat)
     if False:
         ManySrcs.benchmark2()
     if False:
