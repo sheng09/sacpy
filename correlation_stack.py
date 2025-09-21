@@ -1614,6 +1614,10 @@ class CS_InterRcv:
 
 
 class SingleSrc(beachball3d):
+    theta = np.linspace(0, 2*np.pi, 181)
+    phi   = np.linspace(0, np.pi, 91)
+    tt, pp = np.meshgrid(theta, phi)
+    tt, pp = tt.ravel(), pp.ravel()
     def __init__(self, gcmt, evlo_rad, evla_rad, evdp_km, evnm, model='ak135', cutoff_amp_ratio=0.05):
         super().__init__(gcmt=gcmt, normalize=True)
         self.evlo = evlo_rad
@@ -1621,10 +1625,7 @@ class SingleSrc(beachball3d):
         self.evdp = evdp_km
         self.evnm = evnm
         #### get max absolute amplitude for P, SV, and SH radiations.
-        theta = np.linspace(0, 2*np.pi, 181)
-        phi   = np.linspace(0, np.pi, 91)
-        tt, pp = np.meshgrid(theta, phi)
-        _, _, _, _, P_amp, SV_amp, SH_amp= self.radiation(tt.ravel(), pp.ravel(), binarization=False)
+        _, _, _, _, P_amp, SV_amp, SH_amp= self.radiation(SingleSrc.tt, SingleSrc.pp, binarization=False)
         self.P_amp_range  = (np.min(P_amp),  np.max(P_amp) )
         self.SV_amp_range = (np.min(SV_amp), np.max(SV_amp))
         self.SH_amp_range = (np.min(SH_amp), np.max(SH_amp))

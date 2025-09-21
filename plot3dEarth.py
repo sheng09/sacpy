@@ -6,6 +6,7 @@ from pyvista import examples as pv_examples
 
 import numpy as np
 import pickle
+from numba import jit
 from scipy.linalg import eig
 from scipy.interpolate import interp1d, RegularGridInterpolator
 from scipy.ndimage import gaussian_filter
@@ -1625,6 +1626,40 @@ class beachball3d:
                 pair_strike_dip_slip[this_idx] = (new_strike, 0.0, new_slip)
         return pair_strike_dip_slip
     ##########################################################################################
+    @staticmethod
+    @jit(nopython=True, nogil=True)
+    def __fast_radiation_all(matENU, theta, phi, binarization=False):
+        sin_phi, cos_phi     = np.sin(phi), np.cos(phi)
+        sin_theta, cos_theta = np.sin(theta), np.cos(theta)
+        #
+        P_pol      = np.zeros((theta.size, 3 ) )
+        P_pol[:,0] = sin_phi * cos_theta
+        P_pol[:,1] = sin_phi * sin_theta
+        P_pol[:,2] = cos_phi
+        #
+        SV_pol = np.zeros((theta.size, 3 ) )
+        SV_pol[:,0] = cos_phi * cos_theta
+        SV_pol[:,1] = cos_phi * sin_theta
+        SV_pol[:,2] = -sin_phi # Note, here SV_pol is always pointing downwards!
+        #
+        SH_pol = np.zeros((theta.size, 3 ) )
+        SH_pol[:,0] = sin_theta # Note, here SH_pol is always pointing Eastwards (or clockwise from top view)
+        SH_pol[:,1] = -cos_theta
+        SH_pol[:,2] = 0.0
+        ######
+        P_amp = np.zeros(theta.size)
+        SV_amp= np.zeros(theta.size)
+        SH_amp= np.zeros(theta.size)
+        for idx in range(theta.size):
+            tmp = P_pol[idx] @ matENU
+            P_amp[idx]  = tmp @ P_pol[idx].T
+            SV_amp[idx] = tmp @ SV_pol[idx].T
+            SH_amp[idx] = tmp @ SH_pol[idx].T
+        if binarization:
+            P_amp = np.sign(P_amp)
+            SV_amp= np.sign(SV_amp)
+            SH_amp= np.sign(SH_amp)
+        return P_pol, P_pol, SV_pol, SH_pol, P_amp, SV_amp, SH_amp
     def radiation(self, thetas, phis, binarization=False):
         """
         Compute the P-, SV- and SH-wave radiations given a list of points on a unit sphere.
@@ -1673,10 +1708,11 @@ class beachball3d:
                 Above, the up is up (Z), radial is from source to receiver, and T is T=RxZ (RTZ is left-handed, or RZT right-handed)
         """
         if True: # use fast radiation computation
-            loc_xyz, p_pol, P_amp= beachball3d.__fast_radiation(self.matENU, thetas, phis, wave_type='P', binarization=binarization)
-            loc_xyz, sv_pol, SV_amp= beachball3d.__fast_radiation(self.matENU, thetas, phis, wave_type='SV', binarization=binarization)
-            loc_xyz, sh_pol, SH_amp= beachball3d.__fast_radiation(self.matENU, thetas, phis, wave_type='SH', binarization=binarization)
-            return loc_xyz, p_pol, sv_pol, sh_pol, P_amp, SV_amp, SH_amp
+            return beachball3d.__fast_radiation_all(self.matENU, thetas, phis, binarization=binarization)
+            #loc_xyz, p_pol, P_amp= beachball3d.__fast_radiation(self.matENU, thetas, phis, wave_type='P', binarization=binarization)
+            #loc_xyz, sv_pol, SV_amp= beachball3d.__fast_radiation(self.matENU, thetas, phis, wave_type='SV', binarization=binarization)
+            #loc_xyz, sh_pol, SH_amp= beachball3d.__fast_radiation(self.matENU, thetas, phis, wave_type='SH', binarization=binarization)
+            #return loc_xyz, p_pol, sv_pol, sh_pol, P_amp, SV_amp, SH_amp
         sin_phi, cos_phi     = np.sin(phis), np.cos(phis)
         sin_theta, cos_theta = np.sin(thetas), np.cos(thetas)
         ####################
@@ -1717,6 +1753,7 @@ class beachball3d:
             SH_amp = np.sign(SH_amp)
         return loc_xyz, P_pol, SV_pol, SH_pol, P_amp, SV_amp, SH_amp
     @staticmethod
+    @jit(nopython=True, nogil=True)
     def __fast_radiation(matENU, theta, phi, wave_type='P', binarization=False):
         sin_phi, cos_phi     = np.sin(phi), np.cos(phi)
         sin_theta, cos_theta = np.sin(theta), np.cos(theta)
