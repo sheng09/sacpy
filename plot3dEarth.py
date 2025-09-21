@@ -1462,7 +1462,9 @@ class beachball3d:
             strike, dip, slip = strike_dip_slip
             self.matENU = beachball3d.strike_dip_slip2matENU(strike, dip, slip)
         if normalize:
-            self.matENU /= beachball3d.frobenius_norm(self.matENU)
+            v = beachball3d.frobenius_norm(self.matENU)
+            if v > 0.0:
+                self.matENU /= v
     @property
     def gcmt(self):   # the gcmt array (M11, M22, M33, M12, M13, M23) in USE coordinate
         """
@@ -1670,6 +1672,11 @@ class beachball3d:
                 #
                 Above, the up is up (Z), radial is from source to receiver, and T is T=RxZ (RTZ is left-handed, or RZT right-handed)
         """
+        if True: # use fast radiation computation
+            loc_xyz, p_pol, P_amp= beachball3d.__fast_radiation(self.matENU, thetas, phis, wave_type='P', binarization=binarization)
+            loc_xyz, sv_pol, SV_amp= beachball3d.__fast_radiation(self.matENU, thetas, phis, wave_type='SV', binarization=binarization)
+            loc_xyz, sh_pol, SH_amp= beachball3d.__fast_radiation(self.matENU, thetas, phis, wave_type='SH', binarization=binarization)
+            return loc_xyz, p_pol, sv_pol, sh_pol, P_amp, SV_amp, SH_amp
         sin_phi, cos_phi     = np.sin(phis), np.cos(phis)
         sin_theta, cos_theta = np.sin(thetas), np.cos(thetas)
         ####################
@@ -1709,6 +1716,35 @@ class beachball3d:
             SV_amp = np.sign(SV_amp)
             SH_amp = np.sign(SH_amp)
         return loc_xyz, P_pol, SV_pol, SH_pol, P_amp, SV_amp, SH_amp
+    @staticmethod
+    def __fast_radiation(matENU, theta, phi, wave_type='P', binarization=False):
+        sin_phi, cos_phi     = np.sin(phi), np.cos(phi)
+        sin_theta, cos_theta = np.sin(theta), np.cos(theta)
+        P_pol      = np.zeros((theta.size, 3 ) )
+        P_pol[:,0] = sin_phi * cos_theta
+        P_pol[:,1] = sin_phi * sin_theta
+        P_pol[:,2] = cos_phi
+        if wave_type == 'P':
+            pol = P_pol
+        else:
+            pol = np.zeros((theta.size, 3 ) )
+            if wave_type == 'SV':
+                pol[:,0] = cos_phi * cos_theta
+                pol[:,1] = cos_phi * sin_theta
+                pol[:,2] = -sin_phi # Note, here SV_pol is always pointing downwards!
+            elif wave_type == 'SH':
+                pol[:,0] = sin_theta # Note, here SH_pol is always pointing Eastwards (or clockwise from top view)
+                pol[:,1] = -cos_theta
+                pol[:,2] = 0.0
+        ######
+        amp = np.zeros(theta.size)
+        for idx in range(theta.size):
+            amp[idx] = pol[idx] @ matENU @ P_pol[idx].T
+        if binarization:
+            amp = np.sign(amp)
+        return P_pol, pol, amp
+    def radiation_fast(self, theta, phi, wave_type='P', binarization=False): # return loc_xyz, pol, amp
+        return beachball3d.__fast_radiation(self.matENU, theta, phi, wave_type, binarization)
     def plot_3d_vcone(self, p, apex=(0,0,0), cones=[(2.8, 18, 'r', 0.3), (3.1, 18, 'b', 0.3)], 
                       culling=False, lighting=False):
         """
@@ -2288,6 +2324,22 @@ class beachball3d:
         return matuvw
     ##########################################################################################
     @staticmethod
+    def benchmark8(): # test radiation and radiation_fast
+        app = Scene3D()
+        bb = beachball3d(gcmt=(1,0.1,-1,0.2,0.3,0.1), normalize=True)
+        cmap = plt.get_cmap('RdBu_r', 11)
+        wave_type = 'S'
+        #
+        bb.use_fast = False
+        bb.plot3d(p=app.pv_plotter,  wave_type=wave_type,  center=(0,0,0), cmap=cmap)
+        bb.plot3d_pol(p=app.pv_plotter,  wave_type=wave_type,  center=(0,0,0), cmap=cmap)
+        #
+        bb.use_fast = True
+        bb.plot3d(p=app.pv_plotter,  wave_type=wave_type,  center=(2,0,0), cmap=cmap)
+        bb.plot3d_pol(p=app.pv_plotter,  wave_type=wave_type,  center=(2,0,0), cmap=cmap)
+        app.pv_plotter.show()
+        pass
+    @staticmethod
     def benchmark7(): # test the P, SV, SH, and S polarity (vectors) for a DC source
         app = Scene3D()
         cmap = plt.get_cmap('RdBu_r', 11)
@@ -2522,6 +2574,8 @@ class beachball3d:
 if __name__ == '__main__':
     #Scene3D.benchmark()
     #sys.exit(0)
+    beachball3d.benchmark8()
+    sys.exit(0)
     beachball3d.benchmark7()
     sys.exit(0)
     beachball3d.benchmark3()

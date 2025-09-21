@@ -20,6 +20,7 @@ from h5py import File as h5_File
 import matplotlib.pyplot as plt
 import sys, traceback, os, os.path
 import warnings
+from obspy.core.event import read_events
 
 from .geomath import haversine_rad, azimuth_rad, point_distance_to_great_circle_plane_rad, great_circle_plane_center_triple_rad
 from .utils import Logger, Timer, TimeSummary, mpi_makedirs
@@ -829,10 +830,9 @@ def rd_proc_correlogram(h5file, filter_band=(0.02, 0.06666), taper_sec=50, taper
         ######
         if norm:
             for xs in stack_mat:
-                for xs in stack_mat:
-                    v = xs.max()
-                    if v> 0.0:
-                        xs *= (1.0/v)
+                v = xs.max()
+                if v> 0.0:
+                    xs *= (1.0/v)
         ######
         return stack_mat, stack_count, stack_bin_centers, (cc_t1, cc_t2, delta)
     pass
@@ -1104,6 +1104,8 @@ class CS_InterRcv:
         # Optional: turn on intermediate output
         self.intermediate_out_h5fid = None
         if intermediate_outfnm_prefix is not None:
+            directory ='/'.join(intermediate_outfnm_prefix.split('/')[:-1])
+            mpi_makedirs(mpi_comm, directory)
             h5_ofnm = '%s%03d.h5' % (intermediate_outfnm_prefix, mpi_comm.Get_rank() )
             self.intermediate_out_h5fid = h5_File(h5_ofnm, 'w')
             log_print( 1, 'Turn on intermediate output.')
@@ -1612,8 +1614,8 @@ class CS_InterRcv:
 
 
 class SingleSrc(beachball3d):
-    def __init__(self, gcmt, evlo_rad, evla_rad, evdp_km, evnm, model='ak135'):
-        super().__init__(gcmt=gcmt, normalize=False)
+    def __init__(self, gcmt, evlo_rad, evla_rad, evdp_km, evnm, model='ak135', cutoff_amp_ratio=0.05):
+        super().__init__(gcmt=gcmt, normalize=True)
         self.evlo = evlo_rad
         self.evla = evla_rad
         self.evdp = evdp_km
@@ -1633,6 +1635,8 @@ class SingleSrc(beachball3d):
         model_tab = SingleSrc.__dict_mod1d[model]
         self.vp_at_evdp = np.interp(self.evdp, model_tab[0], model_tab[1])
         self.vs_at_evdp = np.interp(self.evdp, model_tab[0], model_tab[2])
+        ####
+        self.set_cutoff_amp(cutoff_amp_ratio)
     def set_cutoff_amp(self, cutoff_amp_ratio):
         self.cutoff_amp_ratio = cutoff_amp_ratio
         self.P_amp_cutoff  = cutoff_amp_ratio * self.P_amp_absmax
@@ -1646,52 +1650,58 @@ class SingleSrc(beachball3d):
             takeoff_angle_rad = np.arcsin( np.clip(slowness_km_s * self.vs_at_evdp, -1, 1) )
         phi = np.pi - takeoff_angle_rad
         return phi
-    def get_theta_phi_mesh_bblh_Circle(self, smax, ntheta=20, ns=5):        # get points for a circular area centered at (phi=180degree) on the lower half of beachball for P and S waves
+    def get_theta_phi_mesh_bblh_Circle(self, smax, wave_type='P', ntheta=20, ns=5): # get points for a circular area centered at (phi=180degree) on the lower half of beachball for P or S waves
         if smax <= 0.0:
             raise ValueError('smax must be >0.', smax)
         theta = np.linspace(0, 2*np.pi, ntheta, endpoint=False)
-        s = np.linspace(0, smax, ns)
-        p_phi = self.slowness2phi(s, wave_type='P')
-        s_phi = self.slowness2phi(s, wave_type='S')
-        pmesh_theta, pmesh_phi = np.meshgrid(theta, p_phi)
-        smesh_theta, smesh_phi = np.meshgrid(theta, s_phi)
-        return (pmesh_theta.ravel(), pmesh_phi.ravel()), (smesh_theta.ravel(), smesh_phi.ravel())
-    def get_theta_phi_mesh_bblh_Pie(self, azmin, azmax, smin, smax, naz=5, ns=5 ): # get points for a Pie-shape area on the lower half of beachball for P and S waves
+        s     = np.linspace(0, smax, ns)
+        phi   = self.slowness2phi(s, wave_type=wave_type)
+        mesh_theta, mesh_phi = np.meshgrid(theta, phi)
+        return mesh_theta.ravel(), mesh_phi.ravel()
+    def get_theta_phi_mesh_bblh_Pie(self, azmin, azmax, smin, smax, wave_type='P', naz=5, ns=5 ): # get points for a Pie-shape area on the lower half of beachball for P and S waves
         if not (0<smin<smax):
             raise ValueError('Must meet: 0<smin<smax.', (smin, smax))
         theta = 0.5*np.pi - np.linspace(azmin, azmax, naz)
         s     = np.linspace(smin, smax, ns)
-        p_phi = self.slowness2phi(s, wave_type='P')
-        s_phi = self.slowness2phi(s, wave_type='S')
-        pmesh_theta, pmesh_phi = np.meshgrid(theta, p_phi)
-        smesh_theta, smesh_phi = np.meshgrid(theta, s_phi)
-        return (pmesh_theta.ravel(), pmesh_phi.ravel()), (smesh_theta.ravel(), smesh_phi.ravel())
-    def get_amp_PSVSH(self, theta, phi, binary=True, fignm=None):      # get -1, 0 or 1 in an area defined by many points on beachball surface.
-        _, _, _, _, P_amp, SV_amp, SH_amp = self.radiation(theta, phi)
-        #
-        cP, cSV, cSH = self.P_amp_cutoff, self.SV_amp_cutoff, self.SH_amp_cutoff
-        P_amp  = int(np.all(P_amp  > cP)) - int(np.all(P_amp  < -cP))
-        SV_amp = int(np.all(SV_amp > cSV)) - int(np.all(SV_amp < -cSV))
-        SH_amp = int(np.all(SH_amp > cSH)) - int(np.all(SH_amp < -cSH))
+        phi   = self.slowness2phi(s, wave_type=wave_type)
+        mesh_theta, mesh_phi = np.meshgrid(theta, phi)
+        return mesh_theta.ravel(), mesh_phi.ravel()
+    def get_sign(self, theta, phi, wave_type='P', binary=True):      # get -1, 0 or 1 in an area defined by many points on beachball surface.
+        _, _, amp = self.radiation_fast(theta, phi, wave_type=wave_type, binarization=binary)
+        c = self.P_amp_cutoff
+        if wave_type=='SV':
+            c = self.SV_amp_cutoff
+        elif wave_type=='SH':
+            c = self.SH_amp_cutoff
+        sign = int(np.all(amp  > c)) - int(np.all(amp  < -c) )
         if not binary:
-            P_amp  = P_amp  * np.max(np.abs(P_amp)) # should I use mean here?
-            SV_amp = SV_amp * np.max(np.abs(SV_amp))
-            SH_amp = SH_amp * np.max(np.abs(SH_amp))
-        self.plot_PSVSH2d(theta, phi, theta, phi, P_amp, SV_amp, SH_amp, fignm=fignm)
-        return P_amp, SV_amp, SH_amp
-    def get_amp_PSVSH_Circle(self, smax, ntheta=20, ns=5, binary=True, fignm=None):
-        (theta_p, phi_p), (theta_s, phi_s) = self.get_theta_phi_mesh_bblh_Circle(smax, ntheta=ntheta, ns=ns)
-        P_amp, junk, junk    = self.get_amp_PSVSH(theta_p, phi_p, binary=binary, fignm=None)
-        junk, SV_amp, SH_amp = self.get_amp_PSVSH(theta_s, phi_s, binary=binary, fignm=None)
-        self.plot_PSVSH2d(theta_p, phi_p, theta_s, phi_s, P_amp, SV_amp, SH_amp, fignm=fignm)
-        return P_amp, SV_amp, SH_amp
-    def get_amp_PSVSH_Pie(self, azmin, azmax, smin, smax, naz=5, ns=5, binary=True, fignm=None):
-        (theta_p, phi_p), (theta_s, phi_s) = self.get_theta_phi_mesh_bblh_Pie(azmin, azmax, smin, smax, naz=naz, ns=ns)
-        P_amp, junk, junk    = self.get_amp_PSVSH(theta_p, phi_p, binary=binary, fignm=None)
-        junk, SV_amp, SH_amp = self.get_amp_PSVSH(theta_s, phi_s, binary=binary, fignm=None)
-        self.plot_PSVSH2d(theta_p, phi_p, theta_s, phi_s, P_amp, SV_amp, SH_amp, fignm=fignm)
-        return P_amp, SV_amp, SH_amp
-    def plot_PSVSH2d(self, theta_p, phi_p, theta_s, phi_s, P_amp, SV_amp, SH_amp, fignm=None):
+            sign = sign * np.max(np.abs(amp)) # should I use mean here?
+        return sign
+    def get_sign_Circle(self, smax, wave_type='P', ntheta=20, ns=5, binary=True, fignm=None):
+        theta, phi = self.get_theta_phi_mesh_bblh_Circle(smax, wave_type=wave_type, ntheta=ntheta, ns=ns)
+        amp        = self.get_sign(theta, phi, wave_type=wave_type, binary=binary)
+        ###
+        if fignm is not None:
+            tp, pp = self.get_theta_phi_mesh_bblh_Circle(smax, wave_type='P', ntheta=ntheta, ns=ns)
+            ap     = self.get_sign(theta, phi, wave_type='P', binary=binary)
+            ts, ps = self.get_theta_phi_mesh_bblh_Circle(smax, wave_type='S', ntheta=ntheta, ns=ns)
+            asv    = self.get_sign(theta, phi, wave_type='SV', binary=binary)
+            ash    = self.get_sign(theta, phi, wave_type='SH', binary=binary)
+            self.plot_PSVSH2d(tp, pp, ts, ps, ap, asv, ash, wave_type, fignm=fignm)
+        return amp
+    def get_sign_Pie(self, azmin, azmax, smin, smax, wave_type='P', naz=5, ns=5, binary=True, fignm=None):
+        theta, phi = self.get_theta_phi_mesh_bblh_Pie(azmin, azmax, smin, smax, wave_type=wave_type, naz=naz, ns=ns)
+        amp        = self.get_sign(theta, phi, wave_type=wave_type, binary=binary)
+        ###
+        if fignm is not None:
+            tp, pp = self.get_theta_phi_mesh_bblh_Pie(azmin, azmax, smin, smax, wave_type='P', naz=naz, ns=ns)
+            ap     = self.get_sign(theta, phi, wave_type='P', binary=binary)
+            ts, ps = self.get_theta_phi_mesh_bblh_Pie(azmin, azmax, smin, smax, wave_type='S', naz=naz, ns=ns)
+            asv    = self.get_sign(theta, phi, wave_type='SV', binary=binary)
+            ash    = self.get_sign(theta, phi, wave_type='SH', binary=binary)
+            self.plot_PSVSH2d(tp, pp, ts, ps, ap, asv, ash, wave_type, fignm=fignm)
+        return amp
+    def plot_PSVSH2d(self, theta_p, phi_p, theta_s, phi_s, P_amp, SV_amp, SH_amp, wave_type, fignm=None):
         if fignm is not None:
             fig = plt.figure(figsize=(12, 4))
             gs = fig.add_gridspec(2, 3, height_ratios=(10, 1) )
@@ -1705,24 +1715,30 @@ class SingleSrc(beachball3d):
             self.plot2d(ax1, wave_type='P',  radius=1, cmap=cmap, cax=cax1)
             self.plot2d(ax2, wave_type='SV', radius=1, cmap=cmap, cax=cax2)
             self.plot2d(ax3, wave_type='SH', radius=1, cmap=cmap, cax=cax3)
-            ax1.set_title('P %s' % P_amp)
-            ax2.set_title('SV %s' % SV_amp)
-            ax3.set_title('SH %s' % SH_amp)
+            title1 = 'P %s' % P_amp
+            title2 = 'SV %s' % SV_amp
+            title3 = 'SH %s' % SH_amp
+            if wave_type=='P':
+                title1 = '%s (this)' % title1
+            elif wave_type=='SV':
+                title2 = '%s (this)' % title2
+            elif wave_type=='SH':
+                title3 = '%s (this)' % title3
+            ax1.set_title(title1)
+            ax2.set_title(title2)
+            ax3.set_title(title3)
             for ax in (ax1, ):
                 ax.plot(theta_p, np.sqrt(2)*np.sin((np.pi-phi_p)*0.5), linestyle='', marker='.', color='c')
             for ax in (ax2, ax3 ):
                 ax.plot(theta_s, np.sqrt(2)*np.sin((np.pi-phi_s)*0.5), linestyle='', marker='.', color='c')
             plt.savefig(fignm, bbox_inches='tight', pad_inches = 0.05, transparent=True, dpi=200)
             plt.close(fig)
-    #####
-    #def is_thrust(self, max_slowness_s_km=0.05, cutoff_amp_ratio=0.05, fignm=None):
-    #    (theta_p, phi_p), junk = self.get_theta_phi_mesh_bblh_Circle(max_slowness_s_km=max_slowness_s_km, grd_ns=5, grd_naz=20)
-    #    P_sign, junk, junk     = self.get_amp_PSVSH(theta_p, phi_p, cutoff_amp_ratio, binary=True, fignm=fignm)
-    #    return P_sign==1
-    #def is_normal(self, max_slowness_s_km=0.05, cutoff_amp_ratio=0.05, fignm=None):
-    #    (theta_p, phi_p), junk = self.get_theta_phi_mesh_bblh_Circle(max_slowness_s_km=max_slowness_s_km, grd_ns=5, grd_naz=20)
-    #    sign_P, junk, junk     = self.get_amp_PSVSH(theta_p, phi_p, cutoff_amp_ratio, binary=True, fignm=fignm)
-    #    return sign_P==-1
+    def is_thrust(self, smax=0.045, ntheta=20, ns=5, fignm=None): # return 1 or 0
+        return self.get_sign_Circle(smax, wave_type='P', ntheta=ntheta, ns=ns, binary=True, fignm=fignm) == 1
+    def is_normal(self, smax=0.045, ntheta=20, ns=5, fignm=None): # return -1 or 0
+        return (self.get_sign_Circle(smax, wave_type='P', ntheta=ntheta, ns=ns, binary=True, fignm=fignm) == -1) * -1
+    def is_thrust_normal(self, smax=0.045, ntheta=20, ns=5, fignm=None): # return 1, -1 or 0
+        return self.get_sign_Circle(smax, wave_type='P', ntheta=ntheta, ns=ns, binary=True, fignm=fignm)
     ###################################################################################################################################################
     __dict_mod1d = {'prem': np.array([  [0.000, 3.000, 15.000, 15.000, 24.400, 24.400, 71.000, 80.000, 80.000, 171.000, 220.000, 220.000, 271.000, 371.000, 400.000, 400.000, 471.000, 571.000, 600.000, 600.000, 670.000, 670.000, 771.000,],
                                         [5.800, 5.800, 5.800, 6.800, 6.800, 8.110, 8.080, 8.080, 8.080, 8.020, 7.990, 8.560, 8.660, 8.850, 8.910, 9.130, 9.500, 10.010, 10.160, 10.160, 10.270, 10.750, 11.070,],
@@ -1731,57 +1747,60 @@ class SingleSrc(beachball3d):
                                         [5.800, 5.800, 5.800, 6.800, 6.800, 8.036, 8.038, 8.040, 8.045, 8.050, 8.050, 8.175, 8.301, 8.301, 8.482, 8.665, 8.848, 9.030, 9.360, 9.528, 9.696, 9.864, 10.032, 10.200, 10.791, 10.922, 11.055, 11.135, 11.223, 11.307, 11.390,],
                                         [3.200, 3.200, 3.200, 3.900, 3.900, 4.484, 4.486, 4.480, 4.490, 4.500, 4.500, 4.509, 4.518, 4.518, 4.609, 4.696, 4.783, 4.870, 5.081, 5.186, 5.292, 5.399, 5.505, 5.610, 5.961, 6.090, 6.210, 6.242, 6.280, 6.316, 6.352,]])
                     }
-class ManySrcs(list):
-    def __init__(self, gcmt=None, evlo_rad=None, evla_rad=None, evdp_km=None, evnm=None, model='ak135', lst_of_ssrc=None):
-        """
-        There are two ways to initialize this class:
-        1. Provide a list of SingleSrc objects via `lst_of_ssrc`.
-        2. Provide the parameters to create SingleSrc objects via `gcmt`, `evlo_rad`, `evla_rad`, `evdp_km`, `evnm`, and a single string `model`.
-        """
-        if lst_of_ssrc is None:
-            lst_of_ssrc = [ SingleSrc(gcmt[i], evlo_rad[i], evla_rad[i], evdp_km[i], evnm[i], model=model) for i in range(len(evnm)) ]
-        super().__init__(lst_of_ssrc)
+class ManySrcs(dict):
+    def __init__(self, evnm=None, gcmt=None, evlo_rad=None, evla_rad=None, evdp_km=None, model='ak135', cutoff_amp_ratio=0.05, 
+                 catalog_xml_fnm=None, max_nsrc=-1):
+        if catalog_xml_fnm is not None:
+            cat = read_events(catalog_xml_fnm)
+            evnm, gcmt, evlo_rad, evla_rad, evdp_km = list(), list(), list(), list(), list()
+            for ev in cat:
+                try:
+                    origin = ev.preferred_origin() or ev.origins[0]
+                    lo = np.deg2rad(origin.longitude)
+                    la = np.deg2rad(origin.latitude)
+                    dp = origin.depth / 1000.0
+                    nm = str(origin.time)
+                    #
+                    fm = ev.preferred_focal_mechanism() or ev.focal_mechanisms[0]
+                    mt = fm.moment_tensor.tensor
+                    cmt = np.array( (mt.m_rr, mt.m_tt, mt.m_pp, mt.m_rt, mt.m_rp, mt.m_tp), dtype=np.float64 )
+                    #
+                    evnm.append(nm)
+                    gcmt.append(cmt)
+                    evlo_rad.append(lo)
+                    evla_rad.append(la)
+                    evdp_km.append(dp)
+                except Exception as err:
+                    pass
+        ########
+        evnm = evnm[:max_nsrc]
+        for nm, cmt, lo, la, dp in zip(evnm, gcmt, evlo_rad, evla_rad, evdp_km):
+            if nm in self:
+                raise ValueError('Err: source existed!', nm)
+            self[nm] = SingleSrc(cmt, lo, la, dp, nm, model=model)
+        ########
+        self['zero'] = SingleSrc((0., 0., 0., 0., 0., 0.), 0., 0., 10., 'zero', model=model)
+        ########
+        self.set_cutoff_amp(cutoff_amp_ratio)
     def set_cutoff_amp(self, cutoff_amp_ratio):
-        for it in self:
+        for it in self.values():
             it.set_cutoff_amp(cutoff_amp_ratio)
-    def get_amps_PSVSH_Circle(self, smax_s_km, ntheta=20, ns=5, binary=True, fignm_prefix=None):
+    def set_sign_thrust_normal(self, smax_s_km=0.045, ntheta=20, ns=5, fignm_prefix=None):#
         if fignm_prefix is not None:
             wd = '/'.join(fignm_prefix.split('/')[:-1])
             mpi_makedirs(None, wd)
-        P_amps  = np.zeros(len(self), dtype=np.int8 if binary else np.float32)
-        SV_amps = np.zeros(len(self), dtype=np.int8 if binary else np.float32)
-        SH_amps = np.zeros(len(self), dtype=np.int8 if binary else np.float32)
-        for isrc, it_src in enumerate(self):
+        for it in self.values():
             fignm = None
             if fignm_prefix is not None:
-                fignm = '%s_%06d_%s.png' % (fignm_prefix, isrc, it_src.evnm)
-            P_amps[isrc], SV_amps[isrc], SH_amps[isrc] = it_src.get_amp_PSVSH_Circle(smax_s_km, ntheta=ntheta, ns=ns, binary=binary, fignm=fignm)
-        return P_amps, SV_amps, SH_amps
-    def get_amps_PSVSH_Pie(self, stlo_rad, stla_rad, az_err_rad, smin_s_km, smax_s_km, naz=5, ns=5, binary=True, fignm_prefix=None):
-        """
-        stlo_rad, stla_rad: longitude and latitude of the station(s). Could be a single station, or
-                            an array with the same length as the number of sources.
-        """
-        if fignm_prefix is not None:
-            wd = '/'.join(fignm_prefix.split('/')[:-1])
-            mpi_makedirs(None, wd)
-        P_amps  = np.zeros(len(self), dtype=np.int8 if binary else np.float32)
-        SV_amps = np.zeros(len(self), dtype=np.int8 if binary else np.float32)
-        SH_amps = np.zeros(len(self), dtype=np.int8 if binary else np.float32)
-        evlos = np.array( [it.evlo for it in self] )
-        evlas = np.array( [it.evla for it in self] )
-        az    = azimuth_rad(evlos, evlas, stlo_rad, stla_rad)
-        azmin = az - az_err_rad
-        azmax = az + az_err_rad
-        for isrc, it_src in enumerate(self):
-            fignm = None
-            if fignm_prefix is not None:
-                fignm = '%s_%06d_%s.png' % (fignm_prefix, isrc, it_src.evnm)
-            P_amps[isrc], SV_amps[isrc], SH_amps[isrc] = it_src.get_amp_PSVSH_Pie(azmin[isrc], azmax[isrc], smin_s_km, smax_s_km, naz=naz, ns=ns, binary=binary, fignm=fignm)
-        return P_amps, SV_amps, SH_amps
+                fignm = '%s%s.png' % (fignm_prefix, it.evnm)
+            it.sign_thrust_normal = it.is_thrust_normal(smax_s_km, ntheta=ntheta, ns=ns, fignm=fignm) # return 1, -1 or 0
     ####
-    def get_cc_mat1(self, method='thrust', smax_s_km=0.045, ntheta=20, ns=5, fignm_prefix=None): # 'thrust', 'normal', 'thrust_normal', or 'other'
-        P_amps, SV_amps, SH_amps = self.get_amps_PSVSH_Circle(smax_s_km, ntheta=ntheta, ns=ns, binary=True, fignm_prefix=fignm_prefix)
+    def cc_wmat_glob(self, evnms, method='thrust'): # 'thrust', 'normal', 'thrust_normal', 'thrust_normal2', or 'other'
+        """
+        Call self.set_sign_thrust_normal(...) before calling this method.
+        """
+        srcs   = [self.get(it, self['zero']) for it in evnms]
+        P_amps = np.array( [it.sign_thrust_normal for it in srcs] )
         if method == 'thrust':
             signs = np.where(P_amps>0, P_amps, 0)
         elif method == 'normal':
@@ -1795,24 +1814,70 @@ class ManySrcs(list):
         else:
             raise ValueError('method must be "thrust", "normal", "thrust_normal", "thrust_normal2", or "other".', method)
         #####
-        nsrc  = len(self)
+        nsrc  = len(srcs)
         mat = np.ones( (nsrc, nsrc), dtype=np.int8)
         for i1, s1 in enumerate(signs):
             for i2, s2 in enumerate(signs):
                 mat[i1, i2] = s1 * s2
         return mat
-    def get_cc_mat2(self, stlo_rad, stla_rad, az_err_rad=10./180.*np.pi, smin_s_km=0.0045, smax_s_km=0.045, naz=5, ns=5, binary=True, fignm_prefix=None, wave1='P', wave2='P'):
-        P_amps, SV_amps, SH_amps = self.get_amps_PSVSH_Pie(stlo_rad, stla_rad, az_err_rad, smin_s_km, smax_s_km, naz=naz, ns=ns, binary=binary, fignm_prefix=fignm_prefix)
-        dict_amps = {'P': P_amps, 'SV': SV_amps, 'SH': SH_amps}
-        amp1 = dict_amps[wave1]
-        amp2 = dict_amps[wave2]
-        #####
-        nsrc  = len(self)
-        mat = np.ones( (nsrc, nsrc), dtype=np.int8 if binary else np.float32)
+    def cc_wmat_wise(self, evnms, stlo_rad, stla_rad, az_err_rad=10./180.*np.pi, smin_s_km=0.0045, smax_s_km=0.045, naz=5, ns=5, binary=True, fignm_prefix=None, wave1='P', wave2='P'):
+        """
+        stlo_rad, stla_rad: longitude and latitude of the station(s). Could be a single station, or
+                            an array with the same length as the number of sources.
+        """
+        srcs   = [self.get(it, self['zero']) for it in evnms]
+        evlos = np.array( [it.evlo for it in srcs] )
+        evlas = np.array( [it.evla for it in srcs] )
+        az    = azimuth_rad(evlos, evlas, stlo_rad, stla_rad)
+        print(stlo_rad, stla_rad)
+        print(np.rad2deg(evlos))
+        print(np.rad2deg(evlas))
+        print(np.rad2deg(az))
+        azmin = az - az_err_rad
+        azmax = az + az_err_rad
+        amp1  = np.zeros(len(srcs), dtype=np.int8 if binary else np.float32)
+        amp2  = np.zeros(len(srcs), dtype=np.int8 if binary else np.float32)
+        for isrc, it_src in enumerate(srcs):
+            fignm = None
+            if fignm_prefix is not None:
+                fignm = '%s_%06d_%s.png' % (fignm_prefix, isrc, it_src.evnm)
+            amp1[isrc] = it_src.get_sign_Pie(azmin[isrc], azmax[isrc], smin_s_km, smax_s_km, wave_type=wave1, naz=naz, ns=ns, binary=binary, fignm=fignm)
+            amp2[isrc] = it_src.get_sign_Pie(azmin[isrc], azmax[isrc], smin_s_km, smax_s_km, wave_type=wave2, naz=naz, ns=ns, binary=binary, fignm=None)
+        ######
+        nsrc  = len(srcs)
+        mat   = np.ones( (nsrc, nsrc), dtype=np.int8 if binary else np.float32)
         for i1, s1 in enumerate(amp1):
             for i2, s2 in enumerate(amp2):
                 mat[i1, i2] = s1 * s2
+        ######
+        if not binary:
+            vmax = max(-mat.min(), mat.max())
+            if vmax > 0:
+                mat *= (1.0/vmax)
         return mat
+    ###################################################################################################################################################
+    @staticmethod
+    def benchmark2():
+        app = ManySrcs(catalog_xml_fnm='test_s2s/M6.5+_1960-2024.xml', max_nsrc=5)
+        app.set_cutoff_amp(0.05)
+        app.set_sign_thrust_normal(smax_s_km=0.045, fignm_prefix='tmp2/binary_')
+        evnm = sorted([it.evnm for it in app.values()] )[:3]
+        ####
+        mat1 = app.cc_wmat_glob(evnm, method='thrust')
+        mat2 = app.cc_wmat_glob(evnm, method='normal')
+        mat3 = app.cc_wmat_glob(evnm, method='thrust_normal')
+        mat3b= app.cc_wmat_glob(evnm, method='thrust_normal2')
+        mat4 = app.cc_wmat_glob(evnm, method='other')
+        ####
+        stlo, stla = 0.0, 0.0
+        ####
+        mat5 = app.cc_wmat_wise(evnm, stlo, stla, az_err_rad=10./180.*np.pi, smin_s_km=0.0045, smax_s_km=0.045, naz=5, ns=5, binary=True,
+                               fignm_prefix='tmp2/PP', wave1='P',  wave2='P' )
+        mat6 = app.cc_wmat_wise(evnm, stlo, stla, az_err_rad=10./180.*np.pi, smin_s_km=0.0045, smax_s_km=0.045, naz=5, ns=5, binary=False,
+                               fignm_prefix='tmp2/fPP', wave1='P', wave2='P' )
+        ####
+        for it in (mat1, mat2, mat3, mat3b, mat4, mat5, mat6):
+            print(it)
     @staticmethod
     def benchmark():
         evnm = 'ev1', 'ev2', 'ev3'
@@ -1820,20 +1885,23 @@ class ManySrcs(list):
         evla_rad = np.deg2rad( (0, 0,  0) )
         evdp_km = (30, 30, 30)
         gcmt = [(1,0,-1,0,0,0), (-1,0,1,0,0,0), (0,0,0,0,2,0) ]
-        app = ManySrcs(gcmt=gcmt, evlo_rad=evlo_rad, evla_rad=evla_rad, evdp_km=evdp_km, evnm=evnm)
+        app = ManySrcs(evnm=evnm, gcmt=gcmt, evlo_rad=evlo_rad, evla_rad=evla_rad, evdp_km=evdp_km)
         app.set_cutoff_amp(0.05)
+        app.set_sign_thrust_normal(smax_s_km=0.045, fignm_prefix='tmp/binary_')
         ####
-        mat1 = app.get_cc_mat1(method='thrust',        smax_s_km=0.045, ntheta=20, ns=5, fignm_prefix='tmp/1thrust')
-        mat2 = app.get_cc_mat1(method='normal',        smax_s_km=0.045, ntheta=20, ns=5, fignm_prefix='tmp/2normal')
-        mat3 = app.get_cc_mat1(method='thrust_normal', smax_s_km=0.045, ntheta=20, ns=5, fignm_prefix='tmp/3thrust_normal')
-        mat3b= app.get_cc_mat1(method='thrust_normal2',smax_s_km=0.045, ntheta=20, ns=5, fignm_prefix='tmp/3thrust_normal2')
-        mat4 = app.get_cc_mat1(method='other',         smax_s_km=0.045, ntheta=20, ns=5, fignm_prefix='tmp/4other')
+        mat1 = app.cc_wmat_glob(evnm, method='thrust')
+        mat2 = app.cc_wmat_glob(evnm, method='normal')
+        mat3 = app.cc_wmat_glob(evnm, method='thrust_normal')
+        mat3b= app.cc_wmat_glob(evnm, method='thrust_normal2')
+        mat4 = app.cc_wmat_glob(evnm, method='other')
         ####
         stlo, stla = 50/180*np.pi, 0
-        mat5 = app.get_cc_mat2(stlo, stla, az_err_rad=10./180.*np.pi, smin_s_km=0.0045, smax_s_km=0.045, naz=5, ns=5, binary=True,
-                               fignm_prefix='tmp/5PP', wave1='P',  wave2='P' )
+        mat5 = app.cc_wmat_wise(evnm, stlo, stla, az_err_rad=10./180.*np.pi, smin_s_km=0.0045, smax_s_km=0.045, naz=5, ns=5, binary=True,
+                               fignm_prefix='tmp/PP', wave1='P',  wave2='P' )
+        mat6 = app.cc_wmat_wise(evnm, stlo, stla, az_err_rad=10./180.*np.pi, smin_s_km=0.0045, smax_s_km=0.045, naz=5, ns=5, binary=False,
+                               fignm_prefix=None, wave1='P',  wave2='P' )
         ####
-        for it in (mat1, mat2, mat3, mat3b, mat4, mat5):
+        for it in (mat1, mat2, mat3, mat3b, mat4, mat5, mat6):
             print(it)
 
 class CS_InterSrc(CS_InterRcv):
@@ -1843,32 +1911,77 @@ class CS_InterSrc(CS_InterRcv):
         """
         self.inter_src = True
         super().__init__(ch_pair_type, delta, nt, **kwargs)
-    def set_src(self, gcmt, evlo_rad, evla_rad, evdp_km, evnm, cutoff_amp_ratio=0.05, model='ak135'):
-        self.lst_src = ManySrcs(gcmt, evlo_rad, evla_rad, evdp_km, evnm, model=model)
-        self.lst_src.set_cutoff_amp(cutoff_amp_ratio)
-        self.dict_src = {it.evnm: it for it in self.lst_src}
-    def get_weight_mat1(self, evnms, method='thrust_normal', smax_s_km=0.045, ntheta=20, ns=5, fignm_prefix=None):
+    def set_src(self, evnm, gcmt, evlo_rad, evla_rad, evdp_km, model='ak135', cutoff_amp_ratio=0.05):
+        log_print = self.logger
+        log_print(-1, 'Set source mechanism and metadata' )
+        ####
+        self.srcs = ManySrcs(evnm, gcmt, evlo_rad, evla_rad, evdp_km, model=model, cutoff_amp_ratio=cutoff_amp_ratio)
+        ####
+        log_print( 1, 'nsrc:', len(self.srcs)-1, flush=True ) # this is one additional zero gcmt source
+    def set_src2(self, catalog_xml_fnm, model='ak135', cutoff_amp_ratio=0.05, max_nsrc=-1):
+        log_print = self.logger
+        log_print(-1, 'Set source mechanism and metadata with XML' )
+        ####
+        self.srcs = ManySrcs(catalog_xml_fnm=catalog_xml_fnm, max_nsrc=max_nsrc,
+                             model=model, cutoff_amp_ratio=cutoff_amp_ratio)
+        ####
+        log_print( 1, 'nsrc:', len(self.srcs)-1, flush=True ) # this is one additional zero gcmt source
+    def cc_wmat_glob(self, evnms, method='thrust_normal', smax_s_km=0.045, ntheta=20, ns=5, fignm_prefix=None):
         """
         method: 'thrust', 'normal', 'thrust_normal', 'thrust_normal2', or 'other'
         """
-        srcs = ManySrcs(lst_of_ssrc=[self.dict_src[evnm] for evnm in evnms] )
-        wmatNN = srcs.get_cc_mat1(method=method, smax_s_km=smax_s_km, ntheta=ntheta, ns=ns, fignm_prefix=fignm_prefix)
-        #vmax = max(-np.min(wmatNN), np.max(wmatNN) ) ## wamtNN is  already  many of -1, 0, or 1
-        #wmatNN *= (1/vmax)
-        return wmatNN
-    def get_weight_mat2(self, evnms, single_stlo_rad, single_stla_rad, az_err_rad=10./180.*np.pi, smin_s_km=0.0045, smax_s_km=0.045, naz=5, ns=5, binary=True, fignm_prefix=None, wave1='P', wave2='P'):
-        srcs = ManySrcs(lst_of_ssrc=[self.dict_src[evnm] for evnm in evnms] )
-        wmatNN = srcs.get_cc_mat2(single_stlo_rad, single_stla_rad, az_err_rad=az_err_rad, smin_s_km=smin_s_km, smax_s_km=smax_s_km,
-                                  naz=naz, ns=ns, binary=binary,fignm_prefix=fignm_prefix, wave1=wave1, wave2=wave2)
-        if not binary:
-            vmax = max(-np.min(wmatNN), np.max(wmatNN) )
-            wmatNN *= (1/vmax)
-        return wmatNN
-
-
+        self.srcs.set_sign_thrust_normal(smax_s_km=smax_s_km, ntheta=ntheta, ns=ns, fignm_prefix=fignm_prefix)
+        wmat_nn = self.srcs.cc_wmat_glob(evnms, method=method)
+        return wmat_nn
+    def cc_wmat_wise(self, evnms, single_stlo_rad, single_stla_rad, az_err_rad=10./180.*np.pi, smin_s_km=0.0045, smax_s_km=0.045, naz=5, ns=5, binary=True, fignm_prefix=None, wave1='P', wave2='P'):
+        wmat_nn = self.srcs.cc_wmat_wise(evnms, stlo_rad=single_stlo_rad, stla_rad=single_stla_rad, az_err_rad=az_err_rad,
+                                        smin_s_km=smin_s_km, smax_s_km=smax_s_km, naz=naz, ns=ns,
+                                        binary=binary, fignm_prefix=fignm_prefix, wave1=wave1, wave2=wave2)
+        return wmat_nn
 if __name__ == "__main__":
     if True:
-        ManySrcs.benchmark()
+        mpi_comm = MPI.COMM_WORLD.Dup()
+        mpi_rank = mpi_comm.Get_rank()
+        mpi_ncpu = mpi_comm.Get_size()
+        cc_pair = (CS_InterRcv.Z,   CS_InterRcv.Z)
+        delta = 1.0
+        cut_time_range = (10800, 32400)
+        ####
+        dist_range, dist_step = (0, 180), 1.0
+        ####
+        wtlen, wt_f1, wt_f2 =128.0, 0.02, 0.066666
+        wflen=0.02
+        whiten_taper_halfsize=50
+        ####
+        daz_range=(-0.1, 20.1)
+        gcd_range=(-0.1, 20.1)
+        ####
+        speedup_critical_frequency_band = (0.01, 0.1)
+        fold = True
+        cut  = (0, 4000)
+        ####
+        wd = 'test_s2s/tmp/'
+        log_dir   = '%s/log' % (wd)
+        logger    = Logger(log_dir=log_dir, mpi_comm=mpi_comm, rank_only='0,1')
+        ####
+        app = CS_InterSrc(  cc_pair,
+                            delta=delta, nt=0, cut_time_range=cut_time_range,
+                            dist_range=dist_range, dist_step=dist_step,
+                            wtlen=wtlen, wt_f1=wt_f1, wt_f2=wt_f2, wflen=wflen, whiten_taper_halfsize=whiten_taper_halfsize,
+                            daz_range=daz_range, gcd_range=gcd_range,
+                            speedup_critical_frequency_band=speedup_critical_frequency_band, speedup_critical_level=0.01,
+                            intermediate_outfnm_prefix=None,
+                            log_print=logger, mpi_comm = mpi_comm)
+        with Timer(tag='set_src_from_xml'):
+            app.set_src2('test_s2s/M6.5+_1960-2024.xml', model='ak135', cutoff_amp_ratio=0.05, max_nsrc=50)
+        ####
+        evnms = [it.evnm for it in app.srcs.values()]
+        evnms = sorted(evnms)[:50]
+        print(evnms)
+        wmat = app.cc_wmat_glob(evnms, method='thrust_normal', fignm_prefix='tmp3/tn_')
+        print(wmat)
+    if False:
+        ManySrcs.benchmark2()
     if False:
         bins = StackBins(0, 10, 1)
         print(bins.centers)

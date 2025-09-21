@@ -505,11 +505,11 @@ def mpi_makedirs(mpi_comm, wd):
     if mpi_comm != None:
         mpi_comm.Barrier()
         if mpi_comm.Get_rank() == 0:
-            if not os.path.exists(wd):
+            if wd and (not os.path.exists(wd)):
                 os.makedirs(wd)
         mpi_comm.Barrier()
     else:
-        if not os.path.exists(wd):
+        if wd and (not os.path.exists(wd)):
             os.makedirs(wd)
 def get_folder(filename, makedir=True, mpi_comm=None):
     """
