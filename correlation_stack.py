@@ -1807,6 +1807,9 @@ class ManySrcs(dict):
         """
         Call self.set_sign_thrust_normal(...) before calling this method.
         """
+        if (method is None) or (method == 'None'):
+            return None
+        ##########
         srcs   = [self.get(it, self['zero']) for it in evnms]
         P_amps = np.array( [it.sign_thrust_normal for it in srcs] )
         if method == 'thrust':
@@ -1819,8 +1822,6 @@ class ManySrcs(dict):
             signs = np.where(P_amps==0, 0, 1) # treat thrust and normal as the same!
         elif method == 'other':
             signs = np.where(P_amps==0, 1, 0) # other
-        elif (method is None) or (method == 'None'):
-            return None
         else:
             raise ValueError('method must be "thrust", "normal", "thrust_normal", "thrust_normal2", or "other".', method)
         #####
@@ -1937,13 +1938,17 @@ class CS_InterSrc(CS_InterRcv):
         log_print( 1, 'nsrc:', len(self.srcs)-1, flush=True ) # this is one additional zero gcmt source
     def cc_wmat_glob(self, evnms, method='thrust_normal', smax_s_km=0.045, ntheta=20, ns=5, fignm_prefix=None):
         """
-        method: 'thrust', 'normal', 'thrust_normal', 'thrust_normal2', or 'other'
+        method: 'thrust', 'normal', 'thrust_normal', 'thrust_normal2', or 'other', or None
         """
         log_print = self.logger
         log_print(-1, 'Set glob s2s correlation weight mat')
         log_print( 1, 'method:', method)
         log_print( 1, 'smax_s_km:', smax_s_km)
         log_print( 1, 'fignm_prefix:', fignm_prefix)
+        ####
+        if (method is None) or (method == 'None'):
+            log_print( 1, 'wmat_nn:', None, 'all ones', flush=True)
+            return None
         ####
         if not hasattr(self, 'param_set_sign_thrust_normal'):
             self.srcs.set_sign_thrust_normal(smax_s_km=smax_s_km, ntheta=ntheta, ns=ns, fignm_prefix=fignm_prefix)
