@@ -1930,7 +1930,12 @@ class CS_InterSrc(CS_InterRcv):
         """
         method: 'thrust', 'normal', 'thrust_normal', 'thrust_normal2', or 'other'
         """
-        self.srcs.set_sign_thrust_normal(smax_s_km=smax_s_km, ntheta=ntheta, ns=ns, fignm_prefix=fignm_prefix)
+        if not hasattr(self, 'param_set_sign_thrust_normal'):
+            self.srcs.set_sign_thrust_normal(smax_s_km=smax_s_km, ntheta=ntheta, ns=ns, fignm_prefix=fignm_prefix)
+            self.param_set_sign_thrust_normal = smax_s_km
+        elif np.abs(self.param_set_sign_thrust_normal - smax_s_km) > 1e-6:
+            self.srcs.set_sign_thrust_normal(smax_s_km=smax_s_km, ntheta=ntheta, ns=ns, fignm_prefix=fignm_prefix)
+            self.param_set_sign_thrust_normal = smax_s_km
         wmat_nn = self.srcs.cc_wmat_glob(evnms, method=method)
         return wmat_nn
     def cc_wmat_wise(self, evnms, single_stlo_rad, single_stla_rad, az_err_rad=10./180.*np.pi, smin_s_km=0.0045, smax_s_km=0.045, naz=5, ns=5, binary=True, fignm_prefix=None, wave1='P', wave2='P'):
