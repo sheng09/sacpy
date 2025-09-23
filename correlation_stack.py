@@ -20,6 +20,7 @@ from h5py import File as h5_File
 import matplotlib.pyplot as plt
 import sys, traceback, os, os.path
 import warnings
+import pickle
 from obspy.core.event import read_events
 
 from .geomath import haversine_rad, azimuth_rad, point_distance_to_great_circle_plane_rad, great_circle_plane_center_triple_rad
@@ -449,6 +450,23 @@ def gcd_selection(n, lo_rad, la_rad, ptlo_rad, ptla_rad, gcd_range_rad, gcd_sele
     np.fill_diagonal(gcd_selection_mat_nn, 1) # the diagonal (auto correlation) is always zero
     gcd_selection_mat_nn |= gcd_selection_mat_nn.T # make it symmetric
 @jit(nopython=True, nogil=True)
+def daz180(n, lo_rad, la_rad, ptlo_rad, ptla_rad): # az is from ptlola to lola; daz is between 0 and pi
+    az = azimuth_rad(ptlo_rad, ptla_rad, lo_rad, la_rad)
+    daz_mat = np.zeros((n, n), dtype=np.float32)
+    for ista1 in range(n-1):
+        az1 = az[ista1]
+        ista2 = ista1+1
+        daz = np.abs( az1-az[ista2:] ) % TWO_PI
+        daz = np.minimum(daz, TWO_PI-daz)
+        daz_mat[ista1, ista2:] = daz
+    daz_mat += daz_mat.T
+    return daz_mat
+@jit(nopython=True, nogil=True)
+def daz90(n, lo_rad, la_rad, ptlo_rad, ptla_rad): # az is from ptlola to lola; daz is between 0 and pi/2
+    daz_mat = daz180(n, lo_rad, la_rad, ptlo_rad, ptla_rad)
+    daz_mat = np.minimum(daz_mat, PI-daz_mat)
+    return daz_mat
+@jit(nopython=True, nogil=True)
 def daz_selection(n, lo_rad, la_rad, ptlo_rad, ptla_rad, daz_range_rad, daz_selection_mat_nn):
     """
     Compute a NxN matrix with values of 1 or 0 for selecting the pairs of stations or not. 1 for selecting and 0 for discarding.
@@ -663,7 +681,7 @@ def pair_loc_selection(n, lo_rad, la_rad, loc_rect_boxes_rad, pair_loc_selection
     pair_loc_selection_mat_nn &= pair_loc_selection_mat_nn.T # make it symmetric
 __stack_bin_index = StackBins.stack_bin_index
 @jit(nopython=True, nogil=True)
-def get_stack_index_mat(n, lo_rad, la_rad, dist_min_deg, dist_step_deg, stack_index_mat_nn):
+def get_stack_index_mat(n, lo_rad, la_rad, dist_min_deg, dist_step_deg, stack_index_mat_nn): # using inter-rcv/src distance
     """
     Compute  a NxN matrix which contains the index for each correlation pair.
     The ijth component of the matrix is the stacking index for the pair formed by the ith and jth records.
@@ -691,6 +709,21 @@ def get_stack_index_mat(n, lo_rad, la_rad, dist_min_deg, dist_step_deg, stack_in
         istack = __stack_bin_index(inter_rcv_dist, dist_min_deg, dist_step_deg)
         stack_index_mat_nn[ista1, ista1:] = istack
         stack_index_mat_nn[ista1:, ista1] = istack
+@jit(nopython=True, nogil=True) # NOTE! QUESTIONABLE here! NOT FINISHED YET!
+def get_stack_index_mat_dif_epd(n, evlo_rad, evla_rad, stlo_rad, stla_rad, dist_min_deg, dist_step_deg, stack_index_mat_nn): # using absolute epicentral distance difference
+    """
+    Similar to `get_stack_index_mat(...)` however use the absolute difference of epi-central distance to form the correlogram.
+    """
+    d = haversine_rad(evlo_rad, evla_rad, stlo_rad, stla_rad)
+    for ista1 in range(n):
+        dif = np.abs(d - d[ista1])
+        # NOTE, the dif above could be wrong.
+        # There could be d1-d2, (360-d1)-d2=-(d1+d2), d1-(360-d2)=d1+d2, (360-d1)-(360-d2)=-(d1+d2)
+        # Two options: d1+d2 or d1-d2 between 0 and 360 degrees, which one is correct?
+        # Need more work to finish this function!!!
+        istack = __stack_bin_index(dif, dist_min_deg, dist_step_deg)
+        stack_index_mat_nn[ista1, ista1:] = istack
+        stack_index_mat_nn[ista1:, ista1] = istack
 @jit(nopython=True, nogil=True)
 def cc_stack(ch1, ch2, znert_mat_spec_c64, lo_rad, la_rad, stack_mat_spec_c64, stack_count, stack_index_mat_nn, selection_mat_nn, wmat_nn):
     """
@@ -712,7 +745,7 @@ def cc_stack(ch1, ch2, znert_mat_spec_c64, lo_rad, la_rad, stack_mat_spec_c64, s
             and the event latitudes for inter-source correlations.
     stack_mat_spec_c64: the output stack matrix in spectral domain in complex64 dtype.
     stack_count:        the output stack count matrix in int32/int64 dtype.
-    stack_index_mat_nn: the stack index matrix. It can be returned from `get_stack_index_mat(...)`.
+    stack_index_mat_nn: the stack index matrix. It can be returned from `get_stack_index_mat(...)` or `get_stack_index_mat_dif_epd(...)`
     selection_mat_nn:   the selection matrix. It can be returned from `gcd_selection_rad(...)` and `daz_selection_rad(...)` .
     wmat_nn:            the weight matrix.
     """
@@ -889,8 +922,7 @@ class CS_InterRcv:
     ```
     """
     Z, IRR, IRT, N, E, ERR, ERT = 0, 1, 2, 3, 4, 5, 6
-    def __init__(self, ch_pair_type,
-                 delta, nt, cut_time_range=None,
+    def __init__(self, ch_pair_type, delta, nt, cut_time_range=None,
                  dist_range=(0.0, 180.0), dist_step=1.0,
                  wtlen=None, wt_f1=None, wt_f2=None, wflen=None, whiten_taper_halfsize=50,
                  daz_range=None, gcd_range=None,
@@ -898,7 +930,8 @@ class CS_InterRcv:
                  stlc_rect_boxes=None,
                  speedup_critical_frequency_band=None, speedup_critical_level=0.01,
                  intermediate_outfnm_prefix=None,
-                 log_print=None, mpi_comm=None, dummy_cc=False):
+                 log_print=None, mpi_comm=None, dummy_cc=False,
+                 bin_method='inter_dist'):
         """
         ch_pair_type: a pair of int.
                       E.g., (0, 0) for ZZ, (1, 1) for RR, (0, 3) for ZN...
@@ -909,6 +942,8 @@ class CS_InterRcv:
                         4 (CS_InterRcv.E)   for E
                         5 (CS_InterRcv.ERR) for event-receiver R (ERR)
                         6 (CS_InterRcv.ERT) for event-receiver T (ERT)
+        bin_method: could be `inter_dist`: using inter-rcv or inter-src distance to bin correlation functions.
+                             `epdd`:       using absolute epicentral distance difference between two seismograms.
         """
         ###
         self.mpi_comm = mpi_comm
@@ -947,6 +982,8 @@ class CS_InterRcv:
         log_print( 2, 'stack_bins:         ', dist_range, dist_step )
         log_print( 2, 'stack_bins.centers: ', self.stack_bins.centers[0], '...', self.stack_bins.centers[-1])
         log_print( 2, 'stack_bins.edges:   ', self.stack_bins.edges[0],   '...', self.stack_bins.edges[-1])
+        self.bin_method = bin_method
+        log_print( 2, 'bin_method:         ', bin_method, '(options: inter_dist, epdd)')
         ### daz and gcd selections
         daz_range = np.zeros(0) if (daz_range is None) else daz_range
         gcd_range = np.zeros(0) if (gcd_range is None) else gcd_range
@@ -1212,7 +1249,10 @@ class CS_InterRcv:
             log_print(1, 'Computing the stack index...')
             stack_index_mat_nn = np.zeros( (cc_lo.size, cc_la.size), dtype=np.uint16)
             dist_min, dist_step = self.stack_bins.centers[0], self.stack_bins.step
-            get_stack_index_mat(cc_lo.size, cc_lo, cc_la, dist_min, dist_step, stack_index_mat_nn)
+            if self.bin_method == 'inter_dist':
+                get_stack_index_mat(cc_lo.size, cc_lo, cc_la, dist_min, dist_step, stack_index_mat_nn)
+            elif self.bin_method == 'epdd':
+                get_stack_index_mat_dif_epd(cc_lo.size, evlo_rad, evla_rad, stlo_rad, stla_rad, dist_min, dist_step, stack_index_mat_nn)
             dict_output_inter_mediate_data['stack_index_mat_nn'] = stack_index_mat_nn
             log_print(2, 'stack_index_mat_nn: ', stack_index_mat_nn.shape, stack_index_mat_nn.dtype)
             log_print(2, 'Finished.', flush=True)
@@ -1750,29 +1790,11 @@ class SingleSrc(beachball3d):
                     }
 class ManySrcs(dict):
     def __init__(self, evnm=None, gcmt=None, evlo_rad=None, evla_rad=None, evdp_km=None, model='ak135', cutoff_amp_ratio=0.05, 
-                 catalog_xml_fnm=None, max_nsrc=-1):
-        if catalog_xml_fnm is not None:
-            cat = read_events(catalog_xml_fnm)
-            evnm, gcmt, evlo_rad, evla_rad, evdp_km = list(), list(), list(), list(), list()
-            for ev in cat:
-                try:
-                    origin = ev.preferred_origin() or ev.origins[0]
-                    lo = np.deg2rad(origin.longitude)
-                    la = np.deg2rad(origin.latitude)
-                    dp = origin.depth / 1000.0
-                    nm = str(origin.time)
-                    #
-                    fm = ev.preferred_focal_mechanism() or ev.focal_mechanisms[0]
-                    mt = fm.moment_tensor.tensor
-                    cmt = np.array( (mt.m_rr, mt.m_tt, mt.m_pp, mt.m_rt, mt.m_rp, mt.m_tp), dtype=np.float64 )
-                    #
-                    evnm.append(nm)
-                    gcmt.append(cmt)
-                    evlo_rad.append(lo)
-                    evla_rad.append(la)
-                    evdp_km.append(dp)
-                except Exception as err:
-                    pass
+                 catalog_pickle_fnm=None, catalog_xml_fnm=None, max_nsrc=-1):
+        if catalog_pickle_fnm is not None:
+            evnm, gcmt, evlo_rad, evla_rad, evdp_km = ManySrcs.rd_quake_pickle(catalog_pickle_fnm)
+        elif catalog_xml_fnm is not None:
+            evnm, gcmt, evlo_rad, evla_rad, evdp_km = ManySrcs.rd_quakexml(catalog_xml_fnm, max_nsrc=max_nsrc)
         ########
         evnm = evnm[:max_nsrc]
         for nm, cmt, lo, la, dp in zip(evnm, gcmt, evlo_rad, evla_rad, evdp_km):
@@ -1783,10 +1805,61 @@ class ManySrcs(dict):
         self['zero'] = SingleSrc((0., 0., 0., 0., 0., 0.), 0., 0., 10., 'zero', model=model)
         ########
         self.set_cutoff_amp(cutoff_amp_ratio)
+        self.param_set_sign_thrust_normal = -1e123
+    @staticmethod
+    def rd_quakexml(catalog_xml_fnm, max_nsrc=-1, pickle_out_filename=None):
+        cat = read_events(catalog_xml_fnm)
+        evnm, gcmt, evlo_rad, evla_rad, evdp_km = list(), list(), list(), list(), list()
+        for ev in cat:
+            try:
+                origin = ev.preferred_origin() or ev.origins[0]
+                lo = np.deg2rad(origin.longitude)
+                la = np.deg2rad(origin.latitude)
+                dp = origin.depth / 1000.0
+                nm = str(origin.time)
+                #
+                flag_cmt_found = False
+                lst_fm = [ev.preferred_focal_mechanism() or ev.focal_mechanisms[0]]
+                lst_fm.extend( ev.focal_mechanisms )
+                for fm in lst_fm:
+                    try:
+                        mt = fm.moment_tensor.tensor
+                        cmt = np.array( (mt.m_rr, mt.m_tt, mt.m_pp, mt.m_rt, mt.m_rp, mt.m_tp), dtype=np.float64 )
+                        flag_cmt_found = True
+                        break
+                    except Exception as err:
+                        pass
+                if not flag_cmt_found:
+                    continue
+                #
+                evnm.append(nm)
+                gcmt.append(cmt)
+                evlo_rad.append(lo)
+                evla_rad.append(la)
+                evdp_km.append(dp)
+            except Exception as err:
+                pass
+        evnm = evnm[:max_nsrc]
+        gcmt = gcmt[:max_nsrc]
+        evlo_rad = evlo_rad[:max_nsrc]
+        evla_rad = evla_rad[:max_nsrc]
+        evdp_km  = evdp_km[:max_nsrc]
+        if pickle_out_filename is not None:
+            with open(pickle_out_filename, 'wb') as fid:
+                tmp = {'evnm': evnm, 'gcmt': gcmt, 'evlo_rad': evlo_rad, 'evla_rad': evla_rad, 'evdp_km': evdp_km}
+                pickle.dump(tmp, fid)
+        return evnm, gcmt, evlo_rad, evla_rad, evdp_km
+    @staticmethod
+    def rd_quake_pickle(pickl_fnm):
+        with open(pickl_fnm, 'rb') as fid:
+            tmp = pickle.load(fid)
+        return (tmp['evnm'], tmp['gcmt'], tmp['evlo_rad'], tmp['evla_rad'], tmp['evdp_km'])
     def set_cutoff_amp(self, cutoff_amp_ratio):
         for it in self.values():
             it.set_cutoff_amp(cutoff_amp_ratio)
-    def set_sign_thrust_normal(self, smax_s_km=0.045, ntheta=20, ns=5, fignm_prefix=None):#
+    def __set_sign_thrust_normal(self, smax_s_km=0.045, ntheta=20, ns=5, fignm_prefix=None):
+        if np.abs(self.param_set_sign_thrust_normal-smax_s_km) < 1e-6:
+            return
         if fignm_prefix is not None:
             wd = '/'.join(fignm_prefix.split('/')[:-1])
             mpi_makedirs(None, wd)
@@ -1795,6 +1868,7 @@ class ManySrcs(dict):
             if fignm_prefix is not None:
                 fignm = '%s%s.png' % (fignm_prefix, it.evnm)
             it.sign_thrust_normal = it.is_thrust_normal(smax_s_km, ntheta=ntheta, ns=ns, fignm=fignm) # return 1, -1 or 0
+        self.param_set_sign_thrust_normal = smax_s_km
     ####
     @staticmethod
     @jit(nopython=True, cache=True)
@@ -1803,13 +1877,12 @@ class ManySrcs(dict):
             for i2, s2 in enumerate(arr2):
                 mat[i1, i2] = s1 * s2
         return mat
-    def cc_wmat_glob(self, evnms, method='thrust'): # 'thrust', 'normal', 'thrust_normal', 'thrust_normal2', or 'other', or None
-        """
-        Call self.set_sign_thrust_normal(...) before calling this method.
-        """
+    def cc_wmat_glob(self, evnms, method='thrust', smax_s_km=0.045, ntheta=20, ns=5, fignm_prefix=None): # 'thrust', 'normal', 'thrust_normal', 'thrust_normal2', or 'other', or None
         if (method is None) or (method == 'None'):
             return None
         ##########
+        self.__set_sign_thrust_normal(smax_s_km=smax_s_km, ntheta=ntheta, ns=ns, fignm_prefix=fignm_prefix)
+        missing_evnms = [it for it in evnms if it not in self]
         srcs   = [self.get(it, self['zero']) for it in evnms]
         P_amps = np.array( [it.sign_thrust_normal for it in srcs] )
         if method == 'thrust':
@@ -1828,62 +1901,78 @@ class ManySrcs(dict):
         nsrc  = len(srcs)
         mat = np.ones( (nsrc, nsrc), dtype=np.int8)
         ManySrcs.__fast_arr2mat(signs, signs, mat)
-        return mat
-    def cc_wmat_wise(self, evnms, stlo_rad, stla_rad, az_err_rad=10./180.*np.pi, smin_s_km=0.0045, smax_s_km=0.045, naz=5, ns=5, binary=True, fignm_prefix=None, wave1='P', wave2='P'):
-        """
-        stlo_rad, stla_rad: longitude and latitude of the station(s). Could be a single station, or
-                            an array with the same length as the number of sources.
-        """
+        return mat, missing_evnms
+    def is_single_src_thrust_normal(self, single_evnm, smax_s_km=0.045, ntheta=20, ns=5, fignm_prefix=None): # return 1 (thrust), -1 (normal) or 0 (others)
+        self.__set_sign_thrust_normal(smax_s_km=smax_s_km, ntheta=ntheta, ns=ns, fignm_prefix=fignm_prefix)
+        single_src = self.get(single_evnm, self['zero'])
+        return single_src.sign_thrust_normal
+    def s2s_cc_wmat(self, evnms, evlos_rad, evlas_rad, single_stlo_rad, single_stla_rad, az_err_rad=10./180.*np.pi, smin_s_km=0.0045, smax_s_km=0.045, naz=5, ns=5, binary=True, fignm_prefix=None, wave1='P', wave2='P'):
+        missing_evnms = [it for it in evnms if it not in self]
         srcs   = [self.get(it, self['zero']) for it in evnms]
-        evlos = np.array( [it.evlo for it in srcs] )
-        evlas = np.array( [it.evla for it in srcs] )
-        az    = azimuth_rad(evlos, evlas, stlo_rad, stla_rad)
-        print(stlo_rad, stla_rad)
-        print(np.rad2deg(evlos))
-        print(np.rad2deg(evlas))
-        print(np.rad2deg(az))
+        ####
+        az    = azimuth_rad(evlos_rad, evlas_rad, single_stlo_rad, single_stla_rad)
         azmin = az - az_err_rad
         azmax = az + az_err_rad
-        amp1  = np.zeros(len(srcs), dtype=np.int8 if binary else np.float32)
-        amp2  = np.zeros(len(srcs), dtype=np.int8 if binary else np.float32)
+        az_opp     = az + PI
+        az_opp_min = az_opp - az_err_rad
+        az_opp_max = az_opp + az_err_rad
+        ####
+        amp1 = np.zeros(len(srcs), dtype=np.int8 if binary else np.float32)
+        amp2 = np.zeros(len(srcs), dtype=np.int8 if binary else np.float32)
+        #amp_opp1 = np.zeros(len(srcs), dtype=np.int8 if binary else np.float32)
+        amp_opp2 = np.zeros(len(srcs), dtype=np.int8 if binary else np.float32)
         for isrc, it_src in enumerate(srcs):
-            fignm = None
+            fignm1, fignm2, fignm3, fignm4 = None, None, None, None
             if fignm_prefix is not None:
-                fignm = '%s_%06d_%s.png' % (fignm_prefix, isrc, it_src.evnm)
-            amp1[isrc] = it_src.get_sign_Pie(azmin[isrc], azmax[isrc], smin_s_km, smax_s_km, wave_type=wave1, naz=naz, ns=ns, binary=binary, fignm=fignm)
-            amp2[isrc] = it_src.get_sign_Pie(azmin[isrc], azmax[isrc], smin_s_km, smax_s_km, wave_type=wave2, naz=naz, ns=ns, binary=binary, fignm=None)
+                fignm1 = '%s_%06d_%s_%s_az.png'     % (fignm_prefix, isrc, it_src.evnm, wave1)
+                fignm2 = '%s_%06d_%s_%s_az.png'     % (fignm_prefix, isrc, it_src.evnm, wave2)
+                #fignm3 = '%s_%06d_%s_%s_azoppo.png' % (fignm_prefix, isrc, it_src.evnm, wave1)
+                fignm4 = '%s_%06d_%s_%s_azoppo.png' % (fignm_prefix, isrc, it_src.evnm, wave2)
+            amp1[isrc] = it_src.get_sign_Pie(    azmin[isrc],      azmax[isrc],      smin_s_km, smax_s_km, wave_type=wave1, naz=naz, ns=ns, binary=binary, fignm=fignm1)
+            amp2[isrc] = it_src.get_sign_Pie(    azmin[isrc],      azmax[isrc],      smin_s_km, smax_s_km, wave_type=wave2, naz=naz, ns=ns, binary=binary, fignm=fignm2)
+            #amp_opp1[isrc] = it_src.get_sign_Pie(az_opp_min[isrc], az_opp_max[isrc], smin_s_km, smax_s_km, wave_type=wave1, naz=naz, ns=ns, binary=binary, fignm=fignm3)
+            amp_opp2[isrc] = it_src.get_sign_Pie(az_opp_min[isrc], az_opp_max[isrc], smin_s_km, smax_s_km, wave_type=wave2, naz=naz, ns=ns, binary=binary, fignm=fignm4)
+        ######
+        dbaz_mat = daz180(evlos_rad.size, evlos_rad, evlas_rad, single_stlo_rad, single_stla_rad)
         ######
         nsrc  = len(srcs)
-        mat   = np.ones( (nsrc, nsrc), dtype=np.int8 if binary else np.float32)
-        ManySrcs.__fast_arr2mat(amp1, amp2, mat)
-        #for i1, s1 in enumerate(amp1):
-        #    for i2, s2 in enumerate(amp2):
-        #        mat[i1, i2] = s1 * s2
+        mat_az_az   = np.ones( (nsrc, nsrc), dtype=np.int8 if binary else np.float32)
+        mat_az_azop = np.ones( (nsrc, nsrc), dtype=np.int8 if binary else np.float32)
+        ManySrcs.__fast_arr2mat(amp1, amp2,     mat_az_az)
+        ManySrcs.__fast_arr2mat(amp1, amp_opp2, mat_az_azop)
+        mat = np.where(dbaz_mat <= 90.0, mat_az_az, mat_az_azop)
+        #for i1 in range(nsrc):
+        #    for i2 in range(nsrc):
+        #        if dbaz_mat[i1, i2] <= 90.0:
+        #            mat[i1, i2] = amp1[i1] * amp2[i2]
+        #        else:
+        #            mat[i1, i2] = amp1[i1] * amp_opp2[i2]
         ######
         if not binary:
             vmax = max(-mat.min(), mat.max())
             if vmax > 0:
                 mat *= (1.0/vmax)
-        return mat
+        return mat, missing_evnms
     ###################################################################################################################################################
     @staticmethod
     def benchmark2():
         app = ManySrcs(catalog_xml_fnm='test_s2s/M6.5+_1960-2024.xml', max_nsrc=5)
         app.set_cutoff_amp(0.05)
-        app.set_sign_thrust_normal(smax_s_km=0.045, fignm_prefix='tmp2/binary_')
         evnm = sorted([it.evnm for it in app.values()] )[:3]
+        evlo = np.array( [app[it].evlo for it in evnm] )
+        evla = np.array( [app[it].evla for it in evnm] )
         ####
-        mat1 = app.cc_wmat_glob(evnm, method='thrust')
-        mat2 = app.cc_wmat_glob(evnm, method='normal')
-        mat3 = app.cc_wmat_glob(evnm, method='thrust_normal')
-        mat3b= app.cc_wmat_glob(evnm, method='thrust_normal2')
-        mat4 = app.cc_wmat_glob(evnm, method='other')
+        mat1 = app.cc_wmat_glob(evnm, method='thrust',        smax_s_km=0.045, fignm_prefix='tmp2/binary_')
+        mat2 = app.cc_wmat_glob(evnm, method='normal',        smax_s_km=0.045, fignm_prefix='tmp2/binary_')
+        mat3 = app.cc_wmat_glob(evnm, method='thrust_normal', smax_s_km=0.045, fignm_prefix='tmp2/binary_')
+        mat3b= app.cc_wmat_glob(evnm, method='thrust_normal2',smax_s_km=0.045, fignm_prefix='tmp2/binary_')
+        mat4 = app.cc_wmat_glob(evnm, method='other',         smax_s_km=0.045, fignm_prefix='tmp2/binary_')
         ####
         stlo, stla = 0.0, 0.0
         ####
-        mat5 = app.cc_wmat_wise(evnm, stlo, stla, az_err_rad=10./180.*np.pi, smin_s_km=0.0045, smax_s_km=0.045, naz=5, ns=5, binary=True,
+        mat5 = app.s2s_cc_wmat(evnm, evlo, evla, stlo, stla, az_err_rad=10./180.*np.pi, smin_s_km=0.0045, smax_s_km=0.045, naz=5, ns=5, binary=True,
                                fignm_prefix='tmp2/PP', wave1='P',  wave2='P' )
-        mat6 = app.cc_wmat_wise(evnm, stlo, stla, az_err_rad=10./180.*np.pi, smin_s_km=0.0045, smax_s_km=0.045, naz=5, ns=5, binary=False,
+        mat6 = app.s2s_cc_wmat(evnm, evlo, evla, stlo, stla, az_err_rad=10./180.*np.pi, smin_s_km=0.0045, smax_s_km=0.045, naz=5, ns=5, binary=False,
                                fignm_prefix='tmp2/fPP', wave1='P', wave2='P' )
         ####
         for it in (mat1, mat2, mat3, mat3b, mat4, mat5, mat6):
@@ -1897,18 +1986,17 @@ class ManySrcs(dict):
         gcmt = [(1,0,-1,0,0,0), (-1,0,1,0,0,0), (0,0,0,0,2,0) ]
         app = ManySrcs(evnm=evnm, gcmt=gcmt, evlo_rad=evlo_rad, evla_rad=evla_rad, evdp_km=evdp_km)
         app.set_cutoff_amp(0.05)
-        app.set_sign_thrust_normal(smax_s_km=0.045, fignm_prefix='tmp/binary_')
         ####
-        mat1 = app.cc_wmat_glob(evnm, method='thrust')
-        mat2 = app.cc_wmat_glob(evnm, method='normal')
-        mat3 = app.cc_wmat_glob(evnm, method='thrust_normal')
-        mat3b= app.cc_wmat_glob(evnm, method='thrust_normal2')
-        mat4 = app.cc_wmat_glob(evnm, method='other')
+        mat1 = app.cc_wmat_glob(evnm, method='thrust',        smax_s_km=0.045, fignm_prefix='tmp/binary_')
+        mat2 = app.cc_wmat_glob(evnm, method='normal',        smax_s_km=0.045, fignm_prefix='tmp/binary_')
+        mat3 = app.cc_wmat_glob(evnm, method='thrust_normal', smax_s_km=0.045, fignm_prefix='tmp/binary_')
+        mat3b= app.cc_wmat_glob(evnm, method='thrust_normal2',smax_s_km=0.045, fignm_prefix='tmp/binary_')
+        mat4 = app.cc_wmat_glob(evnm, method='other',         smax_s_km=0.045, fignm_prefix='tmp/binary_')
         ####
         stlo, stla = 50/180*np.pi, 0
-        mat5 = app.cc_wmat_wise(evnm, stlo, stla, az_err_rad=10./180.*np.pi, smin_s_km=0.0045, smax_s_km=0.045, naz=5, ns=5, binary=True,
+        mat5 = app.s2s_cc_wmat(evnm, evlo_rad, evla_rad, stlo, stla, az_err_rad=10./180.*np.pi, smin_s_km=0.0045, smax_s_km=0.045, naz=5, ns=5, binary=True,
                                fignm_prefix='tmp/PP', wave1='P',  wave2='P' )
-        mat6 = app.cc_wmat_wise(evnm, stlo, stla, az_err_rad=10./180.*np.pi, smin_s_km=0.0045, smax_s_km=0.045, naz=5, ns=5, binary=False,
+        mat6 = app.s2s_cc_wmat(evnm, evlo_rad, evla_rad, stlo, stla, az_err_rad=10./180.*np.pi, smin_s_km=0.0045, smax_s_km=0.045, naz=5, ns=5, binary=False,
                                fignm_prefix=None, wave1='P',  wave2='P' )
         ####
         for it in (mat1, mat2, mat3, mat3b, mat4, mat5, mat6):
@@ -1936,6 +2024,14 @@ class CS_InterSrc(CS_InterRcv):
                              model=model, cutoff_amp_ratio=cutoff_amp_ratio)
         ####
         log_print( 1, 'nsrc:', len(self.srcs)-1, flush=True ) # this is one additional zero gcmt source
+    def set_src3(self, catalog_pickle_fnm, model='ak135', cutoff_amp_ratio=0.05, max_nsrc=-1):
+        log_print = self.logger
+        log_print(-1, 'Set source mechanism and metadata with Pickle file' )
+        ####
+        self.srcs = ManySrcs(catalog_pickle_fnm=catalog_pickle_fnm, max_nsrc=max_nsrc,
+                             model=model, cutoff_amp_ratio=cutoff_amp_ratio)
+        ####
+        log_print( 1, 'nsrc:', len(self.srcs)-1, flush=True ) # this is one additional zero gcmt source
     def cc_wmat_glob(self, evnms, method='thrust_normal', smax_s_km=0.045, ntheta=20, ns=5, fignm_prefix=None):
         """
         method: 'thrust', 'normal', 'thrust_normal', 'thrust_normal2', or 'other', or None
@@ -1950,19 +2046,14 @@ class CS_InterSrc(CS_InterRcv):
             log_print( 1, 'wmat_nn:', None, 'all ones', flush=True)
             return None
         ####
-        if not hasattr(self, 'param_set_sign_thrust_normal'):
-            self.srcs.set_sign_thrust_normal(smax_s_km=smax_s_km, ntheta=ntheta, ns=ns, fignm_prefix=fignm_prefix)
-            self.param_set_sign_thrust_normal = smax_s_km
-        elif np.abs(self.param_set_sign_thrust_normal - smax_s_km) > 1e-6:
-            self.srcs.set_sign_thrust_normal(smax_s_km=smax_s_km, ntheta=ntheta, ns=ns, fignm_prefix=fignm_prefix)
-            self.param_set_sign_thrust_normal = smax_s_km
-        wmat_nn = self.srcs.cc_wmat_glob(evnms, method=method)
+        wmat_nn, missing_evnms = self.srcs.cc_wmat_glob(evnms, method=method)
         ####
-        log_print( 1, 'wmat_nn:', wmat_nn.shape, flush=True)
+        log_print( 1, 'wmat_nn:', wmat_nn.shape)
+        log_print( 1, 'missing_events:', missing_evnms, flush=True)
         return wmat_nn
-    def cc_wmat_wise(self, evnms, single_stlo_rad, single_stla_rad, az_err_rad=10./180.*np.pi, smin_s_km=0.0045, smax_s_km=0.045, naz=5, ns=5, binary=True, fignm_prefix=None, wave1='P', wave2='P'):
+    def s2s_cc_wmat(self, evnms, evlos_rad, evlas_rad, single_stlo_rad, single_stla_rad, az_err_rad=10./180.*np.pi, smin_s_km=0.0045, smax_s_km=0.045, naz=5, ns=5, binary=True, fignm_prefix=None, wave1='P', wave2='P', info=''):
         log_print = self.logger
-        log_print(-1, 'Set rcv_wise s2s correlation weight mat')
+        log_print(-1, 'Set s2s correlation weight mat %s', info)
         log_print( 1, 'single_stlo_rad, single_stla_rad:', single_stlo_rad, single_stla_rad)
         log_print( 1, 'az_err_rad(deg):', np.rad2deg(az_err_rad))
         log_print( 1, 'smin_s_km, smax_s_km:', smin_s_km, smax_s_km)
@@ -1970,11 +2061,13 @@ class CS_InterSrc(CS_InterRcv):
         log_print( 1, 'fignm_prefix:', fignm_prefix)
         log_print( 1, 'wave1, wave2:', wave1, wave2)
         ####
-        wmat_nn = self.srcs.cc_wmat_wise(evnms, stlo_rad=single_stlo_rad, stla_rad=single_stla_rad, az_err_rad=az_err_rad,
-                                        smin_s_km=smin_s_km, smax_s_km=smax_s_km, naz=naz, ns=ns,
-                                        binary=binary, fignm_prefix=fignm_prefix, wave1=wave1, wave2=wave2)
+        wmat_nn, missing_evnms = self.srcs.s2s_cc_wmat(evnms, evlos_rad, evlas_rad, single_stlo_rad, single_stla_rad,
+                                                       az_err_rad=az_err_rad, smin_s_km=smin_s_km, smax_s_km=smax_s_km,
+                                                       naz=naz, ns=ns, binary=binary, fignm_prefix=fignm_prefix,
+                                                       wave1=wave1, wave2=wave2)
         ####
-        log_print( 1, 'wmat_nn:', wmat_nn.shape, flush=True)
+        log_print( 1, 'wmat_nn:', wmat_nn.shape)
+        log_print( 1, 'missing_events:', missing_evnms, flush=True)
         return wmat_nn
 if __name__ == "__main__":
     if True:
