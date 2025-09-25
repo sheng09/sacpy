@@ -2032,12 +2032,12 @@ class CS_InterSrc(CS_InterRcv):
                              model=model, cutoff_amp_ratio=cutoff_amp_ratio)
         ####
         log_print( 1, 'nsrc:', len(self.srcs)-1, flush=True ) # this is one additional zero gcmt source
-    def cc_wmat_glob(self, evnms, method='thrust_normal', smax_s_km=0.045, ntheta=20, ns=5, fignm_prefix=None):
+    def cc_wmat_glob(self, evnms, method='thrust_normal', smax_s_km=0.045, ntheta=20, ns=5, fignm_prefix=None, info=''):
         """
         method: 'thrust', 'normal', 'thrust_normal', 'thrust_normal2', or 'other', or None
         """
         log_print = self.logger
-        log_print(-1, 'Set glob s2s correlation weight mat')
+        log_print(-1, 'Set glob s2s correlation weight mat', info)
         log_print( 1, 'method:', method)
         log_print( 1, 'smax_s_km:', smax_s_km)
         log_print( 1, 'fignm_prefix:', fignm_prefix)
@@ -2053,7 +2053,7 @@ class CS_InterSrc(CS_InterRcv):
         return wmat_nn
     def s2s_cc_wmat(self, evnms, evlos_rad, evlas_rad, single_stlo_rad, single_stla_rad, az_err_rad=10./180.*np.pi, smin_s_km=0.0045, smax_s_km=0.045, naz=5, ns=5, binary=True, fignm_prefix=None, wave1='P', wave2='P', info=''):
         log_print = self.logger
-        log_print(-1, 'Set s2s correlation weight mat %s', info)
+        log_print(-1, 'Set az-wise s2s correlation weight mat', info)
         log_print( 1, 'single_stlo_rad, single_stla_rad:', single_stlo_rad, single_stla_rad)
         log_print( 1, 'az_err_rad(deg):', np.rad2deg(az_err_rad))
         log_print( 1, 'smin_s_km, smax_s_km:', smin_s_km, smax_s_km)
