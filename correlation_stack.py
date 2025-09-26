@@ -1744,14 +1744,17 @@ class SingleSrc(beachball3d):
         return amp
     def plot_PSVSH2d(self, theta_p, phi_p, theta_s, phi_s, P_amp, SV_amp, SH_amp, wave_type, fignm=None):
         if fignm is not None:
-            fig = plt.figure(figsize=(12, 4))
-            gs = fig.add_gridspec(2, 3, height_ratios=(10, 1) )
+            fig = plt.figure(figsize=(12, 8))
+            gs = fig.add_gridspec(3, 3, height_ratios=(10, 1, 10) )
             ax1 = fig.add_subplot(gs[0, 0], projection='polar')
             ax2 = fig.add_subplot(gs[0, 1], projection='polar')
             ax3 = fig.add_subplot(gs[0, 2], projection='polar')
             cax1 = fig.add_subplot(gs[1, 0])
             cax2 = fig.add_subplot(gs[1, 1])
             cax3 = fig.add_subplot(gs[1, 2])
+            ax4  = fig.add_subplot(gs[2, 0], projection='polar')
+            ax5  = fig.add_subplot(gs[2, 1], projection='polar')
+            ax6  = fig.add_subplot(gs[2, 2], projection='polar')
             cmap = plt.get_cmap('RdBu_r', 11)
             self.plot2d(ax1, wave_type='P',  radius=1, cmap=cmap, cax=cax1)
             self.plot2d(ax2, wave_type='SV', radius=1, cmap=cmap, cax=cax2)
@@ -1768,10 +1771,29 @@ class SingleSrc(beachball3d):
             ax1.set_title(title1)
             ax2.set_title(title2)
             ax3.set_title(title3)
-            for ax in (ax1, ):
+            for ax in (ax1, ax4):
                 ax.plot(theta_p, np.sqrt(2)*np.sin((np.pi-phi_p)*0.5), linestyle='', marker='.', color='c')
-            for ax in (ax2, ax3 ):
+            for ax in (ax2, ax3, ax5, ax6):
                 ax.plot(theta_s, np.sqrt(2)*np.sin((np.pi-phi_s)*0.5), linestyle='', marker='.', color='c')
+            ##########
+            loc_xyz, vec_p,  amp_p  = self.radiation_fast(theta_p, phi_p, wave_type='P',  binarization=False)
+            loc_xyz, vec_sv, amp_sv = self.radiation_fast(theta_p, phi_p, wave_type='SV', binarization=False)
+            loc_xyz, vec_sh, amp_sh = self.radiation_fast(theta_p, phi_p, wave_type='SH', binarization=False)
+            l = 1.0/np.sqrt(vec_p[:,0]*vec_p[:,0] + vec_p[:,1]*vec_p[:,1])
+            ax4.quiver(theta_p, np.sqrt(2)*np.sin((np.pi-phi_p)*0.5), vec_p[:,0]*l, vec_p[:,1]*l, pivot='tail', color='k', scale=15, scale_units='width', zorder=100, clip_on=True)
+            ax6.quiver(theta_s, np.sqrt(2)*np.sin((np.pi-phi_s)*0.5), vec_sh[:,0], vec_sh[:,1], pivot='tail', color='k', scale=15, scale_units='width', zorder=100, clip_on=True)
+            idxs = np.where(vec_sv[:,2]<=0.0)[0]
+            ax5.plot(theta_s[idxs], np.sqrt(2)*np.sin((np.pi-phi_s[idxs])*0.5), linestyle='', marker='x', color='k', clip_on=True)
+            idxs = np.where(vec_sv[:,2]>0.0)[0]
+            ax5.plot(theta_s[idxs], np.sqrt(2)*np.sin((np.pi-phi_s[idxs])*0.5), linestyle='', marker='.', color='k', clip_on=True)
+            ax4.set_xlabel('Positive amplitudes along the arrow directions.\nNegative amplitudes along the reverse arrow directions.')
+            ax5.set_xlabel('Cross x is going into the paper.\nDot is coming out of the paper.')
+            ax6.set_xlabel('Positive amplitudes along the arrow directions.\nNegative amplitudes along the reverse arrow directions.')
+            ax4.set_ylim(0, 1.3*np.sqrt(2)*np.sin((np.pi-np.min(phi_p))*0.5) )
+            for ax in (ax4, ax5, ax6):
+                ax.set_xticklabels([])
+                ax.set_yticklabels([])
+            ######
             plt.savefig(fignm, bbox_inches='tight', pad_inches = 0.05, transparent=True, dpi=200)
             plt.close(fig)
     def is_thrust(self, smax=0.045, ntheta=20, ns=5, fignm=None): # return 1 or 0
@@ -2070,7 +2092,7 @@ class CS_InterSrc(CS_InterRcv):
         log_print( 1, 'missing_events:', missing_evnms, flush=True)
         return wmat_nn
 if __name__ == "__main__":
-    if True:
+    if False:
         mpi_comm = MPI.COMM_WORLD.Dup()
         mpi_rank = mpi_comm.Get_rank()
         mpi_ncpu = mpi_comm.Get_size()
@@ -2118,7 +2140,7 @@ if __name__ == "__main__":
         with Timer(tag='cc_wmat_glob4', verbose=True):
             wmat = app.cc_wmat_glob(evnms, method='thrust_normal') #, fignm_prefix='tmp3/tn_')
         #print(wmat)
-    if False:
+    if True:
         ManySrcs.benchmark2()
     if False:
         bins = StackBins(0, 10, 1)
