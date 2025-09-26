@@ -2040,7 +2040,8 @@ class CS_InterSrc(CS_InterRcv):
         log_print( 1, 'nsrc:', len(self.srcs)-1, flush=True ) # this is one additional zero gcmt source
     def set_src2(self, catalog_xml_fnm, model='ak135', cutoff_amp_ratio=0.05, max_nsrc=-1):
         log_print = self.logger
-        log_print(-1, 'Set source mechanism and metadata with XML' )
+        log_print(-1, 'Set source mechanism and metadata with XML file' )
+        log_print( 1, catalog_xml_fnm)
         ####
         self.srcs = ManySrcs(catalog_xml_fnm=catalog_xml_fnm, max_nsrc=max_nsrc,
                              model=model, cutoff_amp_ratio=cutoff_amp_ratio)
@@ -2049,6 +2050,7 @@ class CS_InterSrc(CS_InterRcv):
     def set_src3(self, catalog_pickle_fnm, model='ak135', cutoff_amp_ratio=0.05, max_nsrc=-1):
         log_print = self.logger
         log_print(-1, 'Set source mechanism and metadata with Pickle file' )
+        log_print( 1, catalog_pickle_fnm)
         ####
         self.srcs = ManySrcs(catalog_pickle_fnm=catalog_pickle_fnm, max_nsrc=max_nsrc,
                              model=model, cutoff_amp_ratio=cutoff_amp_ratio)
