@@ -1781,7 +1781,20 @@ class beachball3d:
             amp = np.sign(amp)
         return P_pol, pol, amp
     def radiation_fast(self, theta, phi, wave_type='P', binarization=False): # return loc_xyz, pol, amp
-        return beachball3d.__fast_radiation(self.matENU, theta, phi, wave_type, binarization)
+        """
+        theta: a single value or an array like object for many values.
+               In radian. theta is measured from east and anti-clockwise. East is 0 and North in pi/2.
+        phi:   ...
+               In radian. phi is measured from top. Vertical up is phi=0, and vertical down is phi=pi.
+        wave_type: 'P', or 'SV', or 'SH'
+        binarization: True or False(default)
+        """
+        if hasattr(theta, '__len__'):
+            return beachball3d.__fast_radiation(self.matENU, theta, phi, wave_type, binarization)
+        else:
+            theta, phi = np.asarray(theta), np.asarray(phi)
+            P_pol, pol, amp = beachball3d.__fast_radiation(self.matENU, theta, phi, wave_type, binarization)
+            return P_pol[0], pol[0], amp[0]
     def plot_3d_vcone(self, p, apex=(0,0,0), cones=[(2.8, 18, 'r', 0.3), (3.1, 18, 'b', 0.3)], 
                       culling=False, lighting=False):
         """
@@ -2361,6 +2374,16 @@ class beachball3d:
         return matuvw
     ##########################################################################################
     @staticmethod
+    def benchmark9(): # test radiation and radiation_fast
+        app = Scene3D()
+        bb = beachball3d(gcmt=(1,0.1,-1,0.2,0.3,0.1), normalize=True)
+        cmap = plt.get_cmap('RdBu_r', 11)
+        theta = np.deg2rad((10, 20, 30)).astype(np.float64)
+        phi   = np.deg2rad((10, 20, 30)).astype(np.float64)
+        print( bb.radiation_fast(theta, phi, wave_type='P', binarization=False) )
+        print( bb.radiation_fast(theta[0], phi[0], wave_type='P', binarization=False) )
+        pass
+    @staticmethod
     def benchmark8(): # test radiation and radiation_fast
         app = Scene3D()
         bb = beachball3d(gcmt=(1,0.1,-1,0.2,0.3,0.1), normalize=True)
@@ -2610,6 +2633,8 @@ class beachball3d:
         app.show()
 if __name__ == '__main__':
     #Scene3D.benchmark()
+    beachball3d.benchmark9()
+    sys.exit(0)
     #sys.exit(0)
     beachball3d.benchmark8()
     sys.exit(0)
