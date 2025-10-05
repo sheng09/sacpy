@@ -450,7 +450,7 @@ def gcd_selection(n, lo_rad, la_rad, ptlo_rad, ptla_rad, gcd_range_rad, gcd_sele
     np.fill_diagonal(gcd_selection_mat_nn, 1) # the diagonal (auto correlation) is always zero
     gcd_selection_mat_nn |= gcd_selection_mat_nn.T # make it symmetric
 @jit(nopython=True, nogil=True)
-def daz180(n, lo_rad, la_rad, ptlo_rad, ptla_rad): # az is from ptlola to lola; daz is between 0 and pi
+def daz_PI(n, lo_rad, la_rad, ptlo_rad, ptla_rad): # az is from ptlola to lola; daz is between 0 and pi
     az = azimuth_rad(ptlo_rad, ptla_rad, lo_rad, la_rad)
     daz_mat = np.zeros((n, n), dtype=np.float32)
     for ista1 in range(n-1):
@@ -462,8 +462,8 @@ def daz180(n, lo_rad, la_rad, ptlo_rad, ptla_rad): # az is from ptlola to lola; 
     daz_mat += daz_mat.T
     return daz_mat
 @jit(nopython=True, nogil=True)
-def daz90(n, lo_rad, la_rad, ptlo_rad, ptla_rad): # az is from ptlola to lola; daz is between 0 and pi/2
-    daz_mat = daz180(n, lo_rad, la_rad, ptlo_rad, ptla_rad)
+def daz_HALF_PI(n, lo_rad, la_rad, ptlo_rad, ptla_rad): # az is from ptlola to lola; daz is between 0 and pi/2
+    daz_mat = daz_PI(n, lo_rad, la_rad, ptlo_rad, ptla_rad)
     daz_mat = np.minimum(daz_mat, PI-daz_mat)
     return daz_mat
 @jit(nopython=True, nogil=True)
@@ -851,14 +851,19 @@ def rd_proc_correlogram(h5file, filter_band=(0.02, 0.06666), taper_sec=50, taper
         taper_halfsize = int(taper_sec/delta)
         for xs, d in zip(stack_mat, stack_bin_centers):
             if dmin <= d <= dmax:
-                taper(xs, taper_halfsize, delta)
+                if cc_t1 < 0.0:
+                    tmp_1 = int(-cc_t1/delta)
+                    taper(xs[:tmp_1+1], taper_halfsize, delta)
+                    taper(xs[tmp_1:], taper_halfsize, delta)
+                else:
+                    taper(xs, taper_halfsize, delta)
         ######
         if cut_sec is not None:
             cut1, cut2 = cut_sec
             cut1 = max(cut1, cc_t1)
             cut2 = min(cut2, cc_t2)
             cc_t1, cc_t2 = cut1, cut2
-            cut1, cut2 = int(cut1/delta), int(cut2/delta)
+            cut1, cut2 = int((cut1-cc_t1)/delta), int((cut2-cc_t1)/delta)
             stack_mat = stack_mat[:, cut1:cut2]
         ######
         if norm:
@@ -1684,11 +1689,11 @@ class SingleSrc(beachball3d):
         self.SV_amp_cutoff = cutoff_amp_ratio * self.SV_amp_absmax
         self.SH_amp_cutoff = cutoff_amp_ratio * self.SH_amp_absmax
     #####
-    def slowness2phi(self, slowness_km_s, wave_type='P'): # return in rad
+    def slowness2phi(self, slowness_s_km, wave_type='P'): # return in rad
         if wave_type=='P':
-            takeoff_angle_rad = np.arcsin( np.clip(slowness_km_s * self.vp_at_evdp, -1, 1) )
+            takeoff_angle_rad = np.arcsin( np.clip(slowness_s_km * self.vp_at_evdp, -1, 1) )
         else:
-            takeoff_angle_rad = np.arcsin( np.clip(slowness_km_s * self.vs_at_evdp, -1, 1) )
+            takeoff_angle_rad = np.arcsin( np.clip(slowness_s_km * self.vs_at_evdp, -1, 1) )
         phi = np.pi - takeoff_angle_rad
         return phi
     def get_theta_phi_mesh_bblh_Circle(self, smax, wave_type='P', ntheta=20, ns=5): # get points for a circular area centered at (phi=180degree) on the lower half of beachball for P or S waves
@@ -1708,7 +1713,7 @@ class SingleSrc(beachball3d):
         mesh_theta, mesh_phi = np.meshgrid(theta, phi)
         return mesh_theta.ravel(), mesh_phi.ravel()
     def get_sign(self, theta, phi, wave_type='P', binary=True):      # get -1, 0 or 1 in an area defined by many points on beachball surface.
-        _, _, amp = self.radiation_fast(theta, phi, wave_type=wave_type, binarization=binary)
+        _, _, amp = self.radiation_fast(theta, phi, wave_type=wave_type, binarization=False) # Binary should always be False here
         c = self.P_amp_cutoff
         if wave_type=='SV':
             c = self.SV_amp_cutoff
@@ -1771,16 +1776,19 @@ class SingleSrc(beachball3d):
             ax1.set_title(title1)
             ax2.set_title(title2)
             ax3.set_title(title3)
-            for ax in (ax1, ax4):
-                ax.plot(theta_p, np.sqrt(2)*np.sin((np.pi-phi_p)*0.5), linestyle='', marker='.', color='c')
-            for ax in (ax2, ax3, ax5, ax6):
-                ax.plot(theta_s, np.sqrt(2)*np.sin((np.pi-phi_s)*0.5), linestyle='', marker='.', color='c')
+            if len(theta_p)>0:
+                for ax in (ax1, ax4):
+                    ax.plot(theta_p, np.sqrt(2)*np.sin((np.pi-phi_p)*0.5), linestyle='', marker='.', color='c')
+            if len(theta_s)>0:
+                for ax in (ax2, ax3, ax5, ax6):
+                    ax.plot(theta_s, np.sqrt(2)*np.sin((np.pi-phi_s)*0.5), linestyle='', marker='.', color='c')
             ##########
             loc_xyz, vec_p,  amp_p  = self.radiation_fast(theta_p, phi_p, wave_type='P',  binarization=False)
             loc_xyz, vec_sv, amp_sv = self.radiation_fast(theta_p, phi_p, wave_type='SV', binarization=False)
             loc_xyz, vec_sh, amp_sh = self.radiation_fast(theta_p, phi_p, wave_type='SH', binarization=False)
             l = 1.0/np.sqrt(vec_p[:,0]*vec_p[:,0] + vec_p[:,1]*vec_p[:,1])
             ax4.quiver(theta_p, np.sqrt(2)*np.sin((np.pi-phi_p)*0.5), vec_p[:,0]*l, vec_p[:,1]*l, pivot='tail', color='k', scale=15, scale_units='width', zorder=100, clip_on=True)
+            ax5.quiver(theta_s, np.sqrt(2)*np.sin((np.pi-phi_s)*0.5), vec_sv[:,0], vec_sv[:,1], pivot='tail', color='k', scale=15, scale_units='width', zorder=100, clip_on=True)
             ax6.quiver(theta_s, np.sqrt(2)*np.sin((np.pi-phi_s)*0.5), vec_sh[:,0], vec_sh[:,1], pivot='tail', color='k', scale=15, scale_units='width', zorder=100, clip_on=True)
             idxs = np.where(vec_sv[:,2]<=0.0)[0]
             ax5.plot(theta_s[idxs], np.sqrt(2)*np.sin((np.pi-phi_s[idxs])*0.5), linestyle='', marker='x', color='k', clip_on=True)
@@ -1893,12 +1901,34 @@ class ManySrcs(dict):
         self.param_set_sign_thrust_normal = smax_s_km
     ####
     @staticmethod
-    @jit(nopython=True, cache=True)
+    @jit(nopython=True, nogil=True)
     def __fast_arr2mat(arr1, arr2, mat):
         for i1, s1 in enumerate(arr1):
             for i2, s2 in enumerate(arr2):
                 mat[i1, i2] = s1 * s2
         return mat
+    @staticmethod
+    @jit(nopython=True, nogil=True)
+    def __fast_merge_mat_same_sign(mat1, mat2):
+        sign1 = np.sign(mat1)
+        sign2 = np.sign(mat2)
+        same_sign = (sign1 == sign2) & (sign1 != 0)
+        #
+        abs_mat1 = np.abs(mat1)
+        abs_mat2 = np.abs(mat2)
+        merged_mat = np.where(abs_mat1<abs_mat2, mat1, mat2)
+        #
+        merged_mat *= same_sign
+        return merged_mat
+    @staticmethod
+    @jit(nopython=True, nogil=True)
+    def __fast_pair_geometry_wmat(dist, mat):
+        mat[:] = 0
+        n = mat.shape[0]
+        for ista1 in range(n):
+            for ista2 in range(n):
+                if dist[ista1] > dist[ista2]:
+                    mat[ista1, ista2] = 1
     def cc_wmat_glob(self, evnms, method='thrust', smax_s_km=0.045, ntheta=20, ns=5, fignm_prefix=None): # 'thrust', 'normal', 'thrust_normal', 'thrust_normal2', or 'other', or None
         if (method is None) or (method == 'None'):
             return None
@@ -1931,6 +1961,7 @@ class ManySrcs(dict):
     def s2s_cc_wmat(self, evnms, evlos_rad, evlas_rad, single_stlo_rad, single_stla_rad, az_err_rad=10./180.*np.pi, smin_s_km=0.0045, smax_s_km=0.045, naz=5, ns=5, binary=True, fignm_prefix=None, wave1='P', wave2='P'):
         missing_evnms = [it for it in evnms if it not in self]
         srcs   = [self.get(it, self['zero']) for it in evnms]
+        nsrc  = len(srcs)
         ####
         az    = azimuth_rad(evlos_rad, evlas_rad, single_stlo_rad, single_stla_rad)
         azmin = az - az_err_rad
@@ -1955,17 +1986,16 @@ class ManySrcs(dict):
             #amp_opp1[isrc] = it_src.get_sign_Pie(az_opp_min[isrc], az_opp_max[isrc], smin_s_km, smax_s_km, wave_type=wave1, naz=naz, ns=ns, binary=binary, fignm=fignm3)
             amp_opp2[isrc] = it_src.get_sign_Pie(az_opp_min[isrc], az_opp_max[isrc], smin_s_km, smax_s_km, wave_type=wave2, naz=naz, ns=ns, binary=binary, fignm=fignm4)
         ######
-        dbaz_mat = daz180(evlos_rad.size, evlos_rad, evlas_rad, single_stlo_rad, single_stla_rad)
+        dbaz_mat = daz_PI(evlos_rad.size, evlos_rad, evlas_rad, single_stlo_rad, single_stla_rad)
         ######
-        nsrc  = len(srcs)
         mat_az_az   = np.ones( (nsrc, nsrc), dtype=np.int8 if binary else np.float32)
         mat_az_azop = np.ones( (nsrc, nsrc), dtype=np.int8 if binary else np.float32)
         ManySrcs.__fast_arr2mat(amp1, amp2,     mat_az_az)
         ManySrcs.__fast_arr2mat(amp1, amp_opp2, mat_az_azop)
-        mat = np.where(dbaz_mat <= 90.0, mat_az_az, mat_az_azop)
+        mat = np.where(dbaz_mat <= HALF_PI, mat_az_az, mat_az_azop)
         #for i1 in range(nsrc):
         #    for i2 in range(nsrc):
-        #        if dbaz_mat[i1, i2] <= 90.0:
+        #        if dbaz_mat[i1, i2] <= HALF_PI:
         #            mat[i1, i2] = amp1[i1] * amp2[i2]
         #        else:
         #            mat[i1, i2] = amp1[i1] * amp_opp2[i2]
