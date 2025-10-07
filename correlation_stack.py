@@ -725,7 +725,7 @@ def get_stack_index_mat_dif_epd(n, evlo_rad, evla_rad, stlo_rad, stla_rad, dist_
         stack_index_mat_nn[ista1, ista1:] = istack
         stack_index_mat_nn[ista1:, ista1] = istack
 @jit(nopython=True, nogil=True)
-def cc_stack(ch1, ch2, znert_mat_spec_c64, lo_rad, la_rad, stack_mat_spec_c64, stack_count, stack_index_mat_nn, selection_mat_nn, wmat_nn):
+def cc_stack(ch1, ch2, znert_mat_spec_c64, lo_rad, la_rad, stack_mat_spec_c64, stack_count, stack_index_mat_nn, selection_mat_nn, wmat_nn, cc12_method):
     """
     Compute the cross-correlation and stack in spectral domain.
     #
@@ -748,6 +748,10 @@ def cc_stack(ch1, ch2, znert_mat_spec_c64, lo_rad, la_rad, stack_mat_spec_c64, s
     stack_index_mat_nn: the stack index matrix. It can be returned from `get_stack_index_mat(...)` or `get_stack_index_mat_dif_epd(...)`
     selection_mat_nn:   the selection matrix. It can be returned from `gcd_selection_rad(...)` and `daz_selection_rad(...)` .
     wmat_nn:            the weight matrix.
+    cc12_method:        an int for how to cope with the cc(tr[i1], tr[i2]) and cc(tr[i2], tr[i1]) where i1<=i2
+                        0(default): only consider cc(tr[i1], tr[i2]) where i1<=i2
+                        1:          only consider cc(tr[i2], tr[i1]) where i1<=i2
+                        2:          consider both cc(tr[i1], tr[i2]) and cc(tr[i2], tr[i1]) no matter i1 or i2
     """
     mat_spec = znert_mat_spec_c64
     flag_IR = (ch1==1 or ch1==2 or ch2==1 or ch2==2)
@@ -773,8 +777,13 @@ def cc_stack(ch1, ch2, znert_mat_spec_c64, lo_rad, la_rad, stack_mat_spec_c64, s
         cos12, sin12 = np.cos(angle12).astype(np.float32), np.sin(angle12).astype(np.float32)
         cos21, sin21 = np.cos(angle21).astype(np.float32), np.sin(angle21).astype(np.float32)
         ####
-        start = 0 if ch1 != ch2 else ista1
-        for ista2 in range(start, n):
+        #start = 0 if ch1 != ch2 else ista1
+        start, end = 0, n
+        if cc12_method == 0:
+            start = ista1
+        if cc12_method == 1:
+            end = ista1+1
+        for ista2 in range(start, end):
             #lo2, la2 = lo_rad[ista2], la_rad[ista2]
             z2 = mat_spec[ista2*ncmp]
             n2 = mat_spec[ista2*ncmp+1]
@@ -928,7 +937,7 @@ class CS_InterRcv:
     """
     Z, IRR, IRT, N, E, ERR, ERT = 0, 1, 2, 3, 4, 5, 6
     def __init__(self, ch_pair_type, delta, nt, cut_time_range=None,
-                 dist_range=(0.0, 180.0), dist_step=1.0,
+                 dist_range=(0.0, 180.0), dist_step=1.0, cc12_method=0,
                  wtlen=None, wt_f1=None, wt_f2=None, wflen=None, whiten_taper_halfsize=50,
                  daz_range=None, gcd_range=None,
                  gc_center_rect_boxes=None, gc_center_circles=None, critical_distance_deg=0.1,
@@ -947,6 +956,7 @@ class CS_InterRcv:
                         4 (CS_InterRcv.E)   for E
                         5 (CS_InterRcv.ERR) for event-receiver R (ERR)
                         6 (CS_InterRcv.ERT) for event-receiver T (ERT)
+        cc12_method: Check cc_stack(...) for meaning of this parameter, and how to set it.
         bin_method: could be `inter_dist`: using inter-rcv or inter-src distance to bin correlation functions.
                              `epdd`:       using absolute epicentral distance difference between two seismograms.
         """
@@ -989,6 +999,9 @@ class CS_InterRcv:
         log_print( 2, 'stack_bins.edges:   ', self.stack_bins.edges[0],   '...', self.stack_bins.edges[-1])
         self.bin_method = bin_method
         log_print( 2, 'bin_method:         ', bin_method, '(options: inter_dist, epdd)')
+        #
+        self.cc12_method = cc12_method
+        log_print( 2, 'cc12_method:        ', cc12_method, '(options: 0, 1, 2)')
         ### daz and gcd selections
         daz_range = np.zeros(0) if (daz_range is None) else daz_range
         gcd_range = np.zeros(0) if (gcd_range is None) else gcd_range
@@ -1434,7 +1447,7 @@ class CS_InterRcv:
                 stack_count = self.stack_count
                 stack_mat_spec = self.stack_mat_spec
                 #print(spectra_c64.dtype, stack_mat_spec.dtype, stack_count.dtype, stack_index_mat_nn.dtype, selection_mat.dtype, flush=True)
-                cc_stack(ch1, ch2, spectra_c64, cc_lo, cc_la, stack_mat_spec, stack_count, stack_index_mat_nn, ccpairs_selection_mat, wmat_nn)
+                cc_stack(ch1, ch2, spectra_c64, cc_lo, cc_la, stack_mat_spec, stack_count, stack_index_mat_nn, ccpairs_selection_mat, wmat_nn, self.cc12_method)
                 log_print(2, 'Finished.', flush=True)
         ############################################################################################################
         #t_total = time_time() - t0
@@ -1922,13 +1935,76 @@ class ManySrcs(dict):
         return merged_mat
     @staticmethod
     @jit(nopython=True, nogil=True)
-    def __fast_pair_geometry_wmat(dist, mat):
-        mat[:] = 0
-        n = mat.shape[0]
+    def __fast_get_wmat_larger_dist(n, dist, larger_first):
+        mat = np.zeros( (n, n), dtype=np.int8)
         for ista1 in range(n):
             for ista2 in range(n):
-                if dist[ista1] > dist[ista2]:
+                if dist[ista1] >= dist[ista2]: # force the 1st to be greater than the 2nd
                     mat[ista1, ista2] = 1
+        if not larger_first:
+            mat = 1-mat
+        return mat
+    @staticmethod
+    @jit(nopython=True, nogil=True)
+    def __fast_get_wmat_dist_larger_than_HALF_PI(n, dist):
+        mat = np.zeros( (n, n), dtype=np.int8)
+        for ista1 in range(n):
+            if dist[ista1] >= HALF_PI:
+                mat[ista1, :] = 1
+        return mat
+    @staticmethod
+    @jit(nopython=True, nogil=True)
+    def __sph_midpt_lola_rad(lo1_rad, la1_rad, lo2_rad, la2_rad): # compute mid-point of two points on a sphere, return in rad
+        x1, y1, z1 = np.cos(la1_rad)*np.cos(lo1_rad), np.cos(la1_rad)*np.sin(lo1_rad), np.sin(la1_rad)
+        x2, y2, z2 = np.cos(la2_rad)*np.cos(lo2_rad), np.cos(la2_rad)*np.sin(lo2_rad), np.sin(la2_rad)
+        xm, ym, zm = (x1+x2)*0.5, (y1+y2)*0.5, (z1+z2)*0.5
+        r = np.sqrt(xm*xm + ym*ym + zm*zm)
+        xm, ym, zm = xm/r, ym/r, zm/r
+        mid_lo_rad = np.arctan2(ym, xm)
+        mid_la_rad = np.arcsin(zm)
+        return mid_lo_rad, mid_la_rad
+    @staticmethod
+    @jit(nopython=True, nogil=True)
+    def __fast_get_wmat_mid_dist_larger_than_HALF_PI(evlos_rad, evlas_rad, single_stlo_rad, single_stla_rad):
+        n = evlos_rad.size
+        mat = np.zeros( (n, n), dtype=np.int8)
+        for ista1 in range(n):
+            evlo1, evla1 = evlos_rad[ista1], evlas_rad[ista1]
+            mid_los, mid_las = ManySrcs.__sph_midpt_lola_rad(evlo1, evla1, evlos_rad[ista1:], evlas_rad[ista1:])
+            d = haversine_rad(mid_los, mid_las, single_stlo_rad, single_stla_rad)
+            mat[ista1, ista1:] = (d >= HALF_PI).astype(np.int8)
+        mat += mat.T
+        return mat
+    @staticmethod
+    @jit(nopython=True, nogil=True)
+    def __fast_get_wmat_src_geo_selection(evlos_rad, evlas_rad, single_stlo_rad, single_stla_rad, method=0):
+        nsrc = evlos_rad.size
+        dbaz_mat = daz_PI(evlos_rad.size, evlos_rad, evlas_rad, single_stlo_rad, single_stla_rad) # az1-az2
+        dist = haversine_rad(evlos_rad, evlas_rad, single_stlo_rad, single_stla_rad)
+        ma1 = np.where(dbaz_mat >= HALF_PI, 1, 0) # area1 (dbaz>=pi/2)
+        ma2 = 1-ma1                               # area2 (dbaz<pi/2)
+        ma3 = ManySrcs.__fast_get_wmat_larger_dist(nsrc, dist, larger_first=True) # area3 (d1>=d2)
+        ma5 = ManySrcs.__fast_get_wmat_dist_larger_than_HALF_PI(nsrc, dist)       # area5 (d1>=pi/2)
+        ma7 = ManySrcs.__fast_get_wmat_mid_dist_larger_than_HALF_PI(evlos_rad, evlas_rad, single_stlo_rad, single_stla_rad) # area7 (d_mid_point>=pi/2)
+        ####
+        d12 = np.zeros((nsrc, nsrc), dtype=np.float32)
+        for ista in range(nsrc):
+            evlo1, evla1 = evlos_rad[ista], evlas_rad[ista]
+            d12[ista, :] = np.heaviside_rad(evlo1, evla1, evlos_rad[ista:], evlas_rad[ista:])
+        d12 += d12.T
+        ####
+        if method == 0:
+            ma23  = ma2 & ma3
+            return ma23
+        elif method == 2:
+            ma135 = ma1 & ma3 & ma5
+            ma137 = ma1 & ma3 & ma7
+            return np.where(d12<HALF_PI, ma135, ma137)
+        elif method == 1:
+            ma135 = ma1 & ma3 & ma5
+            ma137 = ma1 & ma3 & ma7
+            tmp = np.where(d12<HALF_PI, ma135, ma137)
+            return ma23 | tmp
     def cc_wmat_glob(self, evnms, method='thrust', smax_s_km=0.045, ntheta=20, ns=5, fignm_prefix=None): # 'thrust', 'normal', 'thrust_normal', 'thrust_normal2', or 'other', or None
         if (method is None) or (method == 'None'):
             return None
@@ -1958,11 +2034,25 @@ class ManySrcs(dict):
         self.__set_sign_thrust_normal(smax_s_km=smax_s_km, ntheta=ntheta, ns=ns, fignm_prefix=fignm_prefix)
         single_src = self.get(single_evnm, self['zero'])
         return single_src.sign_thrust_normal
-    def s2s_cc_wmat(self, evnms, evlos_rad, evlas_rad, single_stlo_rad, single_stla_rad, az_err_rad=10./180.*np.pi, smin_s_km=0.0045, smax_s_km=0.045, naz=5, ns=5, binary=True, fignm_prefix=None, wave1='P', wave2='P'):
+    def s2s_cc_wmat(self, evnms, evlos_rad, evlas_rad, single_stlo_rad, single_stla_rad,
+                    az_err_rad=10./180.*np.pi, smin_s_km=0.0045, smax_s_km=0.045, naz=5, ns=5, binary=True,
+                    fignm_prefix=None, wave1='P', wave2='P',
+                    src_geo_selection=None):
+        """
+        src_geo_selection: could be None(default), 0, 1, 2
+                           Check details shown in "src2src_src_geo_selection.jpg".
+        """
         missing_evnms = [it for it in evnms if it not in self]
         srcs   = [self.get(it, self['zero']) for it in evnms]
         nsrc  = len(srcs)
-        ####
+        wmat  = np.ones( (nsrc, nsrc), dtype=np.int8 if binary else np.float32)
+        ########################################################################################
+        dbaz_mat = daz_PI(evlos_rad.size, evlos_rad, evlas_rad, single_stlo_rad, single_stla_rad) # az1-az2
+        if src_geo_selection is not None:
+            if src_geo_selection not in (0, 1, 2):
+                raise ValueError('src_geo_selection must be None, 0, 1 or 2.', src_geo_selection)
+            wmat *= ManySrcs.__fast_get_wmat_src_geo_selection(evlos_rad, evlas_rad, single_stlo_rad, single_stla_rad, method=src_geo_selection)
+        ########################################################################################
         az    = azimuth_rad(evlos_rad, evlas_rad, single_stlo_rad, single_stla_rad)
         azmin = az - az_err_rad
         azmax = az + az_err_rad
@@ -1986,13 +2076,11 @@ class ManySrcs(dict):
             #amp_opp1[isrc] = it_src.get_sign_Pie(az_opp_min[isrc], az_opp_max[isrc], smin_s_km, smax_s_km, wave_type=wave1, naz=naz, ns=ns, binary=binary, fignm=fignm3)
             amp_opp2[isrc] = it_src.get_sign_Pie(az_opp_min[isrc], az_opp_max[isrc], smin_s_km, smax_s_km, wave_type=wave2, naz=naz, ns=ns, binary=binary, fignm=fignm4)
         ######
-        dbaz_mat = daz_PI(evlos_rad.size, evlos_rad, evlas_rad, single_stlo_rad, single_stla_rad)
-        ######
         mat_az_az   = np.ones( (nsrc, nsrc), dtype=np.int8 if binary else np.float32)
         mat_az_azop = np.ones( (nsrc, nsrc), dtype=np.int8 if binary else np.float32)
         ManySrcs.__fast_arr2mat(amp1, amp2,     mat_az_az)
         ManySrcs.__fast_arr2mat(amp1, amp_opp2, mat_az_azop)
-        mat = np.where(dbaz_mat <= HALF_PI, mat_az_az, mat_az_azop)
+        wmat *= np.where(dbaz_mat <= HALF_PI, mat_az_az, mat_az_azop)
         #for i1 in range(nsrc):
         #    for i2 in range(nsrc):
         #        if dbaz_mat[i1, i2] <= HALF_PI:
@@ -2000,11 +2088,11 @@ class ManySrcs(dict):
         #        else:
         #            mat[i1, i2] = amp1[i1] * amp_opp2[i2]
         ######
-        if not binary:
-            vmax = max(-mat.min(), mat.max())
-            if vmax > 0:
-                mat *= (1.0/vmax)
-        return mat, missing_evnms
+        #if not binary:
+        #    vmax = max(-wmat.min(), wmat.max())
+        #    if vmax > 0:
+        #        wmat *= (1.0/vmax)
+        return wmat, missing_evnms
     ###################################################################################################################################################
     @staticmethod
     def benchmark2():
@@ -2100,12 +2188,17 @@ class CS_InterSrc(CS_InterRcv):
             log_print( 1, 'wmat_nn:', None, 'all ones', flush=True)
             return None
         ####
-        wmat_nn, missing_evnms = self.srcs.cc_wmat_glob(evnms, method=method)
+        wmat_nn, missing_evnms = self.srcs.cc_wmat_glob(evnms, method=method, smax_s_km=smax_s_km, ntheta=ntheta, ns=ns, fignm_prefix=fignm_prefix)
         ####
-        log_print( 1, 'wmat_nn:', wmat_nn.shape)
+        log_print( 1, 'wmat_nn:', wmat_nn.shape, wmat_nn.dtype)
         log_print( 1, 'missing_events:', missing_evnms, flush=True)
         return wmat_nn
-    def s2s_cc_wmat(self, evnms, evlos_rad, evlas_rad, single_stlo_rad, single_stla_rad, az_err_rad=10./180.*np.pi, smin_s_km=0.0045, smax_s_km=0.045, naz=5, ns=5, binary=True, fignm_prefix=None, wave1='P', wave2='P', info=''):
+    def s2s_cc_wmat(self, evnms, evlos_rad, evlas_rad, single_stlo_rad, single_stla_rad,
+                    az_err_rad=10./180.*np.pi, smin_s_km=0.0045, smax_s_km=0.045, naz=5, ns=5, binary=True,
+                    fignm_prefix=None, wave1='P', wave2='P', src_geo_selection=None, info=''):
+        """
+        Check `ManySrcs.s2s_cc_wmat(...)` for parameter settings.
+        """
         log_print = self.logger
         log_print(-1, 'Set az-wise s2s correlation weight mat', info)
         log_print( 1, 'single_stlo_rad, single_stla_rad:', single_stlo_rad, single_stla_rad)
@@ -2118,9 +2211,9 @@ class CS_InterSrc(CS_InterRcv):
         wmat_nn, missing_evnms = self.srcs.s2s_cc_wmat(evnms, evlos_rad, evlas_rad, single_stlo_rad, single_stla_rad,
                                                        az_err_rad=az_err_rad, smin_s_km=smin_s_km, smax_s_km=smax_s_km,
                                                        naz=naz, ns=ns, binary=binary, fignm_prefix=fignm_prefix,
-                                                       wave1=wave1, wave2=wave2)
+                                                       wave1=wave1, wave2=wave2, src_geo_selection=src_geo_selection)
         ####
-        log_print( 1, 'wmat_nn:', wmat_nn.shape)
+        log_print( 1, 'wmat_nn:', wmat_nn.shape, wmat_nn.dtype)
         log_print( 1, 'missing_events:', missing_evnms, flush=True)
         return wmat_nn
 if __name__ == "__main__":
