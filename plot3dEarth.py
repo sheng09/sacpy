@@ -2075,10 +2075,7 @@ class beachball3d:
             dict_radiation['all'] = np.sqrt(P_amp**2 + SV_amp**2 + SH_amp**2)
         ####
         if proj_method== 'Schmidt':
-            if hemisphere == 'lower':
-                proj_r = np.sqrt(2)*np.cos(0.5*phi)*radius
-            elif hemisphere == 'upper':
-                proj_r = np.sqrt(2)*np.cos(0.5*(np.pi-phi) )*radius
+            proj_r = beachball3d.schmidt_phi2r(phi, radius, hemisphere=='lower' )
             rr, tt = np.meshgrid(proj_r, theta)
             values = dict_radiation[wave_type].reshape(theta_mesh.shape).T
             if ax_polar is None:
@@ -2146,12 +2143,12 @@ class beachball3d:
                 idxs = np.where(z < 0)
                 theta = theta[idxs]
                 phi = phi[idxs]
-                r = np.sqrt(2)*np.cos(0.5*phi)*scale
+                r = beachball3d.schmidt_phi2r(phi, scale, True)
             elif hemisphere == 'upper':
                 idxs = np.where(z > 0)[0]
                 theta = theta[idxs]
                 phi = phi[idxs]
-                r = np.sqrt(2)*np.cos(0.5*(np.pi-phi) )*scale
+                r = beachball3d.schmidt_phi2r(phi, scale, False)
             return theta, r
         if proj_method== 'Schmidt':
             #### plot nodal planes
@@ -2207,6 +2204,14 @@ class beachball3d:
             ax_polar.set_yticks([])
             return ax_polar
     ##########################################################################################
+    @staticmethod
+    @jit(nopython=True, nogil=True)
+    def schmidt_phi2r(phi, radius=1.0, lower_hemisphere=True):
+        if lower_hemisphere:
+            proj_r = np.sqrt(2)*np.cos(0.5*phi)*radius
+        else:
+            proj_r = np.sqrt(2)*np.cos(0.5*(np.pi-phi) )*radius
+        return proj_r
     @staticmethod
     def TP2tensor(t, p, norm=1.0):
         """

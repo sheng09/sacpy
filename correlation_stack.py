@@ -15,6 +15,7 @@ try:
 except:
     from scipy.fft import rfft, irfft
     FLAG_PYFFTW_USED = False
+from scipy.fft import rfftfreq
 from time import time as time_time
 from h5py import File as h5_File
 import matplotlib.pyplot as plt
@@ -366,8 +367,8 @@ class CF2d:
 HALF_PI = np.pi*0.5 # 90 degree
 PI = np.pi          # 180 degree
 TWO_PI = np.pi*2.0  # 360 degree
-@jit(nopython=True, nogil=True)
-def zne2znert(zne_mat, znert_mat, stlo_rad, stla_rad, evlo_rad, evla_rad):
+#@jit(nopython=True, nogil=True)
+def zne2znert(zne_mat, znert_mat, stlo_rad, stla_rad, evlo_rad, evla_rad, ne_at_src):
     """
     Convert the ZNE matrix to ZNERT matrix. The RT here refers to event-receiver R and T.
     In other words, the input matrix has rows of ZNEZNEZNE... and the output matrix has rows of ZNERTZNERTZNERT...
@@ -387,6 +388,10 @@ def zne2znert(zne_mat, znert_mat, stlo_rad, stla_rad, evlo_rad, evla_rad):
         stla_rad: an array for the station latitudes in radian
         evlo_rad: an array or a single value for the event longitude in radian
         evla_rad: an array or a single value for the event latitude in radian
+        ne_at_src: True or False (default).
+                   True to use the NE components at the source.
+                   False to use the NE components at the station.
+                   ZRT components are always the same at either station of source.
     """
     baz = azimuth_rad(stlo_rad, stla_rad, evlo_rad, evla_rad)
     ang = -HALF_PI-baz # baz to anti-clockwise angle from east
@@ -402,9 +407,31 @@ def zne2znert(zne_mat, znert_mat, stlo_rad, stla_rad, evlo_rad, evla_rad):
         znert_mat[ista*5,   :ncol] = z
         znert_mat[ista*5+1, :ncol] = n
         znert_mat[ista*5+2, :ncol] = e
-        znert_mat[ista*5+3, :ncol] = e*c + n*s
-        znert_mat[ista*5+4, :ncol] = e*s - n*c
-
+        znert_mat[ista*5+3, :ncol] = e*c + n*s # r
+        znert_mat[ista*5+4, :ncol] = e*s - n*c # t
+    if ne_at_src: # use the NE at source
+        az = azimuth_rad(evlo_rad, evla_rad, stlo_rad, stla_rad)
+        cs = np.cos(az)
+        ss = np.sin(az)
+        for ista in range(nsta):
+            c, s = cs[ista], ss[ista]
+            r = znert_mat[ista*5+3, :ncol] # r
+            t = znert_mat[ista*5+4, :ncol] # t
+            znert_mat[ista*5+1, :ncol] =-t*s + r*c # n @ src
+            znert_mat[ista*5+2, :ncol] = t*c + r*s # e @ src
+            #
+            #  Nsrc   / R
+            #    |   /
+            #    |  #(rcv)
+            #    | /
+            #    |/
+            #    o-------- Esrc
+            #   (src)
+            #
+            #   az is angle between Nsrc and R.
+            #   ==> Nsrc =-sin(az) T + cos(az) R
+            #       Esrc = cos(az) T + sin(az) R
+            #
 @jit(nopython=True, nogil=True)
 def gcd_selection(n, lo_rad, la_rad, ptlo_rad, ptla_rad, gcd_range_rad, gcd_selection_mat_nn):
     """
@@ -681,7 +708,7 @@ def pair_loc_selection(n, lo_rad, la_rad, loc_rect_boxes_rad, pair_loc_selection
     pair_loc_selection_mat_nn &= pair_loc_selection_mat_nn.T # make it symmetric
 __stack_bin_index = StackBins.stack_bin_index
 @jit(nopython=True, nogil=True)
-def get_stack_index_mat(n, lo_rad, la_rad, dist_min_deg, dist_step_deg, stack_index_mat_nn): # using inter-rcv/src distance
+def get_stack_index_mat(n, lo_rad, la_rad, dist_min_deg, dist_step_deg, stack_index_mat_nn, inter_dist_add_deg): # using inter-rcv/src distance
     """
     Compute  a NxN matrix which contains the index for each correlation pair.
     The ijth component of the matrix is the stacking index for the pair formed by the ith and jth records.
@@ -702,10 +729,14 @@ def get_stack_index_mat(n, lo_rad, la_rad, dist_min_deg, dist_step_deg, stack_in
                        This corresponds to the inter-station distance for inter-station correlations,
                        and the inter-source distance for inter-source correlations.
         stack_index_mat_nn: the output stack index matrix
+        inter_dist_add_deg:  a NxN matrix for adding individual inter-receiver (or inter-source) distances. Each element is in deg.
+                             This matrix will be added to the original NxN inter-receiver (or inter-source) distance matrix before
+                             computing the stacking index.
     """
     for ista1 in range(n):
         lo1, la1 = lo_rad[ista1], la_rad[ista1]
         inter_rcv_dist = np.rad2deg( haversine_rad(lo1, la1, lo_rad[ista1:], la_rad[ista1:]) )
+        inter_rcv_dist += inter_dist_add_deg[ista1, ista1:] # add the additional distance ??? is this true for both ij and ji ???
         istack = __stack_bin_index(inter_rcv_dist, dist_min_deg, dist_step_deg)
         stack_index_mat_nn[ista1, ista1:] = istack
         stack_index_mat_nn[ista1:, ista1] = istack
@@ -725,7 +756,7 @@ def get_stack_index_mat_dif_epd(n, evlo_rad, evla_rad, stlo_rad, stla_rad, dist_
         stack_index_mat_nn[ista1, ista1:] = istack
         stack_index_mat_nn[ista1:, ista1] = istack
 @jit(nopython=True, nogil=True)
-def cc_stack(ch1, ch2, znert_mat_spec_c64, lo_rad, la_rad, stack_mat_spec_c64, stack_count, stack_index_mat_nn, selection_mat_nn, wmat_nn, cc12_method):
+def cc_stack(ch1, ch2, znert_mat_spec_c64, lo_rad, la_rad, stack_mat_spec_c64, stack_count, stack_index_mat_nn, selection_mat_nn, wmat_nn, cc12_method, spectra_freqs, cc_right_tshift_sec):
     """
     Compute the cross-correlation and stack in spectral domain.
     #
@@ -814,13 +845,13 @@ def cc_stack(ch1, ch2, znert_mat_spec_c64, lo_rad, la_rad, stack_mat_spec_c64, s
                     c1, s1 = cos12[ista2], sin12[ista2]
                     c2, s2 = cos21[ista2], sin21[ista2]
                     if ch1 == 1:             #1 for inter-receiver R IRR
-                        irr1 = e1*c1 + n1*s1 #
+                        irr1[:] = e1*c1 + n1*s1 #
                     elif ch1 == 2:           #2 for inter-receiver T IRT
-                        irt1 = e1*s1 - n1*c1 #
+                        irt1[:] = e1*s1 - n1*c1 #
                     if ch2 == 1:             #1 for inter-receiver R IRR
-                        irr2 = e2*c2 + n2*s2 #
+                        irr2[:] = e2*c2 + n2*s2 #
                     elif ch2 == 2:           #2 for inter-receiver T IRT
-                        irt2 = e2*s2 - n2*c2 #
+                        irt2[:] = e2*s2 - n2*c2 #
                 #### cc
                 #dtypes = dtypes.union( set( [str(it) for it in (z1.dtype, irr1.dtype, irt1.dtype, n1.dtype, e1.dtype, err1.dtype, ert1.dtype)] ) )
                 #print(z1.dtype, irr1.dtype, irt1.dtype, n1.dtype, e1.dtype, err1.dtype, ert1.dtype, flush=True)
@@ -829,6 +860,11 @@ def cc_stack(ch1, ch2, znert_mat_spec_c64, lo_rad, la_rad, stack_mat_spec_c64, s
                 ss = s1[ch1] * s2[ch2].conj() # of complex64 (8 bytes)
                 ss *= (selection_mat_nn[ista1, ista2] * wmat_nn[ista1, ista2])
                 #ss.view(dtype=np.uint64)[:] #&= selection_mat_nn[ista1, ista2] # select or discard for 0xFFFFFFFFFFFFFFFF or 0
+                #### shift righwards
+                t_shift_right_wards = cc_right_tshift_sec[ista1, ista2]
+                if np.abs(t_shift_right_wards) > 1e-6:
+                    phase = np.exp(-1j * TWO_PI * spectra_freqs * t_shift_right_wards)
+                    ss *= phase
                 #### stack
                 istack = stack_index_mat_nn[ista1, ista2]
                 stack_mat_spec_c64[istack] += ss
@@ -1170,7 +1206,7 @@ class CS_InterRcv:
     def __del__(self):
         if self.intermediate_out_h5fid is not None:
             self.intermediate_out_h5fid.close()
-    def add(self, zne_mat_f32, stlo_rad, stla_rad, evlo_rad, evla_rad, event_name=None, local_time_summary=None, wmat_nn=None):
+    def add(self, zne_mat_f32, stlo_rad, stla_rad, evlo_rad, evla_rad, event_name=None, local_time_summary=None, wmat_nn=None, inter_dist_add_deg=None, cc_right_tshift_sec=None):
         """
         local_time_summary: a TimeSummary object to record the time consumption for this function.
                             If `None`, a internal empty TimeSummary object will be created.
@@ -1178,6 +1214,8 @@ class CS_InterRcv:
                             Note, all time summary by the `local_time_summary` will be added
                             to `self.time_summary`.  So be careful for avoiding repeatedly
                             adding the same time summary multiple times.
+        inter_dist_add_deg:  a NxN matrix for adding individual inter-receiver (or inter-source) distances. Each element is in deg.
+        cc_right_tshift_sec: a NxN matrix for rightwards shifting individual cross-correlation function. Each element is in sec.
         """
         if local_time_summary is None:
             local_time_summary = TimeSummary(accumulative=True)
@@ -1265,10 +1303,15 @@ class CS_InterRcv:
         #### stack index
         with Timer(tag='get_stack_index', verbose=False, summary=local_time_summary):
             log_print(1, 'Computing the stack index...')
+            if inter_dist_add_deg is None:
+                log_print(2, 'inter_dist_add_deg', inter_dist_add_deg, '(all zeros used for None)')
+                inter_dist_add_deg = np.zeros( (cc_lo.size, cc_lo.size), dtype=np.float32)
+            else:
+                log_print(2, 'inter_dist_add_deg', inter_dist_add_deg.shape, inter_dist_add_deg.dtype, 'range:', inter_dist_add_deg.min(), inter_dist_add_deg.max() )
             stack_index_mat_nn = np.zeros( (cc_lo.size, cc_la.size), dtype=np.uint16)
             dist_min, dist_step = self.stack_bins.centers[0], self.stack_bins.step
             if self.bin_method == 'inter_dist':
-                get_stack_index_mat(cc_lo.size, cc_lo, cc_la, dist_min, dist_step, stack_index_mat_nn)
+                get_stack_index_mat(cc_lo.size, cc_lo, cc_la, dist_min, dist_step, stack_index_mat_nn, inter_dist_add_deg)
             elif self.bin_method == 'epdd':
                 get_stack_index_mat_dif_epd(cc_lo.size, evlo_rad, evla_rad, stlo_rad, stla_rad, dist_min, dist_step, stack_index_mat_nn)
             dict_output_inter_mediate_data['stack_index_mat_nn'] = stack_index_mat_nn
@@ -1293,8 +1336,9 @@ class CS_InterRcv:
                 ### nt4mem >= nt4cut, and zeros are padded for those additional slots in nt4mem compared to nt4cut.
                 ### nt4cut == self.cut_idx_range[1]-self.cut_idx_range[0]
                 ### nt4mem != self.cut_idx_range[1]-self.cut_idx_range[0]
-                zne2znert(zne_mat_f32[:, idx0:idx1], znert_mat_f32, stlo_rad, stla_rad, evlo_rad, evla_rad)
+                zne2znert(zne_mat_f32[:, idx0:idx1], znert_mat_f32, stlo_rad, stla_rad, evlo_rad, evla_rad, self.inter_src)
                 del zne_mat_f32
+                log_print(2, 'ne_at_src:     ', self.inter_src)
                 log_print(2, 'cut_idx here:  [%d, %d)' % (idx0, idx1) )
                 log_print(2, 'nt here:       ', local_sz)
                 log_print(2, 'cut_idx_range: [%d, %d)' % (self.cut_idx_range[0], self.cut_idx_range[1]) )
@@ -1306,7 +1350,7 @@ class CS_InterRcv:
         ### only need to take care of those time series for the selected correlation pairs and with non-zero weights
         ### only need for non-dummy-cc mode
         if (not self.dummy_cc):
-            flag_used = np.zeros(cc_lo.size*5, dtype=np.uint8)
+            flag_used = np.zeros(cc_lo.size, dtype=np.uint8)
             for ind in range(cc_lo.size):
                 v = np.any(ccpairs_selection_mat[ind, :]) & np.any(ccpairs_selection_mat[:, ind])
                 v2 = True
@@ -1399,6 +1443,12 @@ class CS_InterRcv:
                     grp['ccpairs_selection_mat'].attrs['shape'] = ccpairs_selection_mat.shape
                 if flag_wmat_nn:
                     grp.create_dataset('wmat', data=wmat_nn, dtype=wmat_nn.dtype)
+                if cc_right_tshift_sec is not None:
+                    if np.sum(np.abs(cc_right_tshift_sec)) > 1e-6:
+                        grp.create_dataset('cc_right_tshift_sec', data=cc_right_tshift_sec, dtype=np.float32)
+                if inter_dist_add_deg is not None:
+                    if np.sum(np.abs(inter_dist_add_deg)) > 1e-6:
+                        grp.create_dataset('inter_dist_add_deg', data=inter_dist_add_deg, dtype=np.float32)
                 # stack_index_mat_nn values are not binary, hence CANNOT support packbits(...)
                 grp.create_dataset('stack_index_mat_nn', data=stack_index_mat_nn)
                 grp['stack_index_mat_nn'].attrs['bin_settings']    = (self.stack_bins.centers[0], self.stack_bins.step, self.stack_bins.centers.size)
@@ -1436,6 +1486,9 @@ class CS_InterRcv:
                     for irow in ind_selected: # only need those valid ind
                         spectra_c64[irow] = rfft(znert_mat_f32[irow], self.cc_fftsize)[i1:i2]# method: scipy.fft.rfft
                 del znert_mat_f32
+                ### get the Frequency array
+                spectra_freqs = rfftfreq(self.cc_fftsize, d=self.delta)[i1:i2].astype(np.float32)
+                ###
                 log_print(2, 'Finished.')
                 log_print(2, 'spectra_c64: ', spectra_c64.shape, spectra_c64.dtype, flush=True)
         ############################################################################################################
@@ -1443,11 +1496,18 @@ class CS_InterRcv:
         if (not self.dummy_cc):
             with Timer(tag='ccstack', verbose=False, summary=local_time_summary):
                 log_print(1, 'cc&stack...')
+                ####
+                if cc_right_tshift_sec is None:
+                    log_print(2, 'cc_right_tshift_sec', cc_right_tshift_sec, '(all zeros used for None)')
+                    cc_right_tshift_sec = np.zeros( (cc_lo.size, cc_lo.size), dtype=np.float32)
+                else:
+                    log_print(2, 'cc_right_tshift_sec', cc_right_tshift_sec.shape, cc_right_tshift_sec.dtype, 'range:', cc_right_tshift_sec.min(), cc_right_tshift_sec.max() )
+                ####
                 ch1, ch2 = self.ch_pair_type
                 stack_count = self.stack_count
                 stack_mat_spec = self.stack_mat_spec
                 #print(spectra_c64.dtype, stack_mat_spec.dtype, stack_count.dtype, stack_index_mat_nn.dtype, selection_mat.dtype, flush=True)
-                cc_stack(ch1, ch2, spectra_c64, cc_lo, cc_la, stack_mat_spec, stack_count, stack_index_mat_nn, ccpairs_selection_mat, wmat_nn, self.cc12_method)
+                cc_stack(ch1, ch2, spectra_c64, cc_lo, cc_la, stack_mat_spec, stack_count, stack_index_mat_nn, ccpairs_selection_mat, wmat_nn, self.cc12_method, spectra_freqs, cc_right_tshift_sec)
                 log_print(2, 'Finished.', flush=True)
         ############################################################################################################
         #t_total = time_time() - t0
@@ -1670,7 +1730,52 @@ class CS_InterRcv:
             if not os.path.exists(folder):
                 os.makedirs(folder)
 
-
+@jit(nopython=True, nogil=True)
+def SS_trvt_dep2surf(mod_dep_surf2deep, mod_vel, evdp_km, slowness_s_km):
+    for ilayer in range(mod_dep_surf2deep.size-1):
+        if mod_dep_surf2deep[ilayer]<= evdp_km and evdp_km < mod_dep_surf2deep[ilayer+1]:
+            ib = ilayer
+            break
+    ib = ilayer
+    #### buffer
+    t = np.zeros(ib+1, dtype=np.float64)
+    x = np.zeros(ib+1, dtype=np.float64)
+    ####
+    z = -1.0 * mod_dep_surf2deep[:ib+2]
+    z[-1] = -evdp_km
+    v = np.copy(mod_vel[:ib+2])
+    v[-1] = np.interp(evdp_km, mod_dep_surf2deep[ilayer: ilayer+2], mod_vel[ilayer: ilayer+2] )
+    ####
+    pmax = 1.0/v[-1]
+    if slowness_s_km < 1e-6:
+        slowness_s_km = 1e-6
+    if slowness_s_km > pmax:
+        slowness_s_km = pmax
+    p = slowness_s_km
+    inv_p = 1.0/p
+    ####
+    dz = np.diff(z)
+    dv = np.diff(v)
+    inv_k = np.where(np.abs(dv) > 1e-10, dz/dv, 0.0)
+    #### critical angles
+    sin_theta         = p*v
+    #sin_theta         = np.clip(sin_theta, 0.0, 1.0)
+    cos_theta         = np.sqrt(1.0 - sin_theta*sin_theta)
+    tan_half_theta    = (1-cos_theta) / sin_theta
+    ln_tan_half_theta = np.log( tan_half_theta )
+    ####
+    for i in range(ib+1): # i = 0,1,2,...,ib-1
+        if np.abs(dz[i]) < 1e-10:
+            t[i], x[i] = 0.0, 0.0
+        elif np.abs(dv[i]) > 1e-10:
+            t[i] = inv_k[i] * (ln_tan_half_theta[i] - ln_tan_half_theta[i+1] )
+            x[i] = inv_p * inv_k[i] * (cos_theta[i+1] - cos_theta[i])
+        else: # dv[i] == 0.0
+            t[i] = -dz[i] / (v[i]*cos_theta[i])
+            x[i] = -dz[i] * (sin_theta[i]/cos_theta[i])
+    dist = np.sum(x)
+    trvt = np.sum(t)
+    return dist, trvt
 class SingleSrc(beachball3d):
     theta = np.linspace(0, 2*np.pi, 181)
     phi   = np.linspace(0, np.pi, 91)
@@ -1702,12 +1807,17 @@ class SingleSrc(beachball3d):
         self.SV_amp_cutoff = cutoff_amp_ratio * self.SV_amp_absmax
         self.SH_amp_cutoff = cutoff_amp_ratio * self.SH_amp_absmax
     #####
-    def slowness2phi(self, slowness_s_km, wave_type='P'): # return in rad
+    def slowness2phi(self, slowness_s_km, wave_type='P', down_going=True): # return in rad
+        """
+        down_going: True for downgoing rays (takeoff angle >90degree), False for upgoing rays (takeoff angle <90degree)
+        """
         if wave_type=='P':
             takeoff_angle_rad = np.arcsin( np.clip(slowness_s_km * self.vp_at_evdp, -1, 1) )
         else:
             takeoff_angle_rad = np.arcsin( np.clip(slowness_s_km * self.vs_at_evdp, -1, 1) )
         phi = np.pi - takeoff_angle_rad
+        if not down_going:
+            phi = takeoff_angle_rad
         return phi
     def get_theta_phi_mesh_bblh_Circle(self, smax, wave_type='P', ntheta=20, ns=5): # get points for a circular area centered at (phi=180degree) on the lower half of beachball for P or S waves
         if smax <= 0.0:
@@ -1789,28 +1899,30 @@ class SingleSrc(beachball3d):
             ax1.set_title(title1)
             ax2.set_title(title2)
             ax3.set_title(title3)
+            proj_r_p = beachball3d.schmidt_phi2r(phi_p, lower_hemisphere=True)
+            proj_r_s = beachball3d.schmidt_phi2r(phi_s, lower_hemisphere=True)
             if len(theta_p)>0:
                 for ax in (ax1, ax4):
-                    ax.plot(theta_p, np.sqrt(2)*np.sin((np.pi-phi_p)*0.5), linestyle='', marker='.', color='c')
+                    ax.plot(theta_p, proj_r_p, linestyle='', marker='.', color='c')
             if len(theta_s)>0:
                 for ax in (ax2, ax3, ax5, ax6):
-                    ax.plot(theta_s, np.sqrt(2)*np.sin((np.pi-phi_s)*0.5), linestyle='', marker='.', color='c')
+                    ax.plot(theta_s, proj_r_s, linestyle='', marker='.', color='c')
             ##########
             loc_xyz, vec_p,  amp_p  = self.radiation_fast(theta_p, phi_p, wave_type='P',  binarization=False)
             loc_xyz, vec_sv, amp_sv = self.radiation_fast(theta_p, phi_p, wave_type='SV', binarization=False)
             loc_xyz, vec_sh, amp_sh = self.radiation_fast(theta_p, phi_p, wave_type='SH', binarization=False)
             l = 1.0/np.sqrt(vec_p[:,0]*vec_p[:,0] + vec_p[:,1]*vec_p[:,1])
-            ax4.quiver(theta_p, np.sqrt(2)*np.sin((np.pi-phi_p)*0.5), vec_p[:,0]*l, vec_p[:,1]*l, pivot='tail', color='k', scale=15, scale_units='width', zorder=100, clip_on=True)
-            ax5.quiver(theta_s, np.sqrt(2)*np.sin((np.pi-phi_s)*0.5), vec_sv[:,0], vec_sv[:,1], pivot='tail', color='k', scale=15, scale_units='width', zorder=100, clip_on=True)
-            ax6.quiver(theta_s, np.sqrt(2)*np.sin((np.pi-phi_s)*0.5), vec_sh[:,0], vec_sh[:,1], pivot='tail', color='k', scale=15, scale_units='width', zorder=100, clip_on=True)
+            ax4.quiver(theta_p, proj_r_p, vec_p[:,0]*l, vec_p[:,1]*l, pivot='tail', color='k', scale=15, scale_units='width', zorder=100, clip_on=True)
+            ax5.quiver(theta_s, proj_r_s, vec_sv[:,0], vec_sv[:,1], pivot='tail', color='k', scale=15, scale_units='width', zorder=100, clip_on=True)
+            ax6.quiver(theta_s, proj_r_s, vec_sh[:,0], vec_sh[:,1], pivot='tail', color='k', scale=15, scale_units='width', zorder=100, clip_on=True)
             idxs = np.where(vec_sv[:,2]<=0.0)[0]
-            ax5.plot(theta_s[idxs], np.sqrt(2)*np.sin((np.pi-phi_s[idxs])*0.5), linestyle='', marker='x', color='k', clip_on=True)
+            ax5.plot(theta_s[idxs], proj_r_s[idxs], linestyle='', marker='x', color='k', clip_on=True)
             idxs = np.where(vec_sv[:,2]>0.0)[0]
-            ax5.plot(theta_s[idxs], np.sqrt(2)*np.sin((np.pi-phi_s[idxs])*0.5), linestyle='', marker='.', color='k', clip_on=True)
+            ax5.plot(theta_s[idxs], proj_r_s[idxs], linestyle='', marker='.', color='k', clip_on=True)
             ax4.set_xlabel('Positive amplitudes along the arrow directions.\nNegative amplitudes along the reverse arrow directions.')
             ax5.set_xlabel('Cross x is going into the paper.\nDot is coming out of the paper.')
             ax6.set_xlabel('Positive amplitudes along the arrow directions.\nNegative amplitudes along the reverse arrow directions.')
-            ax4.set_ylim(0, 1.3*np.sqrt(2)*np.sin((np.pi-np.min(phi_p))*0.5) )
+            ax4.set_ylim(0, 1.3*beachball3d.schmidt_phi2r(np.min(phi_p), lower_hemisphere=True) )
             for ax in (ax4, ax5, ax6):
                 ax.set_xticklabels([])
                 ax.set_yticklabels([])
@@ -1823,6 +1935,13 @@ class SingleSrc(beachball3d):
         return (self.get_sign_Circle(smax, wave_type='P', ntheta=ntheta, ns=ns, binary=True, fignm=fignm) == -1) * -1
     def is_thrust_normal(self, smax=0.045, ntheta=20, ns=5, fignm=None): # return 1, -1 or 0
         return self.get_sign_Circle(smax, wave_type='P', ntheta=ntheta, ns=ns, binary=True, fignm=fignm)
+    def dist_trvt_to_surf(self, slowness_s_km=0.01, wave_type='P', model='ak135'): # return the dist (km) and trvt (s) from the source to surface
+        model_tab = SingleSrc.__dict_mod1d[model]
+        dep = model_tab[0]
+        vel = model_tab[1] if wave_type=='P' else model_tab[2]
+        evdp_km = self.evdp if self.evdp >= 0.0 else 0.0 # force the source to be beneath the surface
+        dist_km, trvt = SS_trvt_dep2surf(dep, vel, evdp_km, slowness_s_km)
+        return dist_km, trvt
     ###################################################################################################################################################
     __dict_mod1d = {'prem': np.array([  [0.000, 3.000, 15.000, 15.000, 24.400, 24.400, 71.000, 80.000, 80.000, 171.000, 220.000, 220.000, 271.000, 371.000, 400.000, 400.000, 471.000, 571.000, 600.000, 600.000, 670.000, 670.000, 771.000,],
                                         [5.800, 5.800, 5.800, 6.800, 6.800, 8.110, 8.080, 8.080, 8.080, 8.020, 7.990, 8.560, 8.660, 8.850, 8.910, 9.130, 9.500, 10.010, 10.160, 10.160, 10.270, 10.750, 11.070,],
@@ -1831,9 +1950,137 @@ class SingleSrc(beachball3d):
                                         [5.800, 5.800, 5.800, 6.800, 6.800, 8.036, 8.038, 8.040, 8.045, 8.050, 8.050, 8.175, 8.301, 8.301, 8.482, 8.665, 8.848, 9.030, 9.360, 9.528, 9.696, 9.864, 10.032, 10.200, 10.791, 10.922, 11.055, 11.135, 11.223, 11.307, 11.390,],
                                         [3.200, 3.200, 3.200, 3.900, 3.900, 4.484, 4.486, 4.480, 4.490, 4.500, 4.500, 4.509, 4.518, 4.518, 4.609, 4.696, 4.783, 4.870, 5.081, 5.186, 5.292, 5.399, 5.505, 5.610, 5.961, 6.090, 6.210, 6.242, 6.280, 6.316, 6.352,]])
                     }
+    def benchmark():
+        dep = SingleSrc.__dict_mod1d['ak135'][0]
+        vp  = SingleSrc.__dict_mod1d['ak135'][1]
+        vs  = SingleSrc.__dict_mod1d['ak135'][2]
+        for evdp_km in (10, 20, 30, 40, 60, 60, 70, 80, 90, 100, 200, 300, 400, 500, 600):
+            tP = SS_trvt_dep2surf(dep, vp, evdp_km, 1e-6)
+            tS = SS_trvt_dep2surf(dep, vs, evdp_km, 1e-6)
+            print(evdp_km, tP, tS)
+        for evdp_km in (10, 20, 30, 40, 60, 60, 70, 80, 90, 100, 200, 300, 400, 500, 600):
+            tP = SS_trvt_dep2surf(dep, vp, evdp_km, 0.2)
+            tS = SS_trvt_dep2surf(dep, vs, evdp_km, 0.2)
+            print(evdp_km, tP, tS)
+@jit(nopython=True, nogil=True)
+def MS_fast_two_arr2mat(arr1, arr2, mat):
+    for i1, s1 in enumerate(arr1):
+        for i2, s2 in enumerate(arr2):
+            mat[i1, i2] = s1 * s2
+    return mat
+@jit(nopython=True, nogil=True)
+def MS_fast_merge_mat_same_sign(mat1, mat2):
+    sign1 = np.sign(mat1)
+    sign2 = np.sign(mat2)
+    same_sign = (sign1 == sign2) & (sign1 != 0)
+    #
+    abs_mat1 = np.abs(mat1)
+    abs_mat2 = np.abs(mat2)
+    merged_mat = np.where(abs_mat1<abs_mat2, mat1, mat2)
+    #
+    merged_mat *= same_sign
+    return merged_mat
+@jit(nopython=True, nogil=True)
+def MS_fast_get_wmat_larger_dist(n, dist, larger_first):
+    mat = np.zeros( (n, n), dtype=np.int8)
+    for ista1 in range(n):
+        for ista2 in range(n):
+            if dist[ista1] >= dist[ista2]: # force the 1st to be greater than the 2nd
+                mat[ista1, ista2] = 1
+    if not larger_first:
+        mat[:] = 1-mat
+    return mat
+@jit(nopython=True, nogil=True)
+def MS_fast_get_wmat_dist_larger_than_HALF_PI(n, dist):
+    mat = np.zeros( (n, n), dtype=np.int8)
+    for ista1 in range(n):
+        if dist[ista1] >= HALF_PI:
+            mat[ista1, :] = 1
+    return mat
+@jit(nopython=True, nogil=True)
+def MS_sph_midpt_lola_rad(lo1_rad, la1_rad, lo2_rad, la2_rad): # compute mid-point of two points on a sphere, return in rad
+    x1, y1, z1 = np.cos(la1_rad)*np.cos(lo1_rad), np.cos(la1_rad)*np.sin(lo1_rad), np.sin(la1_rad)
+    x2, y2, z2 = np.cos(la2_rad)*np.cos(lo2_rad), np.cos(la2_rad)*np.sin(lo2_rad), np.sin(la2_rad)
+    xm, ym, zm = (x1+x2)*0.5, (y1+y2)*0.5, (z1+z2)*0.5
+    r = np.sqrt(xm*xm + ym*ym + zm*zm)
+    xm, ym, zm = xm/r, ym/r, zm/r
+    mid_lo_rad = np.arctan2(ym, xm)
+    mid_la_rad = np.arcsin(zm)
+    return mid_lo_rad, mid_la_rad
+@jit(nopython=True, nogil=True)
+def MS_fast_get_wmat_mid_dist_larger_than_HALF_PI(evlos_rad, evlas_rad, single_stlo_rad, single_stla_rad):
+    n = evlos_rad.size
+    mat = np.zeros( (n, n), dtype=np.int8)
+    for ista1 in range(n):
+        evlo1, evla1 = evlos_rad[ista1], evlas_rad[ista1]
+        mid_los, mid_las = MS_sph_midpt_lola_rad(evlo1, evla1, evlos_rad[ista1:], evlas_rad[ista1:])
+        d = haversine_rad(mid_los, mid_las, single_stlo_rad, single_stla_rad)
+        mat[ista1, ista1:] = (d >= HALF_PI).astype(np.int8)
+    mat += mat.T
+    return mat
+@jit(nopython=True, nogil=True)
+def MS_fast_heaviside_d12_mat(evlos_rad, evlas_rad):
+    nsrc = evlos_rad.size
+    d12_mat = np.zeros((nsrc, nsrc), dtype=np.float32)
+    for ista1 in range(nsrc):
+        evlo1, evla1 = evlos_rad[ista1], evlas_rad[ista1]
+        d12_mat[ista1, ista1:] = haversine_rad(evlo1, evla1, evlos_rad[ista1:], evlas_rad[ista1:])
+    d12_mat += d12_mat.T
+    return d12_mat
+@jit(nopython=True, nogil=True)
+def MS_fast_get_wmat_src_geo_selection(evlos_rad, evlas_rad, single_stlo_rad, single_stla_rad, method=0):
+    nsrc = evlos_rad.size
+    dbaz_mat = daz_PI(evlos_rad.size, evlos_rad, evlas_rad, single_stlo_rad, single_stla_rad) # az1-az2
+    dist = haversine_rad(evlos_rad, evlas_rad, single_stlo_rad, single_stla_rad)
+    ma1 = np.where(dbaz_mat >= HALF_PI, 1, 0) # area1 (dbaz>=pi/2)
+    ma2 = 1-ma1                               # area2 (dbaz<pi/2)
+    ma3 = MS_fast_get_wmat_larger_dist(nsrc, dist, True) # area3 (d1>=d2)
+    ma5 = MS_fast_get_wmat_dist_larger_than_HALF_PI(nsrc, dist)       # area5 (d1>=pi/2)
+    ma7 = MS_fast_get_wmat_mid_dist_larger_than_HALF_PI(evlos_rad, evlas_rad, single_stlo_rad, single_stla_rad) # area7 (d_mid_point>=pi/2)
+    ####
+    d12 = MS_fast_heaviside_d12_mat(evlos_rad, evlas_rad)
+    ####
+    if method == 0:
+        ma23  = ma2 & ma3
+        return ma23
+    elif method == 2:
+        ma135 = ma1 & ma3 & ma5
+        ma137 = ma1 & ma3 & ma7
+        return np.where(d12<HALF_PI, ma135, ma137)
+    elif method == 1:
+        ma135 = ma1 & ma3 & ma5
+        ma137 = ma1 & ma3 & ma7
+        tmp = np.where(d12<HALF_PI, ma135, ma137)
+        return ma23 | tmp
+@jit(nopython=True, nogil=True)
+def MS_cc_corr(dist1_km, dist2_km, trvt1_sec, trvt2_sec, method):
+    dist1_deg = np.rad2deg(dist1_km / 6371.0)
+    dist2_deg = np.rad2deg(dist2_km / 6371.0)
+    d_corr = np.zeros((dist1_deg.size, dist2_deg.size), dtype=np.float32)
+    t_corr = np.zeros((dist1_deg.size, dist2_deg.size), dtype=np.float32)
+    if method == 0:
+        #  --------o----------------------o----- move the source to surface
+        #          \                      \
+        #           \                      \
+        #            x                      x    source at depth
+        #
+        for ipt1 in range(dist1_deg.size):
+            for ipt2 in range(dist1_deg.size):
+                d_corr[ipt1, ipt2] =  dist1_deg[ipt1] - dist2_deg[ipt2]
+                t_corr[ipt1, ipt2] = -trvt1_sec[ipt1] + trvt2_sec[ipt2]
+    elif method == 1:
+        #  --------o----------------------o----- move the source to surface
+        #          \                     /
+        #           \                   /  
+        #            x                 x    source at depth
+        for ipt1 in range(dist1_deg.size):
+            for ipt2 in range(dist1_deg.size):
+                d_corr[ipt1, ipt2] =  dist1_deg[ipt1] + dist2_deg[ipt2]
+                t_corr[ipt1, ipt2] = -trvt1_sec[ipt1] - trvt2_sec[ipt2]
+    return d_corr, t_corr # in deg and sec
 class ManySrcs(dict):
     def __init__(self, evnm=None, gcmt=None, evlo_rad=None, evla_rad=None, evdp_km=None, model='ak135', cutoff_amp_ratio=0.05, 
-                 catalog_pickle_fnm=None, catalog_xml_fnm=None, max_nsrc=-1):
+                 catalog_pickle_fnm=None, catalog_xml_fnm=None, max_nsrc=-1, evdp_km_min=-1e100, evdp_km_max=1e100):
         if catalog_pickle_fnm is not None:
             evnm, gcmt, evlo_rad, evla_rad, evdp_km = ManySrcs.rd_quake_pickle(catalog_pickle_fnm)
         elif catalog_xml_fnm is not None:
@@ -1843,7 +2090,8 @@ class ManySrcs(dict):
         for nm, cmt, lo, la, dp in zip(evnm, gcmt, evlo_rad, evla_rad, evdp_km):
             if nm in self:
                 raise ValueError('Err: source existed!', nm)
-            self[nm] = SingleSrc(cmt, lo, la, dp, nm, model=model)
+            if evdp_km_min <= dp <= evdp_km_max:
+                self[nm] = SingleSrc(cmt, lo, la, dp, nm, model=model)
         ########
         self['zero'] = SingleSrc((0., 0., 0., 0., 0., 0.), 0., 0., 10., 'zero', model=model)
         ########
@@ -1913,98 +2161,6 @@ class ManySrcs(dict):
             it.sign_thrust_normal = it.is_thrust_normal(smax_s_km, ntheta=ntheta, ns=ns, fignm=fignm) # return 1, -1 or 0
         self.param_set_sign_thrust_normal = smax_s_km
     ####
-    @staticmethod
-    @jit(nopython=True, nogil=True)
-    def __fast_arr2mat(arr1, arr2, mat):
-        for i1, s1 in enumerate(arr1):
-            for i2, s2 in enumerate(arr2):
-                mat[i1, i2] = s1 * s2
-        return mat
-    @staticmethod
-    @jit(nopython=True, nogil=True)
-    def __fast_merge_mat_same_sign(mat1, mat2):
-        sign1 = np.sign(mat1)
-        sign2 = np.sign(mat2)
-        same_sign = (sign1 == sign2) & (sign1 != 0)
-        #
-        abs_mat1 = np.abs(mat1)
-        abs_mat2 = np.abs(mat2)
-        merged_mat = np.where(abs_mat1<abs_mat2, mat1, mat2)
-        #
-        merged_mat *= same_sign
-        return merged_mat
-    @staticmethod
-    @jit(nopython=True, nogil=True)
-    def __fast_get_wmat_larger_dist(n, dist, larger_first):
-        mat = np.zeros( (n, n), dtype=np.int8)
-        for ista1 in range(n):
-            for ista2 in range(n):
-                if dist[ista1] >= dist[ista2]: # force the 1st to be greater than the 2nd
-                    mat[ista1, ista2] = 1
-        if not larger_first:
-            mat = 1-mat
-        return mat
-    @staticmethod
-    @jit(nopython=True, nogil=True)
-    def __fast_get_wmat_dist_larger_than_HALF_PI(n, dist):
-        mat = np.zeros( (n, n), dtype=np.int8)
-        for ista1 in range(n):
-            if dist[ista1] >= HALF_PI:
-                mat[ista1, :] = 1
-        return mat
-    @staticmethod
-    @jit(nopython=True, nogil=True)
-    def __sph_midpt_lola_rad(lo1_rad, la1_rad, lo2_rad, la2_rad): # compute mid-point of two points on a sphere, return in rad
-        x1, y1, z1 = np.cos(la1_rad)*np.cos(lo1_rad), np.cos(la1_rad)*np.sin(lo1_rad), np.sin(la1_rad)
-        x2, y2, z2 = np.cos(la2_rad)*np.cos(lo2_rad), np.cos(la2_rad)*np.sin(lo2_rad), np.sin(la2_rad)
-        xm, ym, zm = (x1+x2)*0.5, (y1+y2)*0.5, (z1+z2)*0.5
-        r = np.sqrt(xm*xm + ym*ym + zm*zm)
-        xm, ym, zm = xm/r, ym/r, zm/r
-        mid_lo_rad = np.arctan2(ym, xm)
-        mid_la_rad = np.arcsin(zm)
-        return mid_lo_rad, mid_la_rad
-    @staticmethod
-    @jit(nopython=True, nogil=True)
-    def __fast_get_wmat_mid_dist_larger_than_HALF_PI(evlos_rad, evlas_rad, single_stlo_rad, single_stla_rad):
-        n = evlos_rad.size
-        mat = np.zeros( (n, n), dtype=np.int8)
-        for ista1 in range(n):
-            evlo1, evla1 = evlos_rad[ista1], evlas_rad[ista1]
-            mid_los, mid_las = ManySrcs.__sph_midpt_lola_rad(evlo1, evla1, evlos_rad[ista1:], evlas_rad[ista1:])
-            d = haversine_rad(mid_los, mid_las, single_stlo_rad, single_stla_rad)
-            mat[ista1, ista1:] = (d >= HALF_PI).astype(np.int8)
-        mat += mat.T
-        return mat
-    @staticmethod
-    @jit(nopython=True, nogil=True)
-    def __fast_get_wmat_src_geo_selection(evlos_rad, evlas_rad, single_stlo_rad, single_stla_rad, method=0):
-        nsrc = evlos_rad.size
-        dbaz_mat = daz_PI(evlos_rad.size, evlos_rad, evlas_rad, single_stlo_rad, single_stla_rad) # az1-az2
-        dist = haversine_rad(evlos_rad, evlas_rad, single_stlo_rad, single_stla_rad)
-        ma1 = np.where(dbaz_mat >= HALF_PI, 1, 0) # area1 (dbaz>=pi/2)
-        ma2 = 1-ma1                               # area2 (dbaz<pi/2)
-        ma3 = ManySrcs.__fast_get_wmat_larger_dist(nsrc, dist, larger_first=True) # area3 (d1>=d2)
-        ma5 = ManySrcs.__fast_get_wmat_dist_larger_than_HALF_PI(nsrc, dist)       # area5 (d1>=pi/2)
-        ma7 = ManySrcs.__fast_get_wmat_mid_dist_larger_than_HALF_PI(evlos_rad, evlas_rad, single_stlo_rad, single_stla_rad) # area7 (d_mid_point>=pi/2)
-        ####
-        d12 = np.zeros((nsrc, nsrc), dtype=np.float32)
-        for ista in range(nsrc):
-            evlo1, evla1 = evlos_rad[ista], evlas_rad[ista]
-            d12[ista, :] = np.heaviside_rad(evlo1, evla1, evlos_rad[ista:], evlas_rad[ista:])
-        d12 += d12.T
-        ####
-        if method == 0:
-            ma23  = ma2 & ma3
-            return ma23
-        elif method == 2:
-            ma135 = ma1 & ma3 & ma5
-            ma137 = ma1 & ma3 & ma7
-            return np.where(d12<HALF_PI, ma135, ma137)
-        elif method == 1:
-            ma135 = ma1 & ma3 & ma5
-            ma137 = ma1 & ma3 & ma7
-            tmp = np.where(d12<HALF_PI, ma135, ma137)
-            return ma23 | tmp
     def cc_wmat_glob(self, evnms, method='thrust', smax_s_km=0.045, ntheta=20, ns=5, fignm_prefix=None): # 'thrust', 'normal', 'thrust_normal', 'thrust_normal2', or 'other', or None
         if (method is None) or (method == 'None'):
             return None
@@ -2028,7 +2184,7 @@ class ManySrcs(dict):
         #####
         nsrc  = len(srcs)
         mat = np.ones( (nsrc, nsrc), dtype=np.int8)
-        ManySrcs.__fast_arr2mat(signs, signs, mat)
+        MS_fast_two_arr2mat(signs, signs, mat)
         return mat, missing_evnms
     def is_single_src_thrust_normal(self, single_evnm, smax_s_km=0.045, ntheta=20, ns=5, fignm_prefix=None): # return 1 (thrust), -1 (normal) or 0 (others)
         self.__set_sign_thrust_normal(smax_s_km=smax_s_km, ntheta=ntheta, ns=ns, fignm_prefix=fignm_prefix)
@@ -2051,7 +2207,8 @@ class ManySrcs(dict):
         if src_geo_selection is not None:
             if src_geo_selection not in (0, 1, 2):
                 raise ValueError('src_geo_selection must be None, 0, 1 or 2.', src_geo_selection)
-            wmat *= ManySrcs.__fast_get_wmat_src_geo_selection(evlos_rad, evlas_rad, single_stlo_rad, single_stla_rad, method=src_geo_selection)
+            mat_geo = MS_fast_get_wmat_src_geo_selection(evlos_rad, evlas_rad, single_stlo_rad, single_stla_rad, method=src_geo_selection)
+            wmat *= mat_geo
         ########################################################################################
         az    = azimuth_rad(evlos_rad, evlas_rad, single_stlo_rad, single_stla_rad)
         azmin = az - az_err_rad
@@ -2078,8 +2235,8 @@ class ManySrcs(dict):
         ######
         mat_az_az   = np.ones( (nsrc, nsrc), dtype=np.int8 if binary else np.float32)
         mat_az_azop = np.ones( (nsrc, nsrc), dtype=np.int8 if binary else np.float32)
-        ManySrcs.__fast_arr2mat(amp1, amp2,     mat_az_az)
-        ManySrcs.__fast_arr2mat(amp1, amp_opp2, mat_az_azop)
+        MS_fast_two_arr2mat(amp1, amp2,     mat_az_az)
+        MS_fast_two_arr2mat(amp1, amp_opp2, mat_az_azop)
         wmat *= np.where(dbaz_mat <= HALF_PI, mat_az_az, mat_az_azop)
         #for i1 in range(nsrc):
         #    for i2 in range(nsrc):
@@ -2093,6 +2250,19 @@ class ManySrcs(dict):
         #    if vmax > 0:
         #        wmat *= (1.0/vmax)
         return wmat, missing_evnms
+    def s2s_cc_evdp_corr(self, evnms, slowness_s_km, wave1, wave2, model='ak135', method=0):
+        srcs = [self.get(it, self['zero']) for it in evnms]
+        ####
+        tmp1 = [it.dist_trvt_to_surf(slowness_s_km=slowness_s_km, wave_type=wave1, model=model) for it in srcs]
+        dist1_km  = np.array( [it[0] for it in tmp1] )
+        trvt1_sec = np.array( [it[1] for it in tmp1] )
+        ####
+        tmp2 = [it.dist_trvt_to_surf(slowness_s_km=slowness_s_km, wave_type=wave2, model=model) for it in srcs]
+        dist2_km  = np.array( [it[0] for it in tmp2] )
+        trvt2_sec = np.array( [it[1] for it in tmp2] )
+        ####
+        d_corr_deg, t_corr_sec = MS_cc_corr(dist1_km, dist2_km, trvt1_sec, trvt2_sec, method)
+        return d_corr_deg, t_corr_sec
     ###################################################################################################################################################
     @staticmethod
     def benchmark2():
@@ -2149,29 +2319,33 @@ class CS_InterSrc(CS_InterRcv):
         """
         self.inter_src = True
         super().__init__(ch_pair_type, delta, nt, **kwargs)
-    def set_src(self, evnm, gcmt, evlo_rad, evla_rad, evdp_km, model='ak135', cutoff_amp_ratio=0.05):
+    def set_src(self, evnm, gcmt, evlo_rad, evla_rad, evdp_km, model='ak135', cutoff_amp_ratio=0.05, evdp_km_min=-1e100, evdp_km_max=1e100):
         log_print = self.logger
         log_print(-1, 'Set source mechanism and metadata' )
+        log_print( 1, 'evdp_km_min:', evdp_km_min)
+        log_print( 1, 'evdp_km_max:', evdp_km_max)
         ####
-        self.srcs = ManySrcs(evnm, gcmt, evlo_rad, evla_rad, evdp_km, model=model, cutoff_amp_ratio=cutoff_amp_ratio)
+        self.srcs = ManySrcs(evnm, gcmt, evlo_rad, evla_rad, evdp_km, model=model, cutoff_amp_ratio=cutoff_amp_ratio, evdp_km_min=evdp_km_min, evdp_km_max=evdp_km_max)
         ####
         log_print( 1, 'nsrc:', len(self.srcs)-1, flush=True ) # this is one additional zero gcmt source
-    def set_src2(self, catalog_xml_fnm, model='ak135', cutoff_amp_ratio=0.05, max_nsrc=-1):
+    def set_src2(self, catalog_xml_fnm, model='ak135', cutoff_amp_ratio=0.05, max_nsrc=-1, evdp_km_min=-1e100, evdp_km_max=1e100):
         log_print = self.logger
         log_print(-1, 'Set source mechanism and metadata with XML file' )
         log_print( 1, catalog_xml_fnm)
+        log_print( 1, 'evdp_km_min:', evdp_km_min)
+        log_print( 1, 'evdp_km_max:', evdp_km_max)
         ####
-        self.srcs = ManySrcs(catalog_xml_fnm=catalog_xml_fnm, max_nsrc=max_nsrc,
-                             model=model, cutoff_amp_ratio=cutoff_amp_ratio)
+        self.srcs = ManySrcs(catalog_xml_fnm=catalog_xml_fnm, max_nsrc=max_nsrc, model=model, cutoff_amp_ratio=cutoff_amp_ratio, evdp_km_min=evdp_km_min, evdp_km_max=evdp_km_max)
         ####
         log_print( 1, 'nsrc:', len(self.srcs)-1, flush=True ) # this is one additional zero gcmt source
-    def set_src3(self, catalog_pickle_fnm, model='ak135', cutoff_amp_ratio=0.05, max_nsrc=-1):
+    def set_src3(self, catalog_pickle_fnm, model='ak135', cutoff_amp_ratio=0.05, max_nsrc=-1, evdp_km_min=-1e100, evdp_km_max=1e100):
         log_print = self.logger
         log_print(-1, 'Set source mechanism and metadata with Pickle file' )
         log_print( 1, catalog_pickle_fnm)
+        log_print( 1, 'evdp_km_min:', evdp_km_min)
+        log_print( 1, 'evdp_km_max:', evdp_km_max)
         ####
-        self.srcs = ManySrcs(catalog_pickle_fnm=catalog_pickle_fnm, max_nsrc=max_nsrc,
-                             model=model, cutoff_amp_ratio=cutoff_amp_ratio)
+        self.srcs = ManySrcs(catalog_pickle_fnm=catalog_pickle_fnm, max_nsrc=max_nsrc, model=model, cutoff_amp_ratio=cutoff_amp_ratio, evdp_km_min=evdp_km_min, evdp_km_max=evdp_km_max)
         ####
         log_print( 1, 'nsrc:', len(self.srcs)-1, flush=True ) # this is one additional zero gcmt source
     def cc_wmat_glob(self, evnms, method='thrust_normal', smax_s_km=0.045, ntheta=20, ns=5, fignm_prefix=None, info=''):
@@ -2207,6 +2381,7 @@ class CS_InterSrc(CS_InterRcv):
         log_print( 1, 'binary:', binary)
         log_print( 1, 'fignm_prefix:', fignm_prefix)
         log_print( 1, 'wave1, wave2:', wave1, wave2)
+        log_print( 1, 'src_geo_selection:', src_geo_selection)
         ####
         wmat_nn, missing_evnms = self.srcs.s2s_cc_wmat(evnms, evlos_rad, evlas_rad, single_stlo_rad, single_stla_rad,
                                                        az_err_rad=az_err_rad, smin_s_km=smin_s_km, smax_s_km=smax_s_km,
@@ -2216,6 +2391,22 @@ class CS_InterSrc(CS_InterRcv):
         log_print( 1, 'wmat_nn:', wmat_nn.shape, wmat_nn.dtype)
         log_print( 1, 'missing_events:', missing_evnms, flush=True)
         return wmat_nn
+    def s2s_cc_evdp_corr(self, evnms, slowness_s_km, wave1, wave2, model='ak135', method=0, info=''):
+        """
+        Check `ManySrcs.s2s_cc_evdp_corr(...)` for parameter settings.
+        """
+        log_print = self.logger
+        log_print(-1, 'Set s2s evdp-related correction', info)
+        log_print( 1, 'slowness_s_km:', slowness_s_km)
+        log_print( 1, 'wave1, wave2: ', wave1, wave2)
+        log_print( 1, 'model:', model)
+        log_print( 1, 'method:', method)
+        ####
+        d_corr_deg, t_corr_sec = self.srcs.s2s_cc_evdp_corr(evnms, slowness_s_km, wave1, wave2, model=model, method=method)
+        ####
+        log_print( 1, 'd_corr_deg:', d_corr_deg.shape, d_corr_deg.dtype)
+        log_print( 1, 't_corr_sec:', t_corr_sec.shape, t_corr_sec.dtype, flush=True)
+        return d_corr_deg, t_corr_sec
 if __name__ == "__main__":
     if False:
         mpi_comm = MPI.COMM_WORLD.Dup()
