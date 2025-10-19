@@ -226,29 +226,33 @@ def many_rays_pxt(z, vz, theta_step_deg=0.1):
     v0 = vz[0]
     nlayers = vz.size - 1
     rp_legs, dist_legs, trvt_legs = list(), list(), list()
-    vtop = v0  # track running maximum of vz
+    vmax_above_current_layer = v0 #
     for ilayer in range(nlayers):
-        vtop = max(vtop, vz[ilayer])   # the max velocity above this layer (including the top of this layer)
+        vtop = vz[ilayer]
         vbot = vz[ilayer+1]
-        if vtop >= vbot: # the ray never turns in this layer
-            continue
-        #rps = np.linspace(1.0/vbot, 1.0/vtop, nrp+1)[:-1] # exclude the last one which belongs to the layers above this layer
-        ##
-        t0, t1 = np.arcsin(v0/vtop), np.arcsin(v0/vbot)
-        nrp    = int(np.abs(t0-t1)/theta_step_rad) + 2
-        thetas = np.linspace( t0, t1, nrp)
-        rps    = np.sin(thetas)/v0
-        rps[0] = rps[0] + 1e-10*(rps[1]-rps[0]) # may be not safe as well...
-        # care 0 distance case and also the case that belongs to the layers above this layer
-        ##
-        dist= np.zeros(nrp, dtype=np.float64)
-        trvt= np.zeros(nrp, dtype=np.float64)
-        for irp, p in enumerate(rps):
-            dist[irp], trvt[irp] = single_ray_xt(p, z, vz)
-        tmp1, tmp2, tmp3 = split_pxt_legs(rps, dist, trvt)
-        rp_legs.extend(tmp1)
-        dist_legs.extend(tmp2)
-        trvt_legs.extend(tmp3)
+        if vmax_above_current_layer < vbot and vtop < vbot: # make sure ray can turn in this layer
+            #######
+            if vmax_above_current_layer >= vtop:
+                # make sure the ray can enter this layer!
+                # this also avoids the zero distance case in the first layer
+                #vtop = vmax_above_current_layer + (vbot - vmax_above_current_layer)*1e-15 #the 1e-12 may still cause numerical issue?
+                vtop = np.nextafter(vmax_above_current_layer, vbot) # use this smart method
+            #######
+            t0, t1 = np.arcsin(v0/vtop), np.arcsin(v0/vbot)
+            nrp    = int(np.abs(t0-t1)/theta_step_rad) + 2
+            thetas = np.linspace( t0, t1, nrp)
+            rps    = np.sin(thetas)/v0
+            ##
+            dist= np.zeros(nrp, dtype=np.float64)
+            trvt= np.zeros(nrp, dtype=np.float64)
+            for irp, p in enumerate(rps):
+                dist[irp], trvt[irp] = single_ray_xt(p, z, vz)
+            tmp1, tmp2, tmp3 = split_pxt_legs(rps, dist, trvt)
+            rp_legs.extend(tmp1)
+            dist_legs.extend(tmp2)
+            trvt_legs.extend(tmp3)
+            ####
+            vmax_above_current_layer = vbot ##### note vbot is alreay the max until now!
     ########
     # flatten the list of list
     rp   = np.array([it for leg in rp_legs for it in leg])
