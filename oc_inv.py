@@ -3,6 +3,7 @@
 import matplotlib.pyplot as plt
 from numba import jit
 import numpy as np
+import sacpy
 
 #### auxiliary functions
 @jit(nopython=True, nogil=True)
@@ -199,9 +200,15 @@ def single_ray_xt_grad(p, z, v):
     return dist, trvt, par_dist_v, par_dist_p, par_trvt_v, par_trvt_p, d_trvt_v
 ####
 @jit(nopython=True, nogil=True)
-def split_pxt_legs(decreasing_ps, xs, ts): # split the p-x-t into legs so that each leg has monotonic p and x.
-    ps = decreasing_ps
+def split_pxt_legs(ps, xs, ts): # split the p-x-t into legs so that each leg has monotonic p and x.
     dx = np.diff(xs)
+    ### ps must be decreasing
+    if ps[0] < ps[1]:
+        ps = ps[::-1]
+        xs = xs[::-1]
+        ts = ts[::-1]
+        dx = dx[::-1]*-1 ## reverse and change sign
+    #print('ps=', ps)
     for ind in range(1, len(dx)): # take care of the zeros in dx
         if dx[ind] == 0:
             dx[ind] = dx[ind-1]  # if two xs are the same, use the previous one
@@ -227,14 +234,12 @@ def many_rays_pxt(z, vz, theta_step_deg=0.1):
             continue
         #rps = np.linspace(1.0/vbot, 1.0/vtop, nrp+1)[:-1] # exclude the last one which belongs to the layers above this layer
         ##
-        t0, t1 = np.arcsin(v0/vbot), np.arcsin(v0/vtop)
-        nrp = int(np.abs(t0-t1)/theta_step_rad) + 2
-        #print('nrp', nrp)
-        if ilayer == 0:
-            thetas = np.linspace( t0, t1, nrp)
-        else:
-            thetas = np.linspace( t0, t1, nrp+1)[:-1] # exclude the last one which belongs to the layers above this layer
-        rps = np.sin(thetas)/v0
+        t0, t1 = np.arcsin(v0/vtop), np.arcsin(v0/vbot)
+        nrp    = int(np.abs(t0-t1)/theta_step_rad) + 2
+        thetas = np.linspace( t0, t1, nrp)
+        rps    = np.sin(thetas)/v0
+        rps[0] = rps[0] + 1e-10*(rps[1]-rps[0]) # may be not safe as well...
+        # care 0 distance case and also the case that belongs to the layers above this layer
         ##
         dist= np.zeros(nrp, dtype=np.float64)
         trvt= np.zeros(nrp, dtype=np.float64)
@@ -257,7 +262,8 @@ def many_rays_pxt(z, vz, theta_step_deg=0.1):
     return (rp, dist, trvt), (rp_legs, dist_legs, trvt_legs)
 @jit(nopython=True, nogil=True)
 def single_dist2trvt(target_single_dist, z, vz, rp_legs, dist_legs, trvt_legs, critical_dist_err=1e-20, niter=1000):
-    s_rp, s_dist, s_trvt = np.nan, np.nan, 1e100
+    s_rp, s_dist, s_trvt = np.nan, np.nan, np.nan
+    flag_none_found=True
     m_rp, m_dist, m_trvt = list(), list(), list()
     for ileg, rps in enumerate(rp_legs):
         dists = dist_legs[ileg]
@@ -301,36 +307,71 @@ def single_dist2trvt(target_single_dist, z, vz, rp_legs, dist_legs, trvt_legs, c
             m_rp.append(rp_found)
             m_dist.append(dist_found)
             m_trvt.append(trv_found)
-            if trv_found < s_trvt:
+            if flag_none_found:
+                s_rp, s_dist, s_trvt = rp_found, dist_found, trv_found
+                flag_none_found = False
+            elif trv_found < s_trvt:
                 s_rp, s_dist, s_trvt = rp_found, dist_found, trv_found
     return (s_rp, s_dist, s_trvt), (np.array(m_rp), np.array(m_dist), np.array(m_trvt) )
 @jit(nopython=True, nogil=True)
 def many_dist2trvt(dist, z, vz, theta_step_deg=0.1, critical_dist_err=1e-20, niter=1000):
+    """
+    Return: rp_found, dist_found, trvt_found
+        The dist_found will be very close to the input dist, but may not be exactly the same due to numerical errors.
+        The rp_found and trvt_found correspond to the dist_found.
+
+        Note: `np.nan` will used for elements in rp_found, dist_found, and trvt_found
+               for any distances that do not exist given the model.
+    """
     rp_found   = np.zeros(dist.size, dtype=np.float64)
     dist_found = np.zeros(dist.size, dtype=np.float64)
     trvt_found = np.zeros(dist.size, dtype=np.float64)
     _, (rp_legs, dist_legs, trvt_legs) = many_rays_pxt(z, vz, theta_step_deg=theta_step_deg)
+    #### feasible dist ranges
+    #raw_dist_ranges = np.sort( [(np.min(it), np.max(it)) for it in dist_legs] )
+    #raw_dist_ranges = sorted(raw_dist_ranges)
+    #valid_dist_ranges = [raw_dist_ranges[0] ]
+    #for it3, it4 in raw_dist_ranges[1:]:
+    #    it1, it2 = valid_dist_ranges[-1]   # it1 <= it2 as sorted before
+    #    if it3 <= it2 and it2 < it4: # overlap
+    #        valid_dist_ranges[-1] = (it1, it4)
+    #    else:
+    #        valid_dist_ranges.append( (it3, it4) )
     for idx, single_dist in enumerate(dist):
         tmp = single_dist2trvt(single_dist, z, vz, rp_legs, dist_legs, trvt_legs, critical_dist_err, niter)
         rp_found[idx]   = tmp[0][0]
         dist_found[idx] = tmp[0][1]
         trvt_found[idx] = tmp[0][2]
     return rp_found, dist_found, trvt_found
+@jit(nopython=True, nogil=True)
 def many_dist2trvt_jac(dist, z, vz, theta_step_deg=0.1, critical_dist_err=1e-20, niter=1000):
+    """
+    Return: rp_found, dist_found, trvt_found, d_trvt_v
+        The dist_found will be very close to the input dist, but may not be exactly the same due to numerical errors.
+        The rp_found, trvt_found, d_trvt_v correspond to the dist_found.
+
+        Note: `np.nan` will used for elements in rp_found, dist_found, and trvt_found
+               for any distances that do not exist given the model.
+               zeros will be used for the corresponding rows in the d_trvt_v.
+    """
     rp_found, dist_found, trvt_found = many_dist2trvt(dist, z, vz, theta_step_deg=theta_step_deg, critical_dist_err=critical_dist_err, niter=niter)
     d_trvt_v = np.zeros((dist.size, vz.size), dtype=np.float64)
     for idx, rp in enumerate(rp_found):
-        _, _, _, _, _, _, d_trvt_v[idx] = single_ray_xt_grad(rp, z, vz)
+        if not np.isnan(rp): ### Nan means no ray exist for this distance
+            _, _, _, _, _, _, d_trvt_v[idx] = single_ray_xt_grad(rp, z, vz)
     return rp_found, dist_found, trvt_found, d_trvt_v
 
 #### Get OC reference models. Return R(km), Vp(km/s) with decreasing R!
-def rd_ak135_OC_model(fnm='model_ak135.txt'):
+__ak135_oc_fnm = '%s/dataset/models/oc_model_ak135.txt' % sacpy.__path__[0]
+def rd_ak135_OC_model(fnm=__ak135_oc_fnm):
     tab = np.loadtxt(fnm, comments='#')
     depth = tab[:, 0]
     r = 6371.0 - depth
     vp = tab[:, 2]
     return r, vp
-def rd_prem_OC_model(fnm='model_prem.txt'):
+
+__prem_oc_fnm = '%s/dataset/models/oc_model_prem.txt' % sacpy.__path__[0]
+def rd_prem_OC_model(fnm=__prem_oc_fnm):
     tab = np.loadtxt(fnm, comments='#')
     depth = tab[:, 0]
     r = 6371.0 - depth
