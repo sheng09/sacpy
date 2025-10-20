@@ -383,44 +383,46 @@ def rd_prem_OC_model(fnm=__prem_oc_fnm):
     return r, vp
 
 #### OBJECTIVE function and gradient function for optimization
-def get_obj_and_grad_func(dist, trvt_obs, std, model_z, theta_step_deg=0.1,
-                          ref_model_vz=None, alpha=0.0, beta=0.0):
+def get_obj_and_grad_func(dist, trvt_obs, std, model_z, model_vz_ref,
+                          alpha=0.0, beta=0.0, theta_step_deg=0.1, critical_dist_err=1e-20, niter=1000):
     """
     Generate two functions: `obj_func(m)` and `obj_grad(m)` for optimization.
+    dist:         the distances where the data are observed (in km)
+    trvt_obs:     the observed traveltimes at the distances (in s)
+    std:          the standard deviation of the traveltime observations (in s)
+    model_z:      the model depth grid from surface to depth (in km, positive upward)
+    model_vz_ref: the reference model velocities at model_z (in km/s)
     """
     inv_var = 1.0/(std*std)
     model_sz = len(model_z)
-    if ref_model_vz is None:
-        alpha = 0.0
-        beta  = 0.0
-        ref_model_vz = np.zeros(model_sz, dtype=np.float64)
     ######### objective functions #########
     @jit(nopython=True, nogil=True)
-    def obj_data_diff(model_vz):
-        _,_,d = many_dist2trvt(dist, model_z, model_vz, theta_step_deg=theta_step_deg)
-        tmp = (d-trvt_obs)
+    def obj_data_diff(dvz): # dvz is the perturbation from model_vz_ref
+        _,_,trvt_syn = many_dist2trvt(dist, model_z, dvz+model_vz_ref, theta_step_deg=theta_step_deg, critical_dist_err=critical_dist_err, niter=niter)
+        idx_nan = np.where( np.isnan(trvt_syn) )[0]
+        trvt_syn[idx_nan] = -1e2 # set a never impossible value so that the misfit is very large
+        tmp = (trvt_obs-trvt_syn)
         return np.sum(tmp*tmp*inv_var)
     @jit(nopython=True, nogil=True)
-    def obj_model_d0(model_vz):
-        v2 = model_vz - ref_model_vz
-        return np.sum(v2*v2)
+    def obj_model_d0(dvz):  # dvz is the perturbation from model_vz_ref
+        return np.sum(dvz*dvz)
     @jit(nopython=True, nogil=True)
-    def obj_model_d1(model_vz):
-        v3 = np.diff(model_vz-ref_model_vz)
-        return np.sum(v3*v3)
+    def obj_model_d1(dvz):  # dvz is the perturbation from model_vz_ref
+        tmp = np.diff(dvz)
+        return np.sum(tmp*tmp)
     #########
     @jit(nopython=True, nogil=True)
-    def obj_func(model_vz):
-        v = obj_data_diff(model_vz)
+    def obj_func(dvz):
+        v = obj_data_diff(dvz)
         if alpha > 0.0:
-            v += alpha * obj_model_d0(model_vz)
+            v += alpha * obj_model_d0(dvz)
         if beta > 0.0:
-            v += beta  * obj_model_d1(model_vz)
+            v += beta  * obj_model_d1(dvz)
         return v
     ######### objective gradient #########
     @jit(nopython=True, nogil=True)
-    def obj_grad(model_vz):
-        _, _, d, jac = many_dist2trvt_jac(dist, model_z, model_vz, theta_step_deg=theta_step_deg)
+    def obj_grad(dvz):
+        _, _, d, jac = many_dist2trvt_jac(dist, model_z, dvz+model_vz_ref, theta_step_deg=theta_step_deg, critical_dist_err=critical_dist_err, niter=niter)
         tmp = 2*(d-trvt_obs)*inv_var
         #grad = np.zeros(model_sz, dtype=np.float64)
         #for j in range(model_sz):
@@ -428,11 +430,11 @@ def get_obj_and_grad_func(dist, trvt_obs, std, model_z, theta_step_deg=0.1,
         grad = tmp @ jac
         #####
         if alpha > 0.0:
-            grad2 = 2*alpha*(model_vz - ref_model_vz)
+            grad2 = 2*alpha*dvz
             grad += grad2
         #####
         if beta > 0.0:
-            tmp = np.diff( model_vz-ref_model_vz )
+            tmp = np.diff( dvz )
             grad3 = np.zeros(model_sz, dtype=np.float64)
             grad3[1:-1] =  tmp[:-1] - tmp[1:]
             grad3[0]    = -tmp[0]
