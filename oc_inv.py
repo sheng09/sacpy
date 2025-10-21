@@ -203,11 +203,11 @@ def single_ray_xt_grad(p, z, v):
 def split_pxt_legs(ps, xs, ts): # split the p-x-t into legs so that each leg has monotonic p and x.
     dx = np.diff(xs)
     ### ps must be decreasing
-    if ps[0] < ps[1]:
-        ps = ps[::-1]
-        xs = xs[::-1]
-        ts = ts[::-1]
-        dx = dx[::-1]*-1 ## reverse and change sign
+    #if ps[0] < ps[1]:
+    #    ps = ps[::-1]
+    #    xs = xs[::-1]
+    #    ts = ts[::-1]
+    #    dx = dx[::-1]*-1 ## reverse and change sign
     #print('ps=', ps)
     for ind in range(1, len(dx)): # take care of the zeros in dx
         if dx[ind] == 0:
@@ -238,6 +238,8 @@ def many_rays_pxt(z, vz, theta_step_deg=0.1):
                 #vtop = vmax_above_current_layer + (vbot - vmax_above_current_layer)*1e-15 #the 1e-12 may still cause numerical issue?
                 vtop = np.nextafter(vmax_above_current_layer, vbot) # use this smart method
             #######
+            if vtop >= vbot:
+                continue
             t0, t1 = np.arcsin(v0/vtop), np.arcsin(v0/vbot)
             nrp    = int(np.abs(t0-t1)/theta_step_rad) + 2
             thetas = np.linspace( t0, t1, nrp)
@@ -245,8 +247,8 @@ def many_rays_pxt(z, vz, theta_step_deg=0.1):
             ##
             dist= np.zeros(nrp, dtype=np.float64)
             trvt= np.zeros(nrp, dtype=np.float64)
-            for irp, p in enumerate(rps):
-                dist[irp], trvt[irp] = single_ray_xt(p, z, vz)
+            for irp in range(nrp):
+                dist[irp], trvt[irp] = single_ray_xt(rps[irp], z, vz)
             tmp1, tmp2, tmp3 = split_pxt_legs(rps, dist, trvt)
             rp_legs.extend(tmp1)
             dist_legs.extend(tmp2)
@@ -268,8 +270,9 @@ def many_rays_pxt(z, vz, theta_step_deg=0.1):
 def single_dist2trvt(target_single_dist, z, vz, rp_legs, dist_legs, trvt_legs, critical_dist_err=1e-20, niter=1000):
     s_rp, s_dist, s_trvt = np.nan, np.nan, np.nan
     flag_none_found=True
-    m_rp, m_dist, m_trvt = list(), list(), list()
-    for ileg, rps in enumerate(rp_legs):
+    #m_rp, m_dist, m_trvt = list(), list(), list()
+    for ileg in range(len(rp_legs)):
+        rps = rp_legs[ileg]
         dists = dist_legs[ileg]
         trvts = trvt_legs[ileg]
         if (dists[0] <= target_single_dist <= dists[-1]) or (dists[-1] <= target_single_dist <= dists[0]): # within the range of this leg
@@ -288,7 +291,8 @@ def single_dist2trvt(target_single_dist, z, vz, rp_legs, dist_legs, trvt_legs, c
                     trvts = trvts[::-1]
                 i1 = np.searchsorted(dists, target_single_dist)
                 rp_left, rp_right = rps[i1-1], rps[i1]
-                d_left,  d_right  = dists[i1-1], dists[i1]
+                #d_left,  d_right  = dists[i1-1], dists[i1]
+                d_left  = dists[i1-1]
                 #### start ray tracing with bisection method
                 for idx_iter in range(niter):
                     rp_mid = 0.5 * (rp_left + rp_right)
@@ -299,7 +303,7 @@ def single_dist2trvt(target_single_dist, z, vz, rp_legs, dist_legs, trvt_legs, c
                         break
                     elif (d_left <= target_single_dist <= d_mid) or (d_mid <= target_single_dist <= d_left):
                         rp_right = rp_mid
-                        d_right = d_mid
+                       # d_right = d_mid
                     else:
                         rp_left = rp_mid
                         d_left = d_mid
@@ -308,15 +312,16 @@ def single_dist2trvt(target_single_dist, z, vz, rp_legs, dist_legs, trvt_legs, c
                 trv_found  = t_mid
             ###########
             #print(target_single_dist, dist_found, rp_found, trv_found)
-            m_rp.append(rp_found)
-            m_dist.append(dist_found)
-            m_trvt.append(trv_found)
+            #m_rp.append(rp_found)
+            #m_dist.append(dist_found)
+            #m_trvt.append(trv_found)
             if flag_none_found:
                 s_rp, s_dist, s_trvt = rp_found, dist_found, trv_found
                 flag_none_found = False
             elif trv_found < s_trvt:
                 s_rp, s_dist, s_trvt = rp_found, dist_found, trv_found
-    return (s_rp, s_dist, s_trvt), (np.array(m_rp), np.array(m_dist), np.array(m_trvt) )
+    #return (s_rp, s_dist, s_trvt), (np.array(m_rp), np.array(m_dist), np.array(m_trvt) )
+    return s_rp, s_dist, s_trvt
 @jit(nopython=True, nogil=True)
 def many_dist2trvt(dist, z, vz, theta_step_deg=0.1, critical_dist_err=1e-20, niter=1000):
     """
@@ -341,11 +346,14 @@ def many_dist2trvt(dist, z, vz, theta_step_deg=0.1, critical_dist_err=1e-20, nit
     #        valid_dist_ranges[-1] = (it1, it4)
     #    else:
     #        valid_dist_ranges.append( (it3, it4) )
-    for idx, single_dist in enumerate(dist):
-        tmp = single_dist2trvt(single_dist, z, vz, rp_legs, dist_legs, trvt_legs, critical_dist_err, niter)
-        rp_found[idx]   = tmp[0][0]
-        dist_found[idx] = tmp[0][1]
-        trvt_found[idx] = tmp[0][2]
+    #for idx, single_dist in enumerate(dist):
+    for idx in range(dist.size):
+        #single_dist = dist[idx]
+        #tmp = single_dist2trvt(single_dist, z, vz, rp_legs, dist_legs, trvt_legs, critical_dist_err, niter)
+        #rp_found[idx]   = tmp[0][0]
+        #dist_found[idx] = tmp[0][1]
+        #trvt_found[idx] = tmp[0][2]
+        rp_found[idx], dist_found[idx], trvt_found[idx] = single_dist2trvt(dist[idx], z, vz, rp_legs, dist_legs, trvt_legs, critical_dist_err, niter)
     return rp_found, dist_found, trvt_found
 @jit(nopython=True, nogil=True)
 def many_dist2trvt_jac(dist, z, vz, theta_step_deg=0.1, critical_dist_err=1e-20, niter=1000):
@@ -360,7 +368,9 @@ def many_dist2trvt_jac(dist, z, vz, theta_step_deg=0.1, critical_dist_err=1e-20,
     """
     rp_found, dist_found, trvt_found = many_dist2trvt(dist, z, vz, theta_step_deg=theta_step_deg, critical_dist_err=critical_dist_err, niter=niter)
     d_trvt_v = np.zeros((dist.size, vz.size), dtype=np.float64)
-    for idx, rp in enumerate(rp_found):
+    #for idx, rp in enumerate(rp_found):
+    for idx in range(rp_found.size):
+        rp = rp_found[idx]
         if not np.isnan(rp): ### Nan means no ray exist for this distance
             _, _, _, _, _, _, d_trvt_v[idx] = single_ray_xt_grad(rp, z, vz)
     return rp_found, dist_found, trvt_found, d_trvt_v
