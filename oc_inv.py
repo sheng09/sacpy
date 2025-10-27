@@ -938,6 +938,7 @@ def single_dist2trvt_v2(target_single_dist, z, vz, dz, dv, many_ray_inv_rps, man
     nleg = many_ray_ind_pairs.shape[0]
     #### for debug purposes
     junk_inv_rp_trials = np.zeros(niter, dtype=np.float64)
+    junk_dist_trials   = np.zeros(niter, dtype=np.float64)
     for ileg in range(nleg):
         jdx_start = many_ray_ind_pairs[ileg, 0]
         jdx_end   = many_ray_ind_pairs[ileg, 1]
@@ -957,34 +958,47 @@ def single_dist2trvt_v2(target_single_dist, z, vz, dz, dv, many_ray_inv_rps, man
                 trv_found  = trvts[-1]
                 ib_found   = ibs[-1]
             else:
-                if dists[0] > dists[-1]:
-                    inv_rps   = inv_rps[::-1]
-                    dists = dists[::-1]
-                    trvts = trvts[::-1]
-                    ibs   = ibs[::-1]
-                i1 = np.searchsorted(dists, target_single_dist)
-                inv_rp_left = inv_rps[i1-1]
-                inv_rp_right= inv_rps[i1]
-                d_left  = dists[i1-1]
-                #ib_left = ibs[i1-1]
-                #ib_right= ibs[i1]
-                ib_found = ibs[i1-1] if ibs[i1-1]>=ibs[i1] else ibs[i1] # if a bisector is needed, use the larger ib to make sure ray can enter the layer
-                #### start ray tracing with bisection method
+                if dists[0] <= dists[-1]:
+                    i1 = np.searchsorted(dists, target_single_dist)
+                else:
+                    i1 = np.searchsorted(dists[::-1], target_single_dist)
+                    i1 = dists.size - i1
+                ##### Note, inv_rps is always increasing!!!   ibs is also not decreasing!!!
+                i0 = i1-1
+                # the search range by i0, i1
+                inv_rp0 = inv_rps[i0] # so, inv_rp0 <= inv_rp1
+                inv_rp1 = inv_rps[i1]
+                d0      = dists[i0]
+                d1      = dists[i1]
+                ib0     = ibs[i0]     # also, ib0 <= ib1
+                ib1     = ibs[i1]
+                ###### init the bisection search, each step range is left, right
+                inv_rp_left = inv_rp0 # also, inv_rp_left <= inv_rp_right at all step
+                inv_rp_right= inv_rp1
+                d_left  = d0
+                d_right = d1
                 for idx_iter in range(niter):
                     inv_rp_mid = 0.5 * (inv_rp_left + inv_rp_right)
-                    d_mid, t_mid = single_ray_xt_v2(inv_rp_mid, z, vz, dz, dv, ib_found)
-                    junk_inv_rp_trials[idx_iter] = inv_rp_mid #### for debug purposes
-                    if np.abs(d_mid-target_single_dist) < critical_dist_err:
+                    ib_mid = ib1 if inv_rp0 < inv_rp_mid else ib0 # clever fix!!! (should I use  abs(inv_rp0-inv_rp_mid)~0.0? )
+                    d_mid, t_mid = single_ray_xt_v2(inv_rp_mid, z, vz, dz, dv, ib_mid)
+                    ###
+                    junk_inv_rp_trials[idx_iter] = inv_rp_mid
+                    junk_dist_trials[idx_iter]   = d_mid
+                    ###
+                    if  (np.abs(d_mid-target_single_dist) < critical_dist_err) or (np.abs(d_left - d_right) < critical_dist_err) or (inv_rp_left >= inv_rp_right):
                         ### found!!!
                         break
                     elif (d_left <= target_single_dist <= d_mid) or (d_mid <= target_single_dist <= d_left):
                         inv_rp_right = inv_rp_mid
+                        d_right      = d_mid
                     else:
                         inv_rp_left = inv_rp_mid
                         d_left = d_mid
-                inv_rp_found   = inv_rp_mid
-                dist_found = d_mid
-                trv_found  = t_mid
+                inv_rp_found= inv_rp_mid
+                ib_found    = ib_mid
+                dist_found  = d_mid
+                trv_found   = t_mid
+                ####
                 #### for debug purposes
                 vtop = vz[ib_found]
                 vbot = vz[ib_found+1]
@@ -996,17 +1010,21 @@ def single_dist2trvt_v2(target_single_dist, z, vz, dz, dv, many_ray_inv_rps, man
                     #    Which means inv_rp_found <= vtop < vbot
                     ####
                     print('Error in single_dist2trvt_v2:')
-                    print('ib_found=', ib_found)
-                    print('vtop=        ', vz[ib_found])
+                    print('Original search range')
+                    print('inv_rp0=', inv_rp0,   'inv_rp1=  ', inv_rp1)
+                    print('dist0=  ', dists[i0], 'dists[i1]=', dists[i1])
+                    print('ib0=', ib0, 'ib1=', ib1)
+                    ####
+                    print('After bisection search:')
+                    print('ib_found=    ', ib_found)
+                    print('vtop=        ', vz[ib_found],   '=vz[ib_found]')
                     print('inv_rp_found=', inv_rp_found)
-                    print('vbot=        ', vz[ib_found+1])
-                    ##
-                    print('The two points i0, i1=', i1-1, i1)
-                    print('inv_rps[i0], inv_rps[i1]=', inv_rps[i1-1], inv_rps[i1])
-                    print('dists[i0], dists[i1]=', dists[i1-1], dists[i1])
-                    print('ibs[i0], ibs[i1]=', ibs[i1-1], ibs[i1])
+                    print('vbot=        ', vz[ib_found+1], '=vz[ib_found+1]')
                     ##
                     print('junk_inv_rp_trials=', junk_inv_rp_trials[:idx_iter+1])
+                    #
+                    print('target_single_dist=', target_single_dist)
+                    print('junk_dist_trials  =', junk_dist_trials[:idx_iter+1])
                     pass
             ###########
             if trv_found < s_trvt:
