@@ -1707,33 +1707,34 @@ def single_dist2trvt_v4(target_single_dist, z, vz, dz, dv, dzdv, layer_type, man
                 #dist_found  = d_new
                 #trv_found   = t_new
                 ######################################################################################################
-                inv_rp_new = 0.5*(inv_rp_left + inv_rp_right)
+                inv_rp_next = 0.5*(inv_rp_left + inv_rp_right)
                 for idx_iter in range(niter):
-                    ib_new = ib1 if inv_rp0 < inv_rp_new else ib0 # clever fix!!! (should I use  abs(inv_rp0-inv_rp_mid)~0.0? )
-                    d_new, t_new, grad_p = single_ray_xt_grad_ponly_v4(inv_rp_new, z, vz, dz, dv, dzdv, layer_type, ib_new)
+                    inv_rp_cur = inv_rp_next
+                    ib_cur = ib1 if inv_rp0 < inv_rp_cur else ib0 # clever fix!!! (should I use  abs(inv_rp0-inv_rp_mid)~0.0? )
+                    d_cur, t_cur, grad_p = single_ray_xt_grad_ponly_v4(inv_rp_cur, z, vz, dz, dv, dzdv, layer_type, ib_cur)
                     ###########
-                    if  (np.abs(d_new-target_single_dist) < critical_dist_err) or (np.abs(d_left - d_right) < critical_dist_err) or (inv_rp_left >= inv_rp_right):
+                    if  (np.abs(d_cur-target_single_dist) < critical_dist_err) or (np.abs(d_left - d_right) < critical_dist_err) or (inv_rp_left >= inv_rp_right):
                         ### found!!!
                         break
-                    elif (d_left <= target_single_dist <= d_new) or (d_new <= target_single_dist <= d_left):
-                        inv_rp_right = inv_rp_new
-                        d_right      = d_new
+                    elif (d_left <= target_single_dist <= d_cur) or (d_cur <= target_single_dist <= d_left):
+                        inv_rp_right = inv_rp_cur
+                        d_right      = d_cur
                     else:
-                        inv_rp_left = inv_rp_new
-                        d_left = d_new
+                        inv_rp_left = inv_rp_cur
+                        d_left = d_cur
                     ########### newton update
-                    grad_invp = -grad_p/( inv_rp_new * inv_rp_new )
+                    grad_invp = -grad_p/( inv_rp_cur * inv_rp_cur )
                     if grad_invp != 0.0:
-                        inv_rp_new += (target_single_dist-d_new)/grad_invp
-                        if inv_rp_new < inv_rp_left or inv_rp_new > inv_rp_right: # safe guard
+                        inv_rp_next =  inv_rp_cur + (target_single_dist-d_cur)/grad_invp
+                        if inv_rp_next < inv_rp_left or inv_rp_next > inv_rp_right: # safe guard
                             #print(f'iter={idx_iter}: going out of bound, reset to mid')
-                            inv_rp_new = 0.5 * (inv_rp_left + inv_rp_right)
+                            inv_rp_next = 0.5 * (inv_rp_left + inv_rp_right)
                     else:
-                        inv_rp_new = 0.5 * (inv_rp_left + inv_rp_right)
-                inv_rp_found= inv_rp_new
-                ib_found    = ib_new
-                dist_found  = d_new
-                trv_found   = t_new
+                        inv_rp_next = 0.5 * (inv_rp_left + inv_rp_right)
+                inv_rp_found= inv_rp_cur
+                ib_found    = ib_cur
+                dist_found  = d_cur
+                trv_found   = t_cur
                 ######################################################################################################
                 #print('inv_p left and right', inv_rp_left, inv_rp_right)
                 #print('dist left and right ', d_left, d_right)
