@@ -285,8 +285,8 @@ def single_ray_xt_grad_v2(inv_p, z, v, dz, dv, ib, buf_six_by_zsize):
     for i in range(ib): # i = 0,1,2,...,ib-1
         sin_theta_i1 = v[i+1]/inv_p
         cos_theta_i1 = np.sqrt(1.0 - sin_theta_i1*sin_theta_i1)
-        junk = 100.0/cos_theta_i0
-        junk = 100.0/cos_theta_i1 # test if error can happen
+        #junk = 100.0/cos_theta_i0
+        #junk = 100.0/cos_theta_i1 # test if error can happen
         #if cos_theta_i0 < 1e-20:
         #    print("i0", i, cos_theta_i0, p, 1/v[i],     v[i], v[0])
         #    traceback.print_stack()
@@ -351,7 +351,7 @@ def single_ray_xt_grad_v2(inv_p, z, v, dz, dv, ib, buf_six_by_zsize):
     #
     if np.abs(dz[ib]) > 1e-10 and np.abs(dv[ib]) > 1e-10:
         local_dzdv = dz[ib]/dv[ib]
-        junk = 100.0/cos_theta_i0
+        #junk = 100.0/cos_theta_i0
         t_ib = local_dzdv * ln_tan_half_theta_i0 # Note inv_k[ib] is finite automatically! ? really?
         x_ib = inv_p * local_dzdv * (-cos_theta_i0)
         dist += x_ib
@@ -361,15 +361,12 @@ def single_ray_xt_grad_v2(inv_p, z, v, dz, dv, ib, buf_six_by_zsize):
         par_ti_v0[ib] =  t_ib*local_dzdv/dz[ib] + local_dzdv/(inv_p*tan_half_theta_i0*(1.0+cos_theta_i0)*cos_theta_i0)
         par_ti_v1[ib] = -t_ib*local_dzdv/dz[ib]
         par_xi_v0[ib] =  x_ib*local_dzdv/dz[ib]
-        if cos_theta_i0 > 1e-10:
-            par_xi_v0[ib] =  x_ib*local_dzdv/dz[ib] + local_dzdv*sin_theta_i0/cos_theta_i0
+        par_xi_v0[ib] =  x_ib*local_dzdv/dz[ib] + local_dzdv*sin_theta_i0/cos_theta_i0
         par_xi_v1[ib] = -x_ib*local_dzdv/dz[ib]
         #
-        if cos_theta_i0 > 1e-10:
-            par_trvt_p += v[ib]*local_dzdv/(tan_half_theta_i0*(1.0+cos_theta_i0)*cos_theta_i0)
+        par_trvt_p += v[ib]*local_dzdv/(tan_half_theta_i0*(1.0+cos_theta_i0)*cos_theta_i0)
         par_dist_p -= x_ib*inv_p
-        if cos_theta_i0 > 1e-10:
-            par_dist_p += v[ib]*inv_p*local_dzdv*sin_theta_i0/cos_theta_i0
+        par_dist_p += v[ib]*inv_p*local_dzdv*sin_theta_i0/cos_theta_i0
     ####
     dist *= 2.0
     trvt *= 2.0
@@ -393,6 +390,261 @@ def single_ray_xt_grad_v2(inv_p, z, v, dz, dv, ib, buf_six_by_zsize):
         d_trvt_v = par_trvt_v - par_trvt_p * (par_dist_v/par_dist_p)
     ###
     return dist, trvt, par_dist_v, par_dist_p, par_trvt_v, par_trvt_p, d_trvt_v
+# v4
+@jit(nopython=True, nogil=True) #, fastmath=True)
+def single_ray_xt_v4(inv_p, z, v, dz, dv, dzdv, layer_type, ib):
+    """
+    layer_type is a list of 2 (non-constant v layer), 1 (constant v layer), 0 (zero thickness layer)
+    """
+    t = 0.0
+    x = 0.0
+    ####
+    sin_theta_i0 = v[0]/inv_p
+    cos_theta_i0 = np.sqrt(1.0 - sin_theta_i0*sin_theta_i0)
+    tan_half_theta_i0 = (1.0-cos_theta_i0) / sin_theta_i0
+    ln_tan_half_theta_i0 = np.log( tan_half_theta_i0 )
+    for i in range(ib): # i = 0,1,2,...,ib-1
+        sin_theta_i1 = v[i+1]/inv_p
+        cos_theta_i1 = np.sqrt(1.0 - sin_theta_i1*sin_theta_i1)
+        tan_half_theta_i1 = (1.0-cos_theta_i1) / sin_theta_i1
+        ln_tan_half_theta_i1 = np.log( tan_half_theta_i1 )
+        if layer_type[i] == 2:    #if np.abs(dv[i]) > 1e-10 and dz[i] < -1e-10:
+            t += dzdv[i] * (ln_tan_half_theta_i0 - ln_tan_half_theta_i1 )
+            x += inv_p * dzdv[i] * (cos_theta_i1 - cos_theta_i0)
+        elif layer_type[i]: # ==1 #  #elif dz[i] < -1e-10: # dv[i] ==0.  Note. dz is always negative
+            t -= dz[i] / (v[i]*cos_theta_i0)
+            x -= dz[i] * (sin_theta_i0/cos_theta_i0)
+        #
+        sin_theta_i0 = sin_theta_i1
+        cos_theta_i0 = cos_theta_i1
+        tan_half_theta_i0 = tan_half_theta_i1
+        ln_tan_half_theta_i0 = ln_tan_half_theta_i1
+    if layer_type[ib] == 2: #if dz[ib] < -1e-10 and np.abs(dv[ib]) > 1e-10: # dz is always negative
+        t += dzdv[ib] * ln_tan_half_theta_i0 # Note inv_k[ib] is finite automatically!
+        x += inv_p * dzdv[ib] * (-cos_theta_i0)
+    x *= 2.0
+    t *= 2.0
+    return x, t
+@jit(nopython=True, nogil=True)
+def single_ray_xt_grad_v4(inv_p, z, v, dz, dv, dzdv, layer_type, ib, buf_six_by_zsize):
+    ####
+    #for ilayer in range(z.size-1):
+    #    if 1.0/v[ilayer] > inv_p >= 1.0/v[ilayer+1]:
+    #        #ib = ilayer
+    #        #break
+    #        if ib != ilayer:
+    #            print("ib=", ib, ilayer)
+    #ib = ilayer
+    ####
+    #### buffer
+    dist = 0.0
+    trvt = 0.0
+    buf_six_by_zsize.fill(0.0) #np.zeros((6, z.size), dtype=np.float64)
+    par_ti_v0 = buf_six_by_zsize[0, :ib+1]
+    par_ti_v1 = buf_six_by_zsize[1, :ib+1]
+    par_xi_v0 = buf_six_by_zsize[2, :ib+1]
+    par_xi_v1 = buf_six_by_zsize[3, :ib+1]
+    par_dist_v = buf_six_by_zsize[4, :z.size]
+    par_trvt_v = buf_six_by_zsize[5, :z.size]
+    par_trvt_p = 0.0 # single values
+    par_dist_p = 0.0 # single values
+    #### critical angles
+    sin_theta_i0 = v[0]/inv_p
+    cos_theta_i0 = np.sqrt(1.0 - sin_theta_i0*sin_theta_i0)
+    tan_half_theta_i0 = (1.0-cos_theta_i0) / sin_theta_i0
+    ln_tan_half_theta_i0 = np.log( tan_half_theta_i0 )
+    ####
+    for i in range(ib): # i = 0,1,2,...,ib-1
+        sin_theta_i1 = v[i+1]/inv_p
+        cos_theta_i1 = np.sqrt(1.0 - sin_theta_i1*sin_theta_i1)
+        ####junk = 100.0/cos_theta_i0
+        ####junk = 100.0/cos_theta_i1 # test if error can happen
+        #if cos_theta_i0 < 1e-20:
+        #    print("i0", i, cos_theta_i0, p, 1/v[i],     v[i], v[0])
+        #    traceback.print_stack()
+        #if cos_theta_i1 < 1e-20:
+        #    print(f'i1={i+1} cos_theta_i1={cos_theta_i1} p={p} 1/v[i+1]={1/v[i+1]} v[i+1]={v[i+1]} v[0]={v[0]}')
+        #    print(f'\t v[i]={v[i]} v[i+1]={v[i+1]} inv_p={inv_p} ib={ib}')
+        #    traceback.print_stack()
+        #    #print("i1", i+1, "cos_theta_i1=",cos_theta_i1, "p=", p, 1/v[i+1], v[i+1], v[0])
+        tan_half_theta_i1 = (1.0-cos_theta_i1) / sin_theta_i1
+        ln_tan_half_theta_i1 = np.log( tan_half_theta_i1 )
+        if layer_type[i] == 2: #if np.abs(dv[i]) > 1e-10 and dz[i] < -1e-10:
+            local_dzdv = dzdv[i] #dz[i]/dv[i]
+            t_i = local_dzdv * (ln_tan_half_theta_i0 - ln_tan_half_theta_i1)
+            x_i = inv_p * local_dzdv * (cos_theta_i1 - cos_theta_i0)
+            dist += x_i
+            trvt += t_i
+            #
+            tmp1 = local_dzdv/(tan_half_theta_i0*(1.0+cos_theta_i0)*cos_theta_i0)
+            tmp2 = local_dzdv/(tan_half_theta_i1*(1.0+cos_theta_i1)*cos_theta_i1)
+            tmp3 = t_i*local_dzdv/dz[i]
+            #
+            par_ti_v0[i] =  tmp3 + tmp1/inv_p
+            par_ti_v1[i] = -tmp3 - tmp2/inv_p
+            #########
+            par_trvt_p += v[i  ]*tmp1
+            par_trvt_p -= v[i+1]*tmp2
+            #
+            tmp1 = local_dzdv*sin_theta_i0/cos_theta_i0
+            tmp2 = local_dzdv*sin_theta_i1/cos_theta_i1
+            tmp3 = x_i*local_dzdv/dz[i]
+            #
+            par_xi_v0[i] =  tmp3 + tmp1
+            par_xi_v1[i] = -tmp3 - tmp2
+            #
+            par_dist_p -= x_i*inv_p
+            par_dist_p += v[  i]*inv_p*tmp1
+            par_dist_p -= v[i+1]*inv_p*tmp2
+        elif layer_type[i] == 1: #elif dz[i] < -1e-10: # dv[i] ==0.  Note. dz is always negative
+            t_i = -dz[i] / (v[i]*cos_theta_i0)
+            x_i = -dz[i] * (sin_theta_i0/cos_theta_i0)
+            dist += x_i
+            trvt += t_i
+            #
+            par_ti_v0[i] = -t_i/(v[i]+v[i+1]) + t_i/inv_p*sin_theta_i0/(cos_theta_i0*(cos_theta_i0+cos_theta_i1))
+            par_ti_v1[i] = par_ti_v0[i]
+            #
+            tmp1 = t_i*sin_theta_i0/(cos_theta_i0*(cos_theta_i0+cos_theta_i1))
+            par_trvt_p += v[i  ]*tmp1
+            par_trvt_p += v[i+1]*tmp1
+            #
+            par_xi_v0[i] = 0.5/inv_p*dz[i]/(cos_theta_i0*cos_theta_i0*cos_theta_i0)
+            par_xi_v1[i] = par_xi_v0[i]
+            #
+            tmp2 = 0.5*dz[i]/(cos_theta_i0*cos_theta_i0*cos_theta_i0)
+            par_dist_p += v[i  ]*tmp2
+            par_dist_p += v[i+1]*tmp2
+        #
+        sin_theta_i0 = sin_theta_i1
+        cos_theta_i0 = cos_theta_i1
+        tan_half_theta_i0 = tan_half_theta_i1
+        ln_tan_half_theta_i0 = ln_tan_half_theta_i1
+    #
+    if layer_type[ib] == 2: #if np.abs(dz[ib]) > 1e-10 and np.abs(dv[ib]) > 1e-10:
+        local_dzdv = dzdv[ib] #dz[ib]/dv[ib]
+        ####junk = 100.0/cos_theta_i0
+        t_ib = local_dzdv * ln_tan_half_theta_i0 # Note inv_k[ib] is finite automatically! ? really?
+        x_ib = inv_p * local_dzdv * (-cos_theta_i0)
+        dist += x_ib
+        trvt += t_ib
+        # cos_theta[ib] is zero for distance=0 case.
+        par_ti_v0[ib] =  t_ib*local_dzdv/dz[ib]
+        par_ti_v0[ib] =  t_ib*local_dzdv/dz[ib] + local_dzdv/(inv_p*tan_half_theta_i0*(1.0+cos_theta_i0)*cos_theta_i0)
+        par_ti_v1[ib] = -t_ib*local_dzdv/dz[ib]
+        par_xi_v0[ib] =  x_ib*local_dzdv/dz[ib]
+        par_xi_v0[ib] =  x_ib*local_dzdv/dz[ib] + local_dzdv*sin_theta_i0/cos_theta_i0
+        par_xi_v1[ib] = -x_ib*local_dzdv/dz[ib]
+        #
+        par_trvt_p += v[ib]*local_dzdv/(tan_half_theta_i0*(1.0+cos_theta_i0)*cos_theta_i0)
+        par_dist_p -= x_ib*inv_p
+        par_dist_p += v[ib]*inv_p*local_dzdv*sin_theta_i0/cos_theta_i0
+    ####
+    dist *= 2.0
+    trvt *= 2.0
+    ####
+    par_dist_v[0] = par_xi_v0[0]
+    par_trvt_v[0] = par_ti_v0[0]
+    for j in range(1, ib+1):
+        par_dist_v[j] = par_xi_v0[j] + par_xi_v1[j-1]
+        par_trvt_v[j] = par_ti_v0[j] + par_ti_v1[j-1]
+    par_dist_v[ib+1] = par_xi_v1[ib]
+    par_trvt_v[ib+1] = par_ti_v1[ib]
+    ###
+    par_dist_v *= 2.0
+    par_trvt_v *= 2.0
+    par_dist_p *= 2.0
+    par_trvt_p *= 2.0
+    ###
+    # the Delta T / Delta V if Delta X is zero
+    d_trvt_v = par_trvt_v # where par_trvt_p and par_dist_p are Zeros
+    if np.abs(par_dist_p) > 1e-10:
+        d_trvt_v = par_trvt_v - par_trvt_p * (par_dist_v/par_dist_p)
+    ###
+    return dist, trvt, par_dist_v, par_dist_p, par_trvt_v, par_trvt_p, d_trvt_v
+@jit(nopython=True, nogil=True)
+def single_ray_xt_grad_ponly_v4(inv_p, z, v, dz, dv, dzdv, layer_type, ib):
+    ####
+    #for ilayer in range(z.size-1):
+    #    if 1.0/v[ilayer] > inv_p >= 1.0/v[ilayer+1]:
+    #        #ib = ilayer
+    #        #break
+    #        if ib != ilayer:
+    #            print("ib=", ib, ilayer)
+    #ib = ilayer
+    ####
+    #### buffer
+    dist = 0.0
+    trvt = 0.0
+    par_dist_p = 0.0 # single values
+    #### critical angles
+    sin_theta_i0 = v[0]/inv_p
+    cos_theta_i0 = np.sqrt(1.0 - sin_theta_i0*sin_theta_i0)
+    tan_half_theta_i0 = (1.0-cos_theta_i0) / sin_theta_i0
+    ln_tan_half_theta_i0 = np.log( tan_half_theta_i0 )
+    ####
+    for i in range(ib): # i = 0,1,2,...,ib-1
+        sin_theta_i1 = v[i+1]/inv_p
+        cos_theta_i1 = np.sqrt(1.0 - sin_theta_i1*sin_theta_i1)
+        ####junk = 100.0/cos_theta_i0
+        ####junk = 100.0/cos_theta_i1 # test if error can happen
+        #if cos_theta_i0 < 1e-20:
+        #    print("i0", i, cos_theta_i0, p, 1/v[i],     v[i], v[0])
+        #    traceback.print_stack()
+        #if cos_theta_i1 < 1e-20:
+        #    print(f'i1={i+1} cos_theta_i1={cos_theta_i1} p={p} 1/v[i+1]={1/v[i+1]} v[i+1]={v[i+1]} v[0]={v[0]}')
+        #    print(f'\t v[i]={v[i]} v[i+1]={v[i+1]} inv_p={inv_p} ib={ib}')
+        #    traceback.print_stack()
+        #    #print("i1", i+1, "cos_theta_i1=",cos_theta_i1, "p=", p, 1/v[i+1], v[i+1], v[0])
+        tan_half_theta_i1 = (1.0-cos_theta_i1) / sin_theta_i1
+        ln_tan_half_theta_i1 = np.log( tan_half_theta_i1 )
+        if layer_type[i] == 2: #if np.abs(dv[i]) > 1e-10 and dz[i] < -1e-10:
+            local_dzdv = dzdv[i] #dz[i]/dv[i]
+            t_i = local_dzdv * (ln_tan_half_theta_i0 - ln_tan_half_theta_i1)
+            x_i = inv_p * local_dzdv * (cos_theta_i1 - cos_theta_i0)
+            dist += x_i
+            trvt += t_i
+            #
+            tmp1 = local_dzdv*sin_theta_i0/cos_theta_i0
+            tmp2 = local_dzdv*sin_theta_i1/cos_theta_i1
+            #
+            par_dist_p -= x_i*inv_p
+            par_dist_p += v[  i]*inv_p*tmp1
+            par_dist_p -= v[i+1]*inv_p*tmp2
+        elif layer_type[i] == 1: #elif dz[i] < -1e-10: # dv[i] ==0.  Note. dz is always negative
+            t_i = -dz[i] / (v[i]*cos_theta_i0)
+            x_i = -dz[i] * (sin_theta_i0/cos_theta_i0)
+            dist += x_i
+            trvt += t_i
+            #
+            tmp2 = 0.5*dz[i]/(cos_theta_i0*cos_theta_i0*cos_theta_i0)
+            par_dist_p += v[i  ]*tmp2
+            par_dist_p += v[i+1]*tmp2
+        #
+        sin_theta_i0 = sin_theta_i1
+        cos_theta_i0 = cos_theta_i1
+        tan_half_theta_i0 = tan_half_theta_i1
+        ln_tan_half_theta_i0 = ln_tan_half_theta_i1
+    #
+    if layer_type[ib] == 2: #if np.abs(dz[ib]) > 1e-10 and np.abs(dv[ib]) > 1e-10:
+        local_dzdv = dzdv[ib] #dz[ib]/dv[ib]
+        ####junk = 100.0/cos_theta_i0
+        t_ib = local_dzdv * ln_tan_half_theta_i0 # Note inv_k[ib] is finite automatically! ? really?
+        x_ib = inv_p * local_dzdv * (-cos_theta_i0)
+        dist += x_ib
+        trvt += t_ib
+        # cos_theta[ib] is zero for distance=0 case.
+        #
+        par_dist_p -= x_ib*inv_p
+        par_dist_p += v[ib]*inv_p*local_dzdv*sin_theta_i0/cos_theta_i0
+    ####
+    dist *= 2.0
+    trvt *= 2.0
+    ####
+    ###
+    par_dist_p *= 2.0
+    ###
+    return dist, trvt, par_dist_p
 
 
 #### Many PXT given a model
@@ -816,6 +1068,243 @@ def many_rays_pxt_v3(z, vz, theta_step_deg=0.1):
     #if debug:
     #    plt.show()
     return inv_rps, dist, trvt, ibs, leg_start_end_pairs_gind[:,:n_legs].T
+# v4
+@jit(nopython=True, nogil=True)
+def many_rays_pxt_v4(z, vz, theta_step_deg=0.1):
+    #debug=False
+    theta_step_rad = np.deg2rad(theta_step_deg)
+    #######################################################
+    # Step 1
+    # Split layers into blocks. Each block has continuous increasing velocities.
+    v0 = vz[0]
+    block_vmax_exclude_bottom = vz[0]
+    block_boundary = np.zeros(z.size, dtype=np.int64) + z.size
+    mono_vz = np.zeros(z.size, dtype=np.float64)
+    nbb = 0
+    flag_active_block = False
+    #layer_flags = np.zeros(z.size-1, dtype=np.int8)
+    for ilayer in range(z.size-1):
+        vtop = vz[ilayer]
+        vbot = vz[ilayer+1]
+        if (vtop <= block_vmax_exclude_bottom < vbot) and (not flag_active_block):
+            # A new block starts from the top of this layer
+            block_boundary[nbb] = ilayer
+            nbb += 1
+            flag_active_block = True
+            mono_vz[ilayer] = block_vmax_exclude_bottom
+        elif block_vmax_exclude_bottom < vtop < vbot:
+            # Append this layer into current layer block
+            block_boundary[nbb] = ilayer + 1
+            block_vmax_exclude_bottom = vtop
+            mono_vz[ilayer] = vtop
+        elif flag_active_block:
+            # vtop <= max (vtop, block_vmax_exclude_bottom)
+            # So,a shadow zone (discontinuous distance) occurs here
+            # Current block (if an active exist) ends at the top interface of this layer
+            block_boundary[nbb] = ilayer + 1 # note that something[:ix+1] will include ix!!!
+            nbb += 1
+            if vtop > block_vmax_exclude_bottom:
+                block_vmax_exclude_bottom = vtop
+            flag_active_block = False
+            mono_vz[ilayer] = block_vmax_exclude_bottom
+    # the last interface
+    if block_vmax_exclude_bottom < vz[-1]:
+        block_boundary[nbb] = vz.size
+        mono_vz[-1] = vz[-1]
+        nbb += 1
+    # With the obtained block_boundary, the block will be
+    # [bb[0]: bb[1]+1], [bb[2]: bb[3]+1], [bb[4]: bb[5]+1], ...,
+    block_boundary = block_boundary[:nbb]
+    # debug plot
+    #if debug:
+    #    cmap = plt.get_cmap('tab10')
+    #    print(block_boundary.size )
+    #    fig = plt.figure(figsize=(20, 10))
+    #    gs  = fig.add_gridspec(200, 100)
+    #    ax1 = fig.add_subplot(gs[:90, :30])
+    #    ax2 = fig.add_subplot(gs[:90, 40:70])
+    #    ax3 = fig.add_subplot(gs[110:, :30])
+    #    ax4 = fig.add_subplot(gs[110:, 40:70])
+    #    ax5 = fig.add_subplot(gs[110:, 80:])
+    #    #fig, (ax1, ax2, ax3), (ax4, ax5) = plt.subplots(1,5, figsize=(20, 10))
+    #    ax1.plot(vz, z, '.-', color='k')
+    #    ax2.plot(1.0/vz, z, '.-', color='k')
+    #    for istart, iend in zip(block_boundary[::2], block_boundary[1::2]):
+    #        block_z = z[istart:iend]
+    #        block_vz = vz[istart:iend]
+    #        block_mono_vz = mono_vz[istart:iend]
+    #        ax1.plot(block_vz, block_z, 's-', linewidth=4, color='r', alpha=0.8)
+    #        ax1.plot(block_mono_vz, block_z, 'o-', linewidth=4, color='b', alpha=0.8)
+    #        #
+    #        ax2.plot(1.0/block_vz, block_z, 's-', linewidth=4, color='r', alpha=0.8)
+    #        ax2.plot(1.0/block_mono_vz, block_z, 'o-', linewidth=4, color='b', alpha=0.8)
+    #################################################################################
+    # Step 2
+    # Generate a list of rps, and ibs for each of the rp.
+    # Generate a list of indexs declaring when the block_boundary is in rps.
+    nblocks = nbb // 2
+    #print('nblocks=', nblocks)
+    #theta_range_each_effective_layer = np.zeros((z.size-1, 2), dtype=np.float64)
+    #nrp_each_effective_layer         = np.zeros(z.size-1, dtype=np.int64)
+    #################################################################################
+    total_nrp = 0
+    total_nlayer_effective = 0
+    for iblock in range(nblocks):
+        ilayer_start  = block_boundary[iblock*2]
+        ilayer_end    = block_boundary[iblock*2+1]
+        block_mono_vz = mono_vz[ilayer_start:ilayer_end]
+        local_nlayers = block_mono_vz.size -1
+        for local_ilayer in range(local_nlayers):
+            vtop = block_mono_vz[local_ilayer]
+            vbot = block_mono_vz[local_ilayer+1]
+            theta_top = np.arcsin(v0/vtop)
+            theta_bot = np.arcsin(v0/vbot)
+            nrp       = int( np.abs(theta_top - theta_bot) / theta_step_rad ) + 2
+            #theta_range_each_effective_layer[total_nlayer_effective, 0] = theta_top
+            #theta_range_each_effective_layer[total_nlayer_effective, 1] = theta_bot
+            #nrp_each_effective_layer[total_nlayer_effective] = nrp
+            total_nlayer_effective += 1
+            #
+            total_nrp += nrp
+    #theta_range_each_effective_layer = theta_range_each_effective_layer[:total_nlayer_effective]
+    #nrp_each_effective_layer         = nrp_each_effective_layer[:total_nlayer_effective]
+    #################################################################################
+    #rps    = np.zeros(total_nrp, dtype=np.float64) # pre-allocate large space
+    inv_rps= np.zeros(total_nrp, dtype=np.float64)
+    ibs    = np.zeros(total_nrp, dtype=np.int64)
+    #
+    dist   = np.zeros(total_nrp, dtype=np.float64)
+    trvt   = np.zeros(total_nrp, dtype=np.float64)
+    leg_start_end_pairs_gind = np.zeros((2, total_nrp), dtype=np.int64)
+    leg_start_gind = leg_start_end_pairs_gind[0]
+    leg_end_gind   = leg_start_end_pairs_gind[1]
+    #
+    bb     = np.zeros((nblocks, 2), dtype=np.int64)
+    bb_base= 0
+    gidx_rp= 0
+    #idx_nlayer_effective = 0
+    for iblock in range(nblocks):
+        ilayer_start  = block_boundary[iblock*2]
+        ilayer_end    = block_boundary[iblock*2+1]
+        block_mono_vz = mono_vz[ilayer_start:ilayer_end]
+        #######
+        lidx_rp       = 0
+        local_nlayers = ilayer_end-ilayer_start-1
+        #local_nlayers = block_mono_vz.size -1
+        for local_ilayer in range(local_nlayers):
+            vtop = block_mono_vz[local_ilayer]
+            vbot = block_mono_vz[local_ilayer+1]
+            theta_top = np.arcsin(v0/vtop)
+            theta_bot = np.arcsin(v0/vbot)
+            nrp     = int( np.abs(theta_top - theta_bot) / theta_step_rad ) + 2
+            #theta_top = theta_range_each_effective_layer[idx_nlayer_effective, 0]
+            #theta_bot = theta_range_each_effective_layer[idx_nlayer_effective, 1]
+            #nrp       = nrp_each_effective_layer[idx_nlayer_effective]
+            #idx_nlayer_effective += 1
+            ##### alias
+            #local_rps     = rps[    gidx_rp+lidx_rp : gidx_rp+lidx_rp+nrp]
+            local_inv_rps = inv_rps[gidx_rp+lidx_rp : gidx_rp+lidx_rp+nrp]
+            #
+            #local_rps[:]    = np.sin( np.linspace(theta_top, theta_bot, nrp) )/v0
+            local_inv_rps[:]= v0/np.sin( np.linspace(theta_top, theta_bot, nrp) )
+            #
+            #local_rps[0]     = 1.0/vtop
+            local_inv_rps[0] = vtop
+            #local_rps[-1]     = 1.0/vbot
+            local_inv_rps[-1] = vbot
+            # The critical ray at the top interface of this layer belongs to the previous layer
+            # Do not worry about the first-most ray of this block. We will fix that after this loop.
+            ibs[    gidx_rp+lidx_rp ] = ilayer_start + local_ilayer-1
+            # All other rays belongs to this layer
+            ibs[    gidx_rp+lidx_rp+1 : gidx_rp+lidx_rp+nrp] = ilayer_start + local_ilayer
+            ######
+            lidx_rp += nrp
+        # Take care of the first ray enter this block.
+        # In the loop above, the ray assigned with p=1/v (v is the topmost interface of this block.)
+        # To make sure the ray can enter the block, we need to decrease the p a little bit!
+        #rps[    gidx_rp] = np.nextafter(rps[gidx_rp],         rps[    gidx_rp+lidx_rp-1] )
+        inv_rps[gidx_rp] = np.nextafter(inv_rps[gidx_rp],     inv_rps[gidx_rp+lidx_rp-1] )
+        # After decreasing the p a little bit, the ray now can enter the block,
+        # so its ib should be the first layer of this block!
+        # Hence, Fix the ib for the first ray of this block, as mentioned above.
+        ibs[    gidx_rp] = ilayer_start
+        #####
+        # Store index for this leg due to this block.
+        bb[iblock, 0] = bb_base
+        bb[iblock, 1] = bb_base + lidx_rp
+        bb_base += lidx_rp
+        #####
+        gidx_rp += lidx_rp
+        #
+    #rps = rps[:gidx_rp]
+    #inv_rps = inv_rps[:gidx_rp]
+    #ibs = ibs[:gidx_rp]
+    #if debug:
+    #    old_rp0, old_rp1 = 0.0, 0.0
+    #    for iblock in range(nblocks):
+    #        istart = bb[iblock, 0]
+    #        iend   = bb[iblock, 1]
+    #        tmp_vz = inv_rps[istart:iend]
+    #        tmp_rp = np.array(rps[istart:iend])
+    #        tmp_ib = ibs[istart:iend]
+    #        tmp_z  = z[np.array(tmp_ib)]
+    #        ax1.plot(tmp_vz,     tmp_z, 'o', color='c', lw=1, markersize=4)
+    #        ax1.plot(1.0/tmp_rp, tmp_z, '.', color='C1', lw=1, markersize=4)
+    #        #
+    #        ax2.semilogx(1.0/tmp_vz,     tmp_z, 'o', color='c', lw=1, markersize=4)
+    #        ax2.semilogx(tmp_rp, tmp_z, '.', color='C1', lw=1, markersize=4)
+    #        rp0, rp1 = tmp_rp[0], tmp_rp[-1]
+    #        if iblock >0  and old_rp1 <= rp0:
+    #            print('wrong', rp0, old_rp1)
+    #        old_rp0 = rp0
+    #        old_rp1 = rp1
+    #######################################################
+    # Step pxt
+    dz = np.diff(z)
+    dv = np.diff(vz)
+    layer_type = np.zeros(z.size-1, dtype=np.int64)
+    for ilayer in range(layer_type.size):
+        if np.abs(dv[ilayer]) > 1e-10 and np.abs(dz[ilayer]) >1e-10:
+            layer_type[ilayer] = 2  # non-constant v layer
+        elif np.abs(dz[ilayer]) >1e-10:
+            layer_type[ilayer] = 1  # constant v layer
+    dzdv = np.where(dv!=0.0, dz/dv, 0.0)
+    n_legs =0
+    for iblock in range(nblocks):
+        g_i0 = bb[iblock, 0]
+        g_i1 = bb[iblock, 1]
+        for irp in range(g_i0, g_i1):
+            dist[irp], trvt[irp] = single_ray_xt_v4(inv_rps[irp], z, vz, dz, dv, dzdv, layer_type, ibs[irp])
+        ###
+        b_inds = split_pxt_legs_v2(dist[g_i0:g_i1])
+        ###
+        b_inds += g_i0 # adjust to global index
+        leg_start_gind[n_legs]                         = g_i0
+        leg_start_gind[n_legs+1: n_legs+1+b_inds.size] = b_inds
+        leg_end_gind[  n_legs:   n_legs+b_inds.size]   = b_inds+1
+        leg_end_gind[               n_legs+b_inds.size]= g_i1
+        n_legs += (b_inds.size +1)
+        ###
+        #print('iblock=', iblock, 'b_inds=', b_inds)
+    #print(n_legs, nblocks)
+    #print('n_legs=', n_legs )
+    #print('leg_start_end_pairs_gind[:,:n_legs]=', leg_start_end_pairs_gind[:,:n_legs] )
+    #leg_start_end_pairs_gind = leg_start_end_pairs_gind[:,:n_legs]
+    ##
+    #if debug:
+    #    for (istart, iend) in leg_start_end_pairs_gind.T:
+    #        tmp_rp = rps[istart:iend]
+    #        tmp_dist = dist[istart:iend]
+    #        tmp_trvt = trvt[istart:iend]
+    #        ax3.plot(tmp_dist, tmp_trvt, '-', lw=2, markersize=6)
+    #        ax4.semilogx(tmp_rp, tmp_dist, '-', lw=2, markersize=6)
+    #        ax5.semilogx(tmp_rp, tmp_trvt, '-', lw=2, markersize=6)
+    #    ax4.set_xlim(ax2.get_xlim())
+    #######################################################
+    #if debug:
+    #    plt.show()
+    return inv_rps, dist, trvt, ibs, leg_start_end_pairs_gind[:,:n_legs].T
+
 
 
 #### Ray tracing given distance
@@ -937,8 +1426,8 @@ def single_dist2trvt_v2(target_single_dist, z, vz, dz, dv, many_ray_inv_rps, man
     s_ib   = -1
     nleg = many_ray_ind_pairs.shape[0]
     #### for debug purposes
-    junk_inv_rp_trials = np.zeros(niter, dtype=np.float64)
-    junk_dist_trials   = np.zeros(niter, dtype=np.float64)
+    #junk_inv_rp_trials = np.zeros(niter, dtype=np.float64)
+    #junk_dist_trials   = np.zeros(niter, dtype=np.float64)
     for ileg in range(nleg):
         jdx_start = many_ray_ind_pairs[ileg, 0]
         jdx_end   = many_ray_ind_pairs[ileg, 1]
@@ -982,8 +1471,8 @@ def single_dist2trvt_v2(target_single_dist, z, vz, dz, dv, many_ray_inv_rps, man
                     ib_mid = ib1 if inv_rp0 < inv_rp_mid else ib0 # clever fix!!! (should I use  abs(inv_rp0-inv_rp_mid)~0.0? )
                     d_mid, t_mid = single_ray_xt_v2(inv_rp_mid, z, vz, dz, dv, ib_mid)
                     ###
-                    junk_inv_rp_trials[idx_iter] = inv_rp_mid
-                    junk_dist_trials[idx_iter]   = d_mid
+                    #junk_inv_rp_trials[idx_iter] = inv_rp_mid
+                    #junk_dist_trials[idx_iter]   = d_mid
                     ###
                     if  (np.abs(d_mid-target_single_dist) < critical_dist_err) or (np.abs(d_left - d_right) < critical_dist_err) or (inv_rp_left >= inv_rp_right):
                         ### found!!!
@@ -1021,10 +1510,10 @@ def single_dist2trvt_v2(target_single_dist, z, vz, dz, dv, many_ray_inv_rps, man
                     print('inv_rp_found=', inv_rp_found)
                     print('vbot=        ', vz[ib_found+1], '=vz[ib_found+1]')
                     ##
-                    print('junk_inv_rp_trials=', junk_inv_rp_trials[:idx_iter+1])
+                    #print('junk_inv_rp_trials=', junk_inv_rp_trials[:idx_iter+1])
                     #
                     print('target_single_dist=', target_single_dist)
-                    print('junk_dist_trials  =', junk_dist_trials[:idx_iter+1])
+                    #print('junk_dist_trials  =', junk_dist_trials[:idx_iter+1])
                     pass
             ###########
             if trv_found < s_trvt:
@@ -1128,6 +1617,278 @@ def many_dist2trvt_jac_v3(dist, z, vz, theta_step_deg=0.1, critical_dist_err=1e-
         if (not np.isnan(inv_rp)) and (ib_found[idx] !=-1): ### Nan means no ray exist for this distance
             _, _, _, _, _, _, d_trvt_v[idx] = single_ray_xt_grad_v2(inv_rp, z, vz, dz, dv, ib_found[idx], buf)
     return inv_rp_found, dist_found, trvt_found, d_trvt_v
+# v4
+@jit(nopython=True, nogil=True) #, fastmath=True)
+def single_dist2trvt_v4(target_single_dist, z, vz, dz, dv, dzdv, layer_type, many_ray_inv_rps, many_ray_dist, many_ray_trvt, many_ray_ibs, many_ray_ind_pairs, critical_dist_err=1e-20, niter=1000):
+    s_inv_rp   = np.nan
+    s_dist = np.nan
+    s_trvt = np.inf # will be set to nan if not found latter
+    s_ib   = -1
+    nleg = many_ray_ind_pairs.shape[0]
+    #### for debug purposes
+    #junk_inv_rp_trials = np.zeros(niter, dtype=np.float64)
+    #junk_dist_trials   = np.zeros(niter, dtype=np.float64)
+    #n_total_trials = 0
+    for ileg in range(nleg):
+        jdx_start = many_ray_ind_pairs[ileg, 0]
+        jdx_end   = many_ray_ind_pairs[ileg, 1]
+        inv_rps= many_ray_inv_rps[jdx_start:jdx_end]
+        dists = many_ray_dist[jdx_start:jdx_end]
+        trvts = many_ray_trvt[jdx_start:jdx_end]
+        ibs   = many_ray_ibs[jdx_start:jdx_end]
+        if (dists[0] <= target_single_dist <= dists[-1]) or (dists[-1] <= target_single_dist <= dists[0]): # within the range of this leg
+            if np.abs(target_single_dist-dists[0]) < critical_dist_err:
+                inv_rp_found   = inv_rps[0]
+                dist_found = dists[0]
+                trv_found  = trvts[0]
+                ib_found   = ibs[0]
+            elif np.abs(target_single_dist-dists[-1]) < critical_dist_err:
+                inv_rp_found   = inv_rps[-1]
+                dist_found = dists[-1]
+                trv_found  = trvts[-1]
+                ib_found   = ibs[-1]
+            else:
+                if dists[0] <= dists[-1]:
+                    i1 = np.searchsorted(dists, target_single_dist)
+                else:
+                    i1 = np.searchsorted(dists[::-1], target_single_dist)
+                    i1 = dists.size - i1
+                ##### Note, inv_rps is always increasing!!!   ibs is also not decreasing!!!
+                i0 = i1-1
+                # the search range by i0, i1
+                inv_rp0 = inv_rps[i0] # so, inv_rp0 <= inv_rp1
+                inv_rp1 = inv_rps[i1]
+                d0      = dists[i0]
+                d1      = dists[i1]
+                ib0     = ibs[i0]     # also, ib0 <= ib1
+                ib1     = ibs[i1]
+                ###### init the bisection search, each step range is left, right
+                inv_rp_left = inv_rp0 # also, inv_rp_left <= inv_rp_right at all step
+                inv_rp_right= inv_rp1
+                d_left  = d0
+                d_right = d1
+                ######################################################################################################
+                #inv_rp_current = 0.5 * (inv_rp_left + inv_rp_right)
+                #ib_current = ib1 if inv_rp0 < inv_rp_current else ib0
+                #d_current, _, grad_p_current = single_ray_xt_p_grad_v4(inv_rp_current, z, vz, dz, dv, dzdv, layer_type, ib_current)
+                #grad_invp_current = -grad_p_current / (inv_rp_current * inv_rp_current) # Derived value
+                #for idx_iter in range(niter):
+                #    if grad_invp_current != 0.0:
+                #        inv_rp_new = inv_rp_current + (target_single_dist - d_current) / grad_invp_current
+                #        if inv_rp_new < inv_rp_left or inv_rp_new > inv_rp_right:
+                #            inv_rp_new = 0.5*(inv_rp_left + inv_rp_right) # Default to safe step
+                #        #if inv_rp_new < inv_rp_left:
+                #        #    print(f'iter={idx_iter}: going out of bound, reset to left')
+                #        #    inv_rp_new = inv_rp_left
+                #        #elif inv_rp_new > inv_rp_right:
+                #        #    print(f'iter={idx_iter}: going out of bound, reset to right')
+                #        #    inv_rp_new = inv_rp_right
+                #    else:
+                #        inv_rp_new = 0.5*(inv_rp_left + inv_rp_right) # Default to safe step
+                #    ib_new = ib1 if inv_rp0 < inv_rp_new else ib0
+                #    d_new, t_new, grad_p_new = single_ray_xt_p_grad_v4(inv_rp_new, z, vz, dz, dv, dzdv, layer_type, ib_new)
+                #    if (np.abs(d_new-target_single_dist) < critical_dist_err) or (np.abs(d_left - d_right) < critical_dist_err) or (inv_rp_left >= inv_rp_right):
+                #        ### found!!!
+                #        break
+                #    elif (d_left <= target_single_dist <= d_new) or (d_new <= target_single_dist <= d_left):
+                #        inv_rp_right = inv_rp_new
+                #        d_right      = d_new
+                #    else:
+                #        inv_rp_left = inv_rp_new
+                #        d_left = d_new
+                #    ####
+                #    inv_rp_current = inv_rp_new
+                #    d_current = d_new
+                #    grad_p_current = grad_p_new
+                #    grad_invp_current = -grad_p_current / (inv_rp_current * inv_rp_current)
+                #    ib_current = ib_new
+                #inv_rp_found= inv_rp_new
+                #ib_found    = ib_new
+                #dist_found  = d_new
+                #trv_found   = t_new
+                ######################################################################################################
+                inv_rp_new = 0.5*(inv_rp_left + inv_rp_right)
+                for idx_iter in range(niter):
+                    ib_new = ib1 if inv_rp0 < inv_rp_new else ib0 # clever fix!!! (should I use  abs(inv_rp0-inv_rp_mid)~0.0? )
+                    d_new, t_new, grad_p = single_ray_xt_grad_ponly_v4(inv_rp_new, z, vz, dz, dv, dzdv, layer_type, ib_new)
+                    ###########
+                    if  (np.abs(d_new-target_single_dist) < critical_dist_err) or (np.abs(d_left - d_right) < critical_dist_err) or (inv_rp_left >= inv_rp_right):
+                        ### found!!!
+                        break
+                    elif (d_left <= target_single_dist <= d_new) or (d_new <= target_single_dist <= d_left):
+                        inv_rp_right = inv_rp_new
+                        d_right      = d_new
+                    else:
+                        inv_rp_left = inv_rp_new
+                        d_left = d_new
+                    ########### newton update
+                    grad_invp = -grad_p/( inv_rp_new * inv_rp_new )
+                    if grad_invp != 0.0:
+                        inv_rp_new += (target_single_dist-d_new)/grad_invp
+                        if inv_rp_new < inv_rp_left or inv_rp_new > inv_rp_right: # safe guard
+                            #print(f'iter={idx_iter}: going out of bound, reset to mid')
+                            inv_rp_new = 0.5 * (inv_rp_left + inv_rp_right)
+                    else:
+                        inv_rp_new = 0.5 * (inv_rp_left + inv_rp_right)
+                inv_rp_found= inv_rp_new
+                ib_found    = ib_new
+                dist_found  = d_new
+                trv_found   = t_new
+                ######################################################################################################
+                #print('inv_p left and right', inv_rp_left, inv_rp_right)
+                #print('dist left and right ', d_left, d_right)
+                #print('target dist         ', target_single_dist)
+                #inv_rp_new = inv_rp_left #0.5*(inv_rp_left + inv_rp_right)
+                #for idx_iter in range(niter):
+                #    #print('iter', idx_iter)
+                #    ib_new = ib1 if inv_rp0 < inv_rp_new else ib0 # clever fix!!! (should I use  abs(inv_rp0-inv_rp_mid)~0.0? )
+                #    d_new, t_new, grad_p = single_ray_xt_p_grad_v4(inv_rp_new, z, vz, dz, dv, dzdv, layer_type, ib_new)
+                #    grad_invp = -grad_p/( inv_rp_new * inv_rp_new )
+                #    #print('\tgrad=', grad)
+                #    #####
+                #    if grad_invp != 0.0:
+                #        #print('\told=', inv_rp_new)
+                #        inv_rp_new = inv_rp_new + (target_single_dist-d_new)/grad_invp
+                #        #print('\tnew=', inv_rp_new)
+                #    else:
+                #        inv_rp_new = 0.5 * (inv_rp_left + inv_rp_right)
+                #    #####
+                #    if inv_rp_new < inv_rp_left:
+                #        #print('\tgoint out of left bound, reset to left bound')
+                #        inv_rp_new = inv_rp_left
+                #    elif inv_rp_new > inv_rp_right:
+                #        #print('\tgoint out of right bound, reset to right bound')
+                #        inv_rp_new = inv_rp_right
+                #    ##########################
+                #    ib_new = ib1 if inv_rp0 < inv_rp_new else ib0 # clever fix!!! (should I use  abs(inv_rp0-inv_rp_mid)~0.0? )
+                #    d_new, t_new, _ = single_ray_xt_p_grad_v4(inv_rp_new, z, vz, dz, dv, dzdv, layer_type, ib_new)
+                #    if  (np.abs(d_new-target_single_dist) < critical_dist_err) or (np.abs(d_left - d_right) < critical_dist_err) or (inv_rp_left >= inv_rp_right):
+                #        ### found!!!
+                #        break
+                #inv_rp_found= inv_rp_new
+                #ib_found    = ib_new
+                #dist_found  = d_new
+                #trv_found   = t_new
+                ######################################################################################################
+                #for idx_iter in range(niter):
+                #    # n_total_trials +=1
+                #    inv_rp_mid = 0.5 * (inv_rp_left + inv_rp_right)
+                #    ib_mid = ib1 if inv_rp0 < inv_rp_mid else ib0 # clever fix!!! (should I use  abs(inv_rp0-inv_rp_mid)~0.0? )
+                #    #d_mid, t_mid = single_ray_xt_v4(inv_rp_mid, z, vz, dz, dv, dzdv, layer_type, ib_mid)
+                #    d_mid, t_mid, _ = single_ray_xt_p_grad_v4(inv_rp_mid, z, vz, dz, dv, dzdv, layer_type, ib_mid)
+                #    ###
+                #    #junk_inv_rp_trials[idx_iter] = inv_rp_mid
+                #    #junk_dist_trials[idx_iter]   = d_mid
+                #    ###
+                #    if  (np.abs(d_mid-target_single_dist) < critical_dist_err) or (np.abs(d_left - d_right) < critical_dist_err) or (inv_rp_left >= inv_rp_right):
+                #        ### found!!!
+                #        break
+                #    elif (d_left <= target_single_dist <= d_mid) or (d_mid <= target_single_dist <= d_left):
+                #        inv_rp_right = inv_rp_mid
+                #        d_right      = d_mid
+                #    else:
+                #        inv_rp_left = inv_rp_mid
+                #        d_left = d_mid
+                #inv_rp_found= inv_rp_mid
+                #ib_found    = ib_mid
+                #dist_found  = d_mid
+                #trv_found   = t_mid
+                ######################################################################################################
+                ####
+                #### for debug purposes
+                #vtop = vz[ib_found]
+                #vbot = vz[ib_found+1]
+                #if not (vtop < inv_rp_found <= vbot):
+                #    ####
+                #    # 1. The cos issue disappear if the ib_found is smaller than its correct value.
+                #    #    Which means vtop < vbot <= inv_rp_found
+                #    # 2. The cos issue appear if the ib_found is larger than its correct value.
+                #    #    Which means inv_rp_found <= vtop < vbot
+                #    ####
+                #    print('Error in single_dist2trvt_v2:')
+                #    print('Original search range')
+                #    print('inv_rp0=', inv_rp0,   'inv_rp1=  ', inv_rp1)
+                #    print('dist0=  ', dists[i0], 'dists[i1]=', dists[i1])
+                #    print('ib0=', ib0, 'ib1=', ib1)
+                #    ####
+                #    print('After bisection search:')
+                #    print('ib_found=    ', ib_found)
+                #    print('vtop=        ', vz[ib_found],   '=vz[ib_found]')
+                #    print('inv_rp_found=', inv_rp_found)
+                #    print('vbot=        ', vz[ib_found+1], '=vz[ib_found+1]')
+                #    ##
+                #    #print('junk_inv_rp_trials=', junk_inv_rp_trials[:idx_iter+1])
+                #    #
+                #    print('target_single_dist=', target_single_dist)
+                #    #print('junk_dist_trials  =', junk_dist_trials[:idx_iter+1])
+                #    pass
+            ###########
+            if trv_found < s_trvt:
+                s_inv_rp   = inv_rp_found
+                s_dist = dist_found
+                s_trvt = trv_found
+                s_ib   = ib_found
+    #print('n_total_trials=', n_total_trials )
+    if np.isinf(s_trvt):
+        s_trvt = np.nan
+    return s_inv_rp, s_dist, s_trvt, s_ib
+@jit(nopython=True, nogil=True)
+def many_dist2trvt_v4(dist, z, vz, theta_step_deg=0.1, critical_dist_err=1e-20, niter=1000):
+    """
+    Return: rp_found, dist_found, trvt_found
+        The dist_found will be very close to the input dist, but may not be exactly the same due to numerical errors.
+        The rp_found and trvt_found correspond to the dist_found.
+
+        Note: `np.nan` will used for elements in rp_found, dist_found, and trvt_found
+               for any distances that do not exist given the model.
+    """
+    array_inv_rp_found   = np.zeros(dist.size, dtype=np.float64)
+    array_dist_found = np.zeros(dist.size, dtype=np.float64)
+    array_trvt_found = np.zeros(dist.size, dtype=np.float64)
+    array_ib_found   = np.zeros(dist.size, dtype=np.int64)
+    many_ray_inv_rps, many_ray_dist, many_ray_trvt, many_ray_ibs, many_ray_ind_pairs = many_rays_pxt_v4(z, vz, theta_step_deg=theta_step_deg)
+    nleg = many_ray_ind_pairs.shape[0]
+    #### for debug purposes
+    dz = np.diff(z)
+    dv = np.diff(vz)
+    layer_type = np.zeros(z.size-1, dtype=np.int64)
+    for ilayer in range(layer_type.size):
+        if np.abs(dv[ilayer]) > 1e-10 and np.abs(dz[ilayer]) >1e-10:
+            layer_type[ilayer] = 2  # non-constant v layer
+        elif np.abs(dz[ilayer]) >1e-10:
+            layer_type[ilayer] = 1  # constant v layer
+    dzdv = np.where(dv!=0.0, dz/dv, 0.0)
+    for idx in range(dist.size):
+        array_inv_rp_found[idx], array_dist_found[idx], array_trvt_found[idx], array_ib_found[idx] = single_dist2trvt_v4(dist[idx], z, vz, dz, dv, dzdv, layer_type, many_ray_inv_rps, many_ray_dist, many_ray_trvt, many_ray_ibs, many_ray_ind_pairs, critical_dist_err, niter)
+    return array_inv_rp_found, array_dist_found, array_trvt_found, array_ib_found
+@jit(nopython=True, nogil=True)
+def many_dist2trvt_jac_v4(dist, z, vz, theta_step_deg=0.1, critical_dist_err=1e-20, niter=1000):
+    """
+    Return: rp_found, dist_found, trvt_found, d_trvt_v
+        The dist_found will be very close to the input dist, but may not be exactly the same due to numerical errors.
+        The rp_found, trvt_found, d_trvt_v correspond to the dist_found.
+
+        Note: `np.nan` will used for elements in rp_found, dist_found, and trvt_found
+               for any distances that do not exist given the model.
+               zeros will be used for the corresponding rows in the d_trvt_v.
+    """
+    inv_rp_found, dist_found, trvt_found, ib_found = many_dist2trvt_v4(dist, z, vz, theta_step_deg=theta_step_deg, critical_dist_err=critical_dist_err, niter=niter)
+    d_trvt_v = np.zeros((dist.size, vz.size), dtype=np.float64)
+    dz = np.diff(z)
+    dv = np.diff(vz)
+    layer_type = np.zeros(z.size-1, dtype=np.int64)
+    for ilayer in range(layer_type.size):
+        if np.abs(dv[ilayer]) > 1e-10 and np.abs(dz[ilayer]) >1e-10:
+            layer_type[ilayer] = 2  # non-constant v layer
+        elif np.abs(dz[ilayer]) >1e-10:
+            layer_type[ilayer] = 1  # constant v layer
+    dzdv = np.where(dv!=0.0, dz/dv, 0.0)
+    buf = np.zeros((6, z.size), dtype=np.float64)
+    for idx in range(inv_rp_found.size):
+        inv_rp = inv_rp_found[idx]
+        if (not np.isnan(inv_rp)) and (ib_found[idx] !=-1): ### Nan means no ray exist for this distance
+            _, _, _, _, _, _, d_trvt_v[idx] = single_ray_xt_grad_v4(inv_rp, z, vz, dz, dv, dzdv, layer_type, ib_found[idx], buf)
+    return inv_rp_found, dist_found, trvt_found, d_trvt_v
 
 
 
@@ -1220,7 +1981,7 @@ def benchmark_speedup():
     #print('1/vz=', 1.0/vz[:10])
     #z  =  np.array([0., -100, -200, -300, -400])
     #vz =  np.array([6.0, 7.0, 6.5, 9.0, 10.0])
-    critical_dist_err = 1e-2
+    critical_dist_err = 1e-6
     niter = 1000
     if True: # speed up many_rays_pxt vs. many_rays_pxt_v2
         r_tmp, vr_tmp = denser_xy(r, vr, 50.0)  # make the model denser
@@ -1248,6 +2009,14 @@ def benchmark_speedup():
         leg_x3 = [x3[i0:i1] for (i0, i1) in ind_pairs]
         leg_t3 = [t3[i0:i1] for (i0, i1) in ind_pairs]
         ####
+        p4, x4, t4, _, ind_pairs = many_rays_pxt_v4(z, vz, theta_step_deg=0.1)  # warm up numba jit
+        with utils.Timer("many_rays_pxt_v4: "):
+            for _ in range(1):
+                many_rays_pxt_v4(z, vz, theta_step_deg=0.1)
+        leg_p4 = [p4[i0:i1] for (i0, i1) in ind_pairs]
+        leg_x4 = [x4[i0:i1] for (i0, i1) in ind_pairs]
+        leg_t4 = [t4[i0:i1] for (i0, i1) in ind_pairs]
+        ####
         print('min,max, mean dist step=', np.max(np.abs(np.diff(x1))), np.min(np.abs(np.diff(x1))), np.mean(np.abs(np.diff(x1))) )
         ####
         sum_leg_p1 = np.sum( np.unique(p1))
@@ -1259,9 +2028,12 @@ def benchmark_speedup():
         sum_leg_t1 = np.sum( np.unique(t1))
         sum_leg_t2 = np.sum( np.unique(t2))
         sum_leg_t3 = np.sum( np.unique(t3))
-        print('sum_leg_p=', sum_leg_p1-sum_leg_p2, sum_leg_p3-sum_leg_p2)
-        print('sum_leg_x=', sum_leg_x1-sum_leg_x2, sum_leg_x3-sum_leg_x2)
-        print('sum_leg_t=', sum_leg_t1-sum_leg_t2, sum_leg_t3-sum_leg_t2)
+        sum_leg_p4 = np.sum( np.unique(p4))
+        sum_leg_x4 = np.sum( np.unique(x4))
+        sum_leg_t4 = np.sum( np.unique(t4))
+        print('sum_leg_p=', sum_leg_p1-sum_leg_p2, sum_leg_p3-sum_leg_p2, sum_leg_p4-sum_leg_p2)
+        print('sum_leg_x=', sum_leg_x1-sum_leg_x2, sum_leg_x3-sum_leg_x2, sum_leg_x4-sum_leg_x2)
+        print('sum_leg_t=', sum_leg_t1-sum_leg_t2, sum_leg_t3-sum_leg_t2, sum_leg_t4-sum_leg_t2)
         ####
         nlegs = len(leg_p1)
         for ileg in range(nlegs):
@@ -1335,15 +2107,24 @@ def benchmark_speedup():
                 for _ in range(1):
                     many_dist2trvt_v3(dist, z, vz, theta_step_deg=0.1, critical_dist_err=critical_dist_err, niter=niter)
             ###
+            rp_found4, dist_found4, trvt_found4, _ = many_dist2trvt_v4(dist, z, vz, theta_step_deg=0.1, critical_dist_err=critical_dist_err, niter=niter)
+            idx_nan = np.where( np.isnan(rp_found4) )[0]
+            rp_found4[idx_nan] = 0.0
+            dist_found4[idx_nan] = 0.0
+            trvt_found4[idx_nan] = 0.0
+            with utils.Timer("many_dist2trvt_v4: "):
+                for _ in range(1):
+                    many_dist2trvt_v4(dist, z, vz, theta_step_deg=0.1, critical_dist_err=critical_dist_err, niter=niter)
+            ###
             idx_dif = np.where((rp_found1 != rp_found2) )[0]
             if idx_dif.size >0:
                 print(dist[idx_dif])
                 print(dist_found1[idx_dif])
                 print(dist_found2[idx_dif])
         ###
-        print('rp difference=',   np.mean(np.abs(rp_found1 - rp_found2)),      np.sum(np.abs(rp_found3 - rp_found2)),      )
-        print('dist difference=', np.mean(np.abs(dist_found1 - dist_found2)),  np.sum(np.abs(dist_found3 - dist_found2)),  )
-        print('trvt difference=', np.mean(np.abs(trvt_found1 - trvt_found2)),  np.sum(np.abs(trvt_found3 - trvt_found2)),  )
+        print('rp difference=',   np.mean(np.abs(rp_found1 - rp_found2)),      np.sum(np.abs(rp_found3 - rp_found2)),     np.sum(np.abs(rp_found4 - rp_found2)),    )
+        print('dist difference=', np.mean(np.abs(dist_found1 - dist_found2)),  np.sum(np.abs(dist_found3 - dist_found2)), np.sum(np.abs(dist_found4 - dist_found2)), )
+        print('trvt difference=', np.mean(np.abs(trvt_found1 - trvt_found2)),  np.sum(np.abs(trvt_found3 - trvt_found2)), np.sum(np.abs(trvt_found4 - trvt_found2)), )
     if True:
         print()
         r_tmp, vr_tmp = denser_xy(r, vr, 5.0)  # make the model denser
@@ -1382,13 +2163,46 @@ def benchmark_speedup():
             for _ in range(1):
                 many_dist2trvt_jac_v3(dist, z, vz, theta_step_deg=0.1, critical_dist_err=critical_dist_err, niter=niter)
         #########################
-        idx_dif = np.where((rp_found1 != rp_found2) | (rp_found1 != rp_found3))[0]
+        rp_found4, dist_found4, trvt_found4, d_trvt_v4 = many_dist2trvt_jac_v4(dist, z, vz, theta_step_deg=0.1, critical_dist_err=critical_dist_err, niter=niter)  # warm up numba jit
+        idx_nan = np.where( np.isnan(rp_found4) )[0]
+        rp_found4[idx_nan] = 0.0
+        dist_found4[idx_nan] = 0.0
+        trvt_found4[idx_nan] = 0.0
+        with utils.Timer("many_dist2trvt_jac_v4: "):
+            for _ in range(1):
+                many_dist2trvt_jac_v4(dist, z, vz, theta_step_deg=0.1, critical_dist_err=critical_dist_err, niter=niter)
+        #########################
+        idx_dif = np.where((rp_found1 != rp_found2) | (rp_found1 != rp_found3) | (rp_found1 != rp_found4))[0]
         if idx_dif.size >0:
-            print('rp', rp_found1[idx_dif], rp_found2[idx_dif], rp_found3[idx_dif])
-        print('rp difference=  ', np.sum(np.abs(rp_found1 - rp_found2)),     np.sum(np.abs(rp_found1 - rp_found3)),     )
-        print('dist difference=', np.sum(np.abs(dist_found1 - dist_found2)), np.sum(np.abs(dist_found1 - dist_found3)), )
-        print('trvt difference=', np.sum(np.abs(trvt_found1 - trvt_found2)), np.sum(np.abs(trvt_found1 - trvt_found3)), )
-        print('d_trvt_v difference=', np.sum(np.abs(d_trvt_v1 - d_trvt_v2)), np.sum(np.abs(d_trvt_v1 - d_trvt_v3)),     )
+            print('rp', rp_found1[idx_dif], rp_found2[idx_dif], rp_found3[idx_dif], rp_found4[idx_dif])
+        print('rp difference=  ', np.sum(np.abs(rp_found1 - rp_found2)),     np.sum(np.abs(rp_found1 - rp_found3)),     np.sum(np.abs(rp_found1 - rp_found4)),     )
+        print('dist difference=', np.sum(np.abs(dist_found1 - dist_found2)), np.sum(np.abs(dist_found1 - dist_found3)), np.sum(np.abs(dist_found1 - dist_found4)), )
+        print('trvt difference=', np.sum(np.abs(trvt_found1 - trvt_found2)), np.sum(np.abs(trvt_found1 - trvt_found3)), np.sum(np.abs(trvt_found1 - trvt_found4)), )
+        print('d_trvt_v difference=', np.sum(np.abs(d_trvt_v1 - d_trvt_v2)), np.sum(np.abs(d_trvt_v1 - d_trvt_v3)),     np.sum(np.abs(d_trvt_v1 - d_trvt_v4)), )
+def benchmark_single_pxt_gradient():
+    r, vr = rd_prem_OC_model()
+    r_tmp, vr_tmp = denser_xy(r, vr, 50.0)
+    #vr_tmp += (np.random.random(vr_tmp.size)-0.5)#*10  # add some noise
+    z, vz   = flatten(r_tmp, vr_tmp, 6371.0)
+    ####
+    inv_rp = vz[15] - 0.001
+    ib     = 14
+    ####
+    buf_six_by_zsize = np.zeros((6, z.size), dtype=np.float64)
+    dz = np.diff(z)
+    dv = np.diff(vz)
+    layer_type = np.zeros(z.size-1, dtype=np.int64)
+    for ilayer in range(layer_type.size):
+        if np.abs(dv[ilayer]) > 1e-10 and np.abs(dz[ilayer]) >1e-10:
+            layer_type[ilayer] = 2  # non-constant v layer
+        elif np.abs(dz[ilayer]) >1e-10:
+            layer_type[ilayer] = 1  # constant v layer
+    dzdv = np.where(dv!=0.0, dz/dv, 0.0)
+    ####
+    dist1, trvt1, par_dist_v1, par_dist_p1, par_trvt_v1, par_trvt_p1, d_trvt_v1 = single_ray_xt_grad_v4(inv_rp, z, vz, dz, dv, dzdv, layer_type, ib, buf_six_by_zsize)
+    dist1, trvt1, par_dist_p2, = single_ray_xt_grad_ponly_v4(inv_rp, z, vz, dz, dv, dzdv, layer_type, ib)
+    print(f'par_dist_p1= {par_dist_p1}, par_trvt_p1= {par_trvt_p1}')
+    print(f'par_dist_p2= {par_dist_p2}')
 def benchmark_my_trvt_gradient():
     ####
     #z, vz = flatten(r, vr, 6371.0)
@@ -1409,14 +2223,14 @@ def benchmark_my_trvt_gradient():
     ####
     #dist_deg = np.linspace(5, 10, 30) # where the data are
     #dist = dist_deg * (np.pi/180.0) * 6371.0  # in km
-    _,x,_,_,_ = many_rays_pxt_v3(z, vz, theta_step_deg=0.1)  # warm up numba jit
+    _,x,_,_,_ = many_rays_pxt_v4(z, vz, theta_step_deg=0.1)  # warm up numba jit
     xmin, xmax = np.min(x), np.max(x)
     xmax_minus_xmin = xmax - xmin
     xmin += xmax_minus_xmin*0.1
     xmax -= xmax_minus_xmin*0.1
     dist = np.linspace(xmin, xmax, 10)
     ####
-    _, _, _, par_trvt_v = many_dist2trvt_jac_v3(dist, z, vz, theta_step_deg=theta_step_deg, critical_dist_err=1e-3, niter=niter)
+    _, _, _, par_trvt_v = many_dist2trvt_jac_v4(dist, z, vz, theta_step_deg=theta_step_deg, critical_dist_err=1e-3, niter=niter)
     par_trvt_v2 = np.zeros(par_trvt_v.shape)
     for iz in range(vz.size):
         vz1 = vz.copy()
@@ -1425,8 +2239,8 @@ def benchmark_my_trvt_gradient():
         vz2[iz] *= (1+1e-6)
         #_, _, trvt1 = many_dist2trvt(dist, z,  vz1, theta_step_deg=theta_step_deg)
         #_, _, trvt2 = many_dist2trvt(dist, z,  vz2, theta_step_deg=theta_step_deg)
-        _, _, trvt1, _ = many_dist2trvt_jac(dist, z, vz1, theta_step_deg=theta_step_deg, critical_dist_err=1e-20, niter=niter)
-        _, _, trvt2, _ = many_dist2trvt_jac(dist, z, vz2, theta_step_deg=theta_step_deg, critical_dist_err=1e-20, niter=niter)
+        _, _, trvt1, _ = many_dist2trvt_v4(dist, z, vz1, theta_step_deg=theta_step_deg, critical_dist_err=1e-20, niter=niter)
+        _, _, trvt2, _ = many_dist2trvt_v4(dist, z, vz2, theta_step_deg=theta_step_deg, critical_dist_err=1e-20, niter=niter)
         junk = (trvt2 - trvt1) / (2e-6*vz[iz])
         par_trvt_v2[:, iz] = junk
         #print(trvt1, trvt2)
@@ -1608,6 +2422,7 @@ def debug3():
 if __name__ == "__main__":
     #plot_benchmark_my_trvt_gradient()
     benchmark_my_trvt_gradient()
-    #benchmark_speedup()
+    benchmark_speedup()
+    #benchmark_single_pxt_gradient()
     #debug2()
     #debug3()
