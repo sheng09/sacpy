@@ -496,10 +496,49 @@ class FastTauP:
     MT_PHASE = 2
     OC_PHASE = 1
     IC_PHASE = 0
-    def __init__(self, R0=6371.0, dr=None):
+    def __init__(self, R0=6371.0, uniform_dr=None, max_dr=20.0):
+        """
+        uniform_dr: first resample the model with uniform dr for mantle, outer core, and inner core.
+        max_dr:     then process the model with denser layers with spacing no more than max_dr.
+        """
         r, vp, vs, icmb, iicb = rd_prem_model()
-        self.proc_mod(r, vp, vs, icmb, iicb, R0=R0, dr=dr)
-    def proc_mod(self, r, vp, vs, icmb, iicb, R0=6371.0, dr=None):
+        if uniform_dr is not None:
+            r, vp, vs, icmb, iicb = self.resample_model(r, vp, vs, icmb, iicb, uniform_dr)
+        self.proc_mod(r, vp, vs, icmb, iicb, R0=R0, max_dr=max_dr)
+    def resample_model(self, r, vp, vs, icmb, iicb, uniform_dr):
+        """
+        Resample the model with uniform dr for mantle, outer core, and inner core.
+        Note, the input model r will lost, except its starting and ending points in
+        mantle, outer core, and inner core.
+        Return: new_r, new_vp, new_vs, new_icmb, new_iicb
+        """
+        mt_r, mt_vp, mt_vs = r[:icmb],     vp[:icmb],     vs[:icmb]
+        oc_r, oc_vp, oc_vs = r[icmb:iicb], vp[icmb:iicb], vs[icmb:iicb]
+        ic_r, ic_vp, ic_vs = r[iicb:],     vp[iicb:],     vs[iicb:]
+        ######
+        new_mt_r = np.arange(mt_r[0], mt_r[-1]-uniform_dr, -uniform_dr)
+        new_mt_r[-1] = mt_r[-1]
+        new_mt_vp = np.interp(new_mt_r[::-1], mt_r[::-1], mt_vp[::-1])[::-1]
+        new_mt_vs = np.interp(new_mt_r[::-1], mt_r[::-1], mt_vs[::-1])[::-1]
+        #
+        new_oc_r = np.arange(oc_r[0], oc_r[-1]-uniform_dr, -uniform_dr)
+        new_oc_r[-1] = oc_r[-1]
+        new_oc_vp = np.interp(new_oc_r[::-1], oc_r[::-1], oc_vp[::-1])[::-1]
+        new_oc_vs = np.interp(new_oc_r[::-1], oc_r[::-1], oc_vs[::-1])[::-1]
+        #
+        new_ic_r = np.arange(ic_r[0], ic_r[-1]-uniform_dr, -uniform_dr)
+        new_ic_r[-1] = ic_r[-1]
+        new_ic_vp = np.interp(new_ic_r[::-1], ic_r[::-1], ic_vp[::-1])[::-1]
+        new_ic_vs = np.interp(new_ic_r[::-1], ic_r[::-1], ic_vs[::-1])[::-1]
+        #
+        new_r  = np.concatenate( (new_mt_r,  new_oc_r,  new_ic_r ) )
+        new_vp = np.concatenate( (new_mt_vp, new_oc_vp, new_ic_vp) )
+        new_vs = np.concatenate( (new_mt_vs, new_oc_vs, new_ic_vs) )
+        new_icmb = new_mt_r.size
+        new_iicb = new_mt_r.size + new_oc_r.size
+        ######
+        return new_r, new_vp, new_vs, new_icmb, new_iicb
+    def proc_mod(self, r, vp, vs, icmb, iicb, R0=6371.0, max_dr=None):
         self.R0 = R0
         ######
         mt_r, mt_vrp, mt_vrs = r[:icmb], vp[:icmb], vs[:icmb]
@@ -508,20 +547,20 @@ class FastTauP:
         ######
         # Fix mantle
         # The mantle's layers must be denser because of the flattening.
-        _,    mt_vrp = denser_xy(mt_r, mt_vrp, 20.0)
-        mt_r, mt_vrs = denser_xy(mt_r, mt_vrs, 20.0)
+        _,    mt_vrp = denser_xy(mt_r, mt_vrp, 50.0)
+        mt_r, mt_vrs = denser_xy(mt_r, mt_vrs, 50.0)
         icmb = mt_r.size
         ######
         # Fix outer core
         # The outer core's layers must be denser because of the flattening.
-        _,    oc_vrp = denser_xy(oc_r, oc_vrp, 5.0)
-        oc_r, oc_vrs = denser_xy(oc_r, oc_vrs, 5.0)
+        _,    oc_vrp = denser_xy(oc_r, oc_vrp, 50.0)
+        oc_r, oc_vrs = denser_xy(oc_r, oc_vrs, 50.0)
         iicb = mt_r.size + oc_r.size
         ######
         # Fix inner core
         #The inner core's  layers must be denser because of the flattening near the center.
-        _,    ic_vrp = denser_xy(ic_r, ic_vrp, 2.0)
-        ic_r, ic_vrs = denser_xy(ic_r, ic_vrs, 2.0)
+        _,    ic_vrp = denser_xy(ic_r, ic_vrp, 10.0)
+        ic_r, ic_vrs = denser_xy(ic_r, ic_vrs, 10.0)
         #
         ic_r[-1] = ic_r[-2]-1e-3
         ic_vrp[-1]= ic_vrp[-2]+1e-3
@@ -532,13 +571,13 @@ class FastTauP:
         ic_vrp = np.concatenate( (ic_vrp[:ci], tmp_vrp) )
         ic_vrs = np.concatenate( (ic_vrs[:ci], tmp_vrs) )
         ######
-        if dr is not None:
-            _,    mt_vrp = denser_xy(mt_r, mt_vrp, dr)
-            mt_r, mt_vrs = denser_xy(mt_r, mt_vrs, dr)
-            _,    oc_vrp = denser_xy(oc_r, oc_vrp, dr)
-            oc_r, oc_vrs = denser_xy(oc_r, oc_vrs, dr)
-            _,    ic_vrp = denser_xy(ic_r, ic_vrp, dr)
-            ic_r, ic_vrs = denser_xy(ic_r, ic_vrs, dr)
+        if max_dr is not None:
+            _,    mt_vrp = denser_xy(mt_r, mt_vrp, max_dr)
+            mt_r, mt_vrs = denser_xy(mt_r, mt_vrs, max_dr)
+            _,    oc_vrp = denser_xy(oc_r, oc_vrp, max_dr)
+            oc_r, oc_vrs = denser_xy(oc_r, oc_vrs, max_dr)
+            _,    ic_vrp = denser_xy(ic_r, ic_vrp, max_dr)
+            ic_r, ic_vrs = denser_xy(ic_r, ic_vrs, max_dr)
         ic_r[-1] = 1e-3 #ic_r[-2] # avoid zero radius, a nan for flattening
         #ic_vrp[-1]= ic_vrp[-2]
         #ic_vrs[-1]= ic_vrs[-2]
@@ -628,6 +667,32 @@ class FastTauP:
         self.all_iicb = mt_z.size + oc_z.size
         self.buf= np.zeros((10, self.all_z.size), dtype=np.float64)
         ######
+    def plot_model(self, ax, coord='r'):
+        """
+        coord: 'r' for radius, 'z' for flattened depth.
+        """
+        if coord == 'r':
+            vp = self.all_vrp
+            vs = self.all_vrs
+            r  = self.all_r
+            ax.plot(vp, r, '.-', label='Vp')
+            ax.plot(vs, r, '.-', label='Vs')
+            ax.set_ylabel('Radius (km)')
+            ax.set_ylim(self.R0, 0.0)
+            ax.set_xlabel('Velocity (km/s)')
+            ax.invert_yaxis()
+            ax.grid(True)
+            ax.legend()
+        elif coord == 'z':
+            vp = self.all_vzp
+            vs = self.all_vzs
+            z  = self.all_z
+            ax.loglog(vp, -z, '.-', label='Vp')
+            ax.loglog(vs, -z, '.-', label='Vs')
+            ax.set_ylabel('Flattened Depth (km)')
+            ax.set_xlabel('Velocity (km/s)')
+            ax.grid(True)
+            ax.legend()
     ################################################################################
     # Get inv_rps, ibs, ibreaks for specific ray types.
     #  or inv_rps, p_ibs, s_ibs, ibreaks for PS or IJ mixing.
@@ -1162,7 +1227,7 @@ class FastTauP:
         ax1 = fig.add_subplot(gs[0:100, 18:60])
         ax2 = fig.add_subplot(gs[0:100, 65:80])
         ax3 = fig.add_subplot(gs[0:100, 85:100])
-        app = FastTauP(R0=6371.0, dr=5.0)
+        app = FastTauP(R0=6371.0, max_dr=5.0)
         ax0.loglog(app.all_vzp, -app.all_z, '-', color='k', lw=2, label='P velocity')
         ax0.loglog(app.all_vzs, -app.all_z, '-', color='r', lw=2, label='S velocity')
         ax0.invert_yaxis()
@@ -1229,7 +1294,7 @@ class FastTauP:
         ax1 = fig.add_subplot(gs[0:100, 18:60])
         ax2 = fig.add_subplot(gs[0:100, 65:80])
         ax3 = fig.add_subplot(gs[0:100, 85:100])
-        app = FastTauP(R0=6371.0, dr=5.0)
+        app = FastTauP(R0=6371.0, max_dr=5.0)
         ax0.loglog(app.all_vzp, -app.all_z, '-', color='k', lw=2, label='P velocity')
         ax0.loglog(app.all_vzs, -app.all_z, '-', color='r', lw=2, label='S velocity')
         ax0.invert_yaxis()
@@ -1334,7 +1399,16 @@ class FastTauP:
             sol_t[nsol]       = t_found
             nsol += 1
         return sol_inv_rps[:nsol], sol_x[:nsol], sol_t[:nsol]
-    def dist2pxt(self, distances, phase_name, xerr=1e-3, niter=1000, grad=False):
+    def dist2pxt(self, distances, phase_name, xerr=1e-3, niter=1000, grad=False,
+                 first_arrival_only=False, keep_nonexistence=False):
+        """
+        first_arrival_only: bool
+            If True, only the first arrival solution is kept for each distance.
+            Default is False, will keep all possible arrivals.
+        keep_nonexistence: bool
+            If True, for distances with no solution, a placeholder (-1.0) is added to the inv_rps and ts arrays, and zeros to grad arrays.
+            Default is False, will skip distances with no solution.
+        """
         phase_type, nP, nS, nK, nI, nJ = self.decipher_phase_name(phase_name)
         tmp = self.phase2xt_base(phase_type, nP, nS, nK, nI, nJ)  # warm up
         db_inv_rp, db_x, db_t, db_istart_end = tmp[:4]
@@ -1343,9 +1417,21 @@ class FastTauP:
         sol_ts = list()
         for single_x in distances:
             inv_rps, xs, ts = self.dist2pxt_base(single_x, phase_type, nP, nS, nK, nI, nJ, db_inv_rp, db_x, db_t, db_istart_end, xerr=xerr, niter=niter)
-            sol_inv_rps.extend(inv_rps)
-            sol_xs.extend(xs)
-            sol_ts.extend(ts)
+            if inv_rps.size==0:
+                if keep_nonexistence:
+                    sol_inv_rps.append(-1.0)
+                    sol_xs.append(single_x)
+                    sol_ts.append(-1.0)
+            else:
+                if first_arrival_only:
+                    idx = np.argmin(ts)
+                    sol_inv_rps.append(inv_rps[idx])
+                    sol_xs.append(xs[idx])
+                    sol_ts.append(ts[idx])
+                else:
+                    sol_inv_rps.extend(inv_rps)
+                    sol_xs.extend(xs)
+                    sol_ts.extend(ts)
         sol_inv_rps = np.array(sol_inv_rps)
         sol_xs = np.array(sol_xs)
         sol_ts = np.array(sol_ts)
@@ -1363,6 +1449,8 @@ class FastTauP:
             dtdvzp = np.zeros((nrp, nz), dtype=np.float64)
             dtdvzs = np.zeros((nrp, nz), dtype=np.float64)
             for irp in range(nrp):
+                if sol_inv_rps[irp] < 0.0: # negative inv_rp means no solution (just a placeholder)
+                    continue
                 tmp = self.phase_p2xt_base(sol_inv_rps[irp], nP, nS, nK, nI, nJ, True)
                 #par_x_vzp, par_x_vzs, par_x_p, par_t_vzp, par_t_vzs, par_t_p, d_t_vzp, d_t_vzs
                 pxpvzp[irp] = tmp[2]
@@ -1375,10 +1463,367 @@ class FastTauP:
                 dtdvzs[irp] = tmp[9]
             return sol_inv_rps, sol_xs, sol_ts, pxpvzp, pxpvzs, pxpp, ptpvzp, ptpvzs, ptpp, dtdvzp, dtdvzs
     @staticmethod
+    def benchmark_resolution_matrix():
+        import pickle
+        plt.rcParams.update({'font.size': 8, 'figure.dpi': 150, 'font.family':'Arial'})
+        from matplotlib.gridspec import GridSpec
+        app = FastTauP(R0=6371.0, uniform_dr=25)
+        mt_r = app.all_r[:app.all_icmb]
+        oc_r = app.all_r[app.all_icmb: app.all_iicb]
+        ic_r = app.all_r[app.all_iicb:]
+        mt_dr = np.diff(mt_r)
+        oc_dr = np.diff(oc_r)
+        ic_dr = np.diff(ic_r)
+        print('mt dr range=', mt_dr.min(), mt_dr.max() )
+        print('oc dr range=', oc_dr.min(), oc_dr.max() )
+        print('ic dr range=', ic_dr.min(), ic_dr.max() )
+        vol_data = dict()
+        damping = 2e1
+        ################################################################################################
+        # The figure
+        oc_fig, oc_axmat = plt.subplots(2, 4, figsize=(16, 8), gridspec_kw={'wspace':0.1, 'hspace':0.2})
+        mo_fig, mo_axmat = plt.subplots(2, 4, figsize=(16, 8), gridspec_kw={'wspace':0.1, 'hspace':0.2})
+        oc_cax = oc_fig.add_axes([0.72, 0.44,  0.18, 0.02])
+        mo_cax = mo_fig.add_axes([0.72, 0.44,  0.18, 0.02])
+        oc_axlst = oc_axmat.flatten()
+        mo_axlst = mo_axmat.flatten()
+        ################################################################################################
+        # Jacobian and Model Resolution Matrix for seismic phases
+        for phase_name in ['SKS', 'SKKS', 'SKKKS', 'SKKKKS', 'K', 'ScS']:
+        #for phase_name in ['ScS']: #, 'SKKS', 'SKKKS']:
+            print(f'Processing phase: {phase_name}')
+            fig = plt.figure(figsize=(16, 8))
+            gs = GridSpec(200, 100, figure=fig)
+            ax0 = fig.add_subplot(gs[0:70 ,    0:20])
+            ax1 = fig.add_subplot(gs[0:70,     25:45])
+            ax2 = fig.add_subplot(gs[0:70,     50:70])
+            ax3 = fig.add_subplot(gs[0:70,     75:95])
+            ax4 = fig.add_subplot(gs[100:180,    0:45])
+            cax4= fig.add_subplot(gs[195:200,   0:15])
+            cax5= fig.add_subplot(gs[195:200,  30:45])
+            ax5 = fig.add_subplot(gs[100:180,   50:70])
+            ax6 = fig.add_subplot(gs[100:180,   75:95])
+            ####
+            app.plot_model(ax=ax0)
+            ####
+            tmp = app.phase2xt(phase_name, grad=False, max_theta_step_rad=0.0017)
+            db_inv_rp, db_x_km, db_t = tmp[:3]
+            db_x = db_x_km / (np.pi/180.0) / 6371.0
+            ax1.plot(db_x, db_t, '.', color='k', markersize=2)
+            ax2.plot(db_x, 1.0/np.array(db_inv_rp), '.', color='k', markersize=2)
+            ax3.plot(db_t, 1.0/np.array(db_inv_rp), '.', color='k', markersize=2)
+            ######
+            #db_x_deg = db_x/6371.0 * (180.0/np.pi)
+            #xmin, xmax = np.min(db_x_deg), np.max(db_x_deg)
+            #print(xmin, xmax)
+            #x1_deg = np.arange(xmin+1, xmax-1, 0.1)
+            #x1 = x1_deg * (np.pi/180.0) * 6371.0
+            ######
+            target_x_deg = np.arange(62.0, db_x.max()-1, 2)
+            if phase_name in ['K', 'ScS']:
+                target_x_deg = np.arange(1.0, db_x.max()-1, 2)
+            target_x_km = target_x_deg*np.pi/180.0*6371.0
+            result = app.dist2pxt(target_x_km, phase_name, xerr=1e-3, niter=1000, grad=True, first_arrival_only=True, keep_nonexistence=True)
+            #####
+            inv_rps, x2_km, t2 = result[:3]
+            x2 = x2_km / (np.pi/180.0) / 6371.0
+            dtdvzp, dtdvzs = result[-2], result[-1]
+            #####
+            xdif = np.abs(target_x_deg-x2)
+            print(f'target vs. obtained dist max:{np.max(xdif)}, mean:{np.mean(xdif)}, std:{np.std(xdif)}')
+            #####
+            vol_data[phase_name] = {
+                'x_deg': target_x_deg,
+                't': t2,
+                'inv_rps': inv_rps,
+                'dtdvzp': dtdvzp,
+                'dtdvzs': dtdvzs,
+                'r': app.all_r,
+                'icmb': app.all_icmb,
+                'iicb': app.all_iicb,
+                'vzp': app.all_vzp,
+                'vzs': app.all_vzs,
+            }
+            #####
+            mt_rs = app.all_r[:app.all_icmb]
+            oc_rs = app.all_r[app.all_icmb: app.all_iicb]
+            #####
+            ax1.plot(x2, t2,                    'o', color='C3', markersize=4, label=phase_name)
+            ax2.plot(x2, 1.0/np.array(inv_rps), 'o', color='C3', markersize=4, label=phase_name)
+            ax3.plot(t2, 1.0/np.array(inv_rps), 'o', color='C3', markersize=4, label=phase_name)
+            for ax in [ax1, ax2, ax3]:
+                ax.grid(True, which='both', linestyle='--', alpha=0.5)
+                ax.legend()
+            ax1.set_xlabel('Purist distance (deg)')
+            ax1.set_ylabel('Travel Time (s)')
+            ax2.set_xlabel('Purist distance (deg)')
+            ax2.set_ylabel('Ray Parameter (s/km)')
+            ax3.set_xlabel('Travel Time (s)')
+            ax3.set_ylabel('Ray Parameter (s/km)')
+            ######
+            mt_rs = app.all_r[:app.all_icmb]
+            oc_rs = app.all_r[app.all_icmb: app.all_iicb]
+            mt_dtdvzs = dtdvzs[:, :app.all_icmb]
+            mt_extent = [mt_rs[0], mt_rs[-1], x2[0],x2[-1]]
+            oc_dtdvzp = dtdvzp[:, app.all_icmb: app.all_iicb]
+            oc_extent = [oc_rs[0], oc_rs[-1], x2[0],x2[-1]]
+            ######
+            # OC Vp's resolution matrix
+            G = oc_dtdvzp
+            Gt= np.transpose(G)
+            GtG = Gt @ G
+            #print(GtG.shape)
+            GtG += np.eye(GtG.shape[0]) * damping
+            #Ginv = np.linalg.pinv(GtG) @ Gt
+            Ginv = np.linalg.inv(GtG) @ Gt
+            Rm   = Ginv @ G
+            extent = [app.all_r[app.all_icmb], app.all_r[app.all_iicb-1], app.all_r[app.all_iicb-1], app.all_r[app.all_icmb]]
+            ax5.imshow(Rm, aspect='auto', cmap='seismic', origin='upper', extent=extent, vmin=-0.1, vmax=0.1)
+            ax5.set_xlabel('Radius (km)')
+            ax5.set_ylabel('Radius (km)')
+            ax5.set_title(r'$R\{V_P^{OC}\}$')
+            #
+            if phase_name == 'K':
+                oc_axlst[0].imshow(Rm, aspect='auto', cmap='seismic', origin='upper', extent=extent, vmin=-0.1, vmax=0.1)
+                oc_axlst[0].set_title('$SKS$-$ScS$ (Coda Correlation)')
+                #oc_axlst[0].text(0.01, 0.01, '$SKS$-$ScS$\n(Coda Correlation)', transform=oc_axlst[0].transAxes, ha='left', va='bottom', color='black', fontsize=10)
+            #
+            # Mantle Vs & OC Vp's resolution matrix
+            G = np.hstack((mt_dtdvzs, oc_dtdvzp))
+            Gt= np.transpose(G)
+            GtG = Gt @ G
+            #print(GtG.shape)
+            #Ginv = np.linalg.pinv(GtG) @ Gt
+            GtG += np.eye(GtG.shape[0]) * damping
+            #Ginv = np.linalg.pinv(GtG) @ Gt
+            Ginv = np.linalg.inv(GtG) @ Gt
+            Rm   = Ginv @ G
+            extent = [app.all_r[0], app.all_r[app.all_iicb-1], app.all_r[app.all_iicb-1], app.all_r[0]]
+            ax6.imshow(Rm, aspect='auto', cmap='seismic', origin='upper', extent=extent, vmin=-0.1, vmax=0.1)
+            rcmb = app.all_r[app.all_icmb-1]
+            ricb = app.all_r[app.all_iicb-1]
+            ax6.plot([6371, ricb], [rcmb, rcmb], ':', color='gray', lw=0.5)
+            ax6.plot([rcmb, rcmb], [6371, ricb], ':', color='gray', lw=0.5)
+            ax6.set_xlabel('Radius (km)')
+            ax6.set_ylabel('Radius (km)')
+            ax6.set_title(r'$R\{V_P^{OC}\}$ & $R\{V_S^{Mantle}\}$')
+            #
+            if phase_name == 'K':
+                mo_axlst[0].imshow(Rm, aspect='auto', cmap='seismic', origin='upper', extent=extent, vmin=-0.1, vmax=0.1)
+                mo_axlst[0].set_title('$SKS$-$ScS$ (Coda Correlation)')
+                #mo_axlst[0].text(0.01, 0.01, '$SKS$-$ScS$\n(Coda Correlation)', transform=mo_axlst[0].transAxes, ha='left', va='bottom', color='black', fontsize=10)
+            #
+            r_cmb = app.all_r[app.all_icmb-1]
+            ax5.set_xlim((r_cmb, r_cmb-1000))
+            ax5.set_ylim((r_cmb-1000, r_cmb))
+            ax6.set_xlim((r_cmb+1000, r_cmb-1000))
+            ax6.set_ylim((r_cmb-1000, r_cmb+1000))
+            ######
+            if mt_dtdvzs.min() < mt_dtdvzs.max():
+                vmin, vmax = np.percentile(mt_dtdvzs, 1.0), 0.0
+                im4 = ax4.imshow(mt_dtdvzs, aspect='auto', cmap='Greys_r', origin='lower',
+                                extent=mt_extent, vmin=vmin, vmax=vmax) #, vmax=0.0) #, vmin=vmin, vmax=vmax)
+                fig.colorbar(im4, cax=cax4, orientation='horizontal', label='Mantle $\partial T / \partial V_P$ ($s^2/km$)')
+                #
+            if oc_dtdvzp.min() < oc_dtdvzp.max():
+                vmin, vmax = np.percentile(oc_dtdvzp, 1.0), 0.0
+                im5 = ax4.imshow(oc_dtdvzp, aspect='auto', cmap='PuRd_r', origin='lower', extent=oc_extent, vmin=vmin, vmax=vmax)
+                fig.colorbar(im5, cax=cax5, orientation='horizontal', label='Outer Core $\partial T / \partial V_S$ ($s^2/km$)')
+            ax4.set_xlim((6371, 1300))
+            ax4.set_xlabel('Radius (km)')
+            ax4.set_ylabel('Purist distance (deg)')
+            ax4.set_title (f'Jacobian ($\partial T / \partial V$) for {phase_name}')
+            ######
+            figname = 'benchmark_dist2pxt_grad_%s.png' % phase_name
+            #fig.savefig(figname, dpi=300, bbox_inches='tight', pad_inches=0.05)
+            plt.close(fig)
+            print(f'Saved figure to {figname}\n')
+        ################################################################################################
+        # J&M for SmKS - SnKS
+        np.set_printoptions(precision=3, suppress=True)
+        print("Mantle dr has    ", np.unique(np.diff(app.all_r[:app.all_icmb])))
+        print("Outer Core dr has", np.unique(np.diff(app.all_r[app.all_icmb: app.all_iicb])))
+        phase_lst = ['SKS', 'SKKS', 'SKKKS', 'SKKKKS']
+        idx = 0
+        for iph1, ph1 in enumerate(phase_lst):
+            if iph1 == 0:
+                continue
+            for iph2, ph2 in enumerate(phase_lst[:iph1][::-1]):
+                idx += 1
+                fig = plt.figure(figsize=(16,10))
+                gs  = GridSpec(300, 300, figure=fig)
+                ax1  = fig.add_subplot(gs[  0: 70,   0: 60])
+                cax1a= fig.add_subplot(gs[  0: 30,  61: 62])
+                cax1b= fig.add_subplot(gs[ 40: 70,  61: 62])
+                ax2  = fig.add_subplot(gs[  0: 70,  90:135])
+                ax3  = fig.add_subplot(gs[  0: 70, 155:200])
+                #
+                ax4  = fig.add_subplot(gs[100:170,   0: 60])
+                cax4a= fig.add_subplot(gs[100:130,  61: 62])
+                cax4b= fig.add_subplot(gs[140:170,  61: 62])
+                ax5  = fig.add_subplot(gs[100:170,  90:135])
+                ax6  = fig.add_subplot(gs[100:170, 155:200])
+                #
+                ax7  = fig.add_subplot(gs[200:270,   0: 60])
+                cax7a= fig.add_subplot(gs[200:230,  61: 62])
+                cax7b= fig.add_subplot(gs[240:270,  61: 62])
+                ax8  = fig.add_subplot(gs[200:270,  90:135])
+                ax9  = fig.add_subplot(gs[200:270, 155:200])
+                #
+                data1 = vol_data[ph1]
+                data2 = vol_data[ph2]
+                x1 = data1['x_deg']
+                x2 = data2['x_deg']
+                xmin = max(x1.min(), x2.min())+1
+                xmax = min(x1.max(), x2.max())-1
+                xmin = 85
+                x1_inds = np.where( (x1 >= xmin) & (x1 <= xmax) )[0]
+                x2_inds = np.where( (x2 >= xmin) & (x2 <= xmax) )[0]
+                x1 = x1[x1_inds]
+                x2 = x2[x2_inds]
+                print(f'Common x range: {xmin}, {xmax}')
+                dtdvzp1 = data1['dtdvzp'][x1_inds, :]
+                dtdvzp2 = data2['dtdvzp'][x2_inds, :]
+                dtdvzs1 = data1['dtdvzs'][x1_inds, :]
+                dtdvzs2 = data2['dtdvzs'][x2_inds, :]
+                ### the differences
+                dif_dtdvzp = dtdvzp1 - dtdvzp2
+                dif_dtdvzs = dtdvzs1 - dtdvzs2
+                icmb = app.all_icmb
+                iicb = app.all_iicb
+                mt_extent = [app.all_r[0], app.all_r[icmb-1], xmin, xmax]
+                oc_extent = [app.all_r[icmb], app.all_r[iicb-1], xmin, xmax]
+                ###
+                vmin, vmax = -8, 0.0
+                im1 = ax1.imshow(dtdvzs1[   :, :icmb], extent=mt_extent, aspect='auto', cmap='Greys_r', origin='lower') #, vmin=vmin, vmax=vmax)
+                im4 = ax4.imshow(dtdvzs2[   :, :icmb], extent=mt_extent, aspect='auto', cmap='Greys_r', origin='lower') #, vmin=vmin, vmax=vmax)
+                im7 = ax7.imshow(dif_dtdvzs[:, :icmb], extent=mt_extent, aspect='auto', cmap='Greys_r', origin='lower') #, vmin=vmin, vmax=vmax)
+                plt.colorbar(im1, cax=cax1a, orientation='vertical').set_label(label=r'$\partial T / \partial V_S^{Mantle}$ ($s^2/km$)', size=6)
+                plt.colorbar(im4, cax=cax4a, orientation='vertical').set_label(label=r'$\partial T / \partial V_S^{Mantle}$ ($s^2/km$)', size=6)
+                plt.colorbar(im7, cax=cax7a, orientation='vertical').set_label(label=r'$\partial T / \partial V_S^{Mantle}$ ($s^2/km$)', size=6)
+                ###
+                vmin, vmax = -8, 0.0
+                im1 = ax1.imshow(dtdvzp1[   :,icmb:iicb], extent=oc_extent, aspect='auto', cmap='Reds_r', origin='lower', vmin=vmin, vmax=vmax)
+                im4 = ax4.imshow(dtdvzp2[   :,icmb:iicb], extent=oc_extent, aspect='auto', cmap='Reds_r', origin='lower', vmin=vmin, vmax=vmax)
+                vmin, vmax = -8, 8
+                im7 = ax7.imshow(dif_dtdvzp[:,icmb:iicb], extent=oc_extent, aspect='auto', cmap='RdBu', origin='lower', vmin=vmin, vmax=vmax)
+                plt.colorbar(im1, cax=cax1b, orientation='vertical').set_label(label=r'$\partial T / \partial V_P^{OC}$ ($s^2/km$)', size=6)
+                plt.colorbar(im4, cax=cax4b, orientation='vertical').set_label(label=r'$\partial T / \partial V_P^{OC}$ ($s^2/km$)', size=6)
+                plt.colorbar(im7, cax=cax7b, orientation='vertical').set_label(label=r'$\partial T / \partial V_P^{OC}$ ($s^2/km$)', size=6)
+                ###
+                ax1.text(0.98, 0.02, f'${ph1}$',       transform=ax1.transAxes, fontsize=10, horizontalalignment='right', verticalalignment='bottom')
+                ax4.text(0.98, 0.02, f'${ph2}$',       transform=ax4.transAxes, fontsize=10, horizontalalignment='right', verticalalignment='bottom')
+                ax7.text(0.02, 0.02, f'${ph1}-{ph2}$', transform=ax7.transAxes, fontsize=10, horizontalalignment='left', verticalalignment='bottom')
+                for ax in [ax1, ax4, ax7]:
+                    ax.set_title (r'Jacobian ($\partial T / \partial V$)')
+                    ax.set_xlim((6371, 1300))
+                    ax.set_xlabel('Radius (km)')
+                    ax.set_ylabel('Purist distance (deg)')
+                ###
+                for ax_oc, ax_mt_oc, gvp, gvs in (
+                                                    (ax2, ax3, dtdvzp1, dtdvzs1),
+                                                    (ax5, ax6, dtdvzp2, dtdvzs2),
+                                                    (ax8, ax9, dif_dtdvzp, dif_dtdvzs),
+                                                ):
+                    ####
+                    G = gvp[:, icmb:iicb]
+                    Gt= np.transpose(G)
+                    GtG = Gt @ G
+                    GtG += np.eye(GtG.shape[0]) * damping
+                    #print(G.shape, Gt.shape, GtG.shape)
+                    #Ginv = np.linalg.pinv(GtG) @ Gt
+                    Ginv = np.linalg.inv(GtG) @ Gt
+                    Rm   = Ginv @ G
+                    extent = [app.all_r[app.all_icmb], app.all_r[app.all_iicb-1], app.all_r[app.all_iicb-1], app.all_r[app.all_icmb]]
+                    im_oc = ax_oc.imshow(Rm, aspect='auto', cmap='seismic', origin='upper', extent=extent, vmin=-0.2, vmax=0.2)
+                    ax_oc.set_xlabel('Radius (km)')
+                    ax_oc.set_ylabel('Radius (km)')
+                    ax_oc.set_title(r'$R\{V_P^{OC}\}$')
+                    #
+                    if ax_oc is ax8:
+                        oc_axlst[idx].imshow(Rm, aspect='auto', cmap='seismic', origin='upper', extent=extent, vmin=-0.2, vmax=0.2)
+                        oc_axlst[idx].set_title(f'${ph1}-{ph2}$')
+                        #oc_axlst[idx].text(0.01, 0.01, f'${ph1}-{ph2}$', transform=oc_axlst[idx].transAxes, ha='left', va='bottom', color='black', fontsize=10)
+                    #
+                    G = np.hstack((gvs[:, :icmb], gvp[:, icmb:iicb]))
+                    Gt= np.transpose(G)
+                    GtG = Gt @ G
+                    GtG += np.eye(GtG.shape[0]) * damping
+                    #Ginv = np.linalg.pinv(GtG) @ Gt
+                    Ginv = np.linalg.inv(GtG) @ Gt
+                    Rm   = Ginv @ G
+                    extent = [app.all_r[0], app.all_r[app.all_iicb-1], app.all_r[app.all_iicb-1], app.all_r[0]]
+                    im_mt_oc = ax_mt_oc.imshow(Rm, aspect='auto', cmap='seismic', origin='upper', extent=extent, vmin=-0.2, vmax=0.2)
+                    print(Rm.min(), Rm.max())
+                    rcmb = app.all_r[app.all_icmb-1]
+                    ricb = app.all_r[app.all_iicb-1]
+                    ax_mt_oc.plot([6371, ricb], [rcmb, rcmb], ':', color='gray', lw=0.5)
+                    ax_mt_oc.plot([rcmb, rcmb], [6371, ricb], ':', color='gray', lw=0.5)
+                    ax_mt_oc.set_xlabel('Radius (km)')
+                    ax_mt_oc.set_ylabel('Radius (km)')
+                    ax_mt_oc.set_title(r'$R\{V_S^{Mantle}\}$ & $R\{V_P^{OC}\}$')
+                    #
+                    if ax_oc is ax8:
+                        #tmp = np.sign(Rm) * np.log(np.abs(Rm))/np.log(10)
+                        mo_axlst[idx].imshow(Rm, aspect='auto', cmap='seismic', origin='upper', extent=extent, vmin=-0.2, vmax=0.2)
+                        mo_axlst[idx].set_title(f'${ph1}-{ph2}$')
+                        #mo_axlst[idx].text(0.01, 0.01, f'${ph1}-{ph2}$', transform=mo_axlst[idx].transAxes, ha='left', va='bottom', color='black', fontsize=10)
+                    ###
+                    r0    = app.all_r[0]
+                    r_cmb = app.all_r[app.all_icmb-1]
+                    r_icb = app.all_r[app.all_iicb-1]
+                    ax_oc.set_xlim((r_cmb, r_cmb-1000))
+                    ax_oc.set_ylim((r_cmb-1000, r_cmb))
+                    ax_mt_oc.set_xlim((r_cmb+1000, r_cmb-1000))
+                    ax_mt_oc.set_ylim((r_cmb-1000, r_cmb+1000))
+                ###
+                figname = f'benchmark_dist2pxt_dif_grad_{ph1}-{ph2}.png'
+                #fig.savefig(figname, dpi=300, bbox_inches='tight', pad_inches=0.05)
+                print(f'Saved figure to {figname}\n')
+                plt.close(fig)
+        ######
+        plt.colorbar(im_oc,    cax=oc_cax, orientation='horizontal', label='Model resolution matrix coefficient', extend='both')
+        plt.colorbar(im_mt_oc, cax=mo_cax, orientation='horizontal', label='Model resolution matrix coefficient', extend='both')
+        for idx, ax in enumerate(oc_axlst[:-1]):
+            ax.set_xlim((r_cmb, r_cmb-1000))
+            ax.set_ylim((r_cmb-1000, r_cmb))
+            ax.set_xlabel('Radius (km)')
+            ax.set_ylabel('Radius (km)')
+            letter = chr(ord('a') + idx)
+            ax.text(-0.01,1.0, f'({letter})', transform=ax.transAxes, fontsize=10, horizontalalignment='right', verticalalignment='bottom', weight='bold')
+        oc_axlst[-1].axis('off')
+        for idx, ax in enumerate(mo_axlst[:-1]):
+            ax.plot([6371, ricb], [rcmb, rcmb], ':', color='gray', lw=0.5)
+            ax.plot([rcmb, rcmb], [6371, ricb], ':', color='gray', lw=0.5)
+            ax.set_xlim((r_cmb+2000, r_cmb-2000))
+            ax.set_ylim((r_cmb-2000, r_cmb+2000))
+            ax.set_xlabel('Radius (km)')
+            ax.set_ylabel('Radius (km)')
+            letter = chr(ord('a') + idx)
+            ax.text(-0.01,1.0, f'({letter})', transform=ax.transAxes, fontsize=10, horizontalalignment='right', verticalalignment='bottom', weight='bold')
+        mo_axlst[-1].axis('off')
+        for axmat in [mo_axmat, oc_axmat]:
+            for ax_row in axmat:
+                for ax in ax_row[1:]:
+                    ax.set_yticklabels(())
+                    ax.set_ylabel('')
+        for axmat in [mo_axmat, oc_axmat]:
+            for ax in axmat[0,:-1]:
+                ax.set_xlabel('')
+        oc_fig.savefig('benchmark_dist2pxt_grad_oc_matrix.png', dpi=300, bbox_inches='tight', pad_inches=0.05)
+        mo_fig.savefig('benchmark_dist2pxt_grad_mo_matrix.png', dpi=300, bbox_inches='tight', pad_inches=0.05)
+        oc_fig.savefig('benchmark_dist2pxt_grad_oc_matrix.pdf', dpi=300, bbox_inches='tight', pad_inches=0.05)
+        mo_fig.savefig('benchmark_dist2pxt_grad_mo_matrix.pdf', dpi=300, bbox_inches='tight', pad_inches=0.05)
+        plt.close(oc_fig)
+        plt.close(mo_fig)
+        ##################################
+        #with open('benchmark_dist2pxt_grad_vol_data.pkl', 'wb') as f:
+        #    pickle.dump(vol_data, f)
+    @staticmethod
     def benchmark_dist2pxt_grad():
         import pickle
         from matplotlib.gridspec import GridSpec
-        app = FastTauP(R0=6371.0, dr=0.5)
+        app = FastTauP(R0=6371.0, max_dr=0.5)
         mt_r = app.all_r[:app.all_icmb]
         oc_r = app.all_r[app.all_icmb: app.all_iicb]
         ic_r = app.all_r[app.all_iicb:]
@@ -1454,18 +1899,18 @@ class FastTauP:
             mt_rs = app.all_r[:app.all_icmb]
             oc_rs = app.all_r[app.all_icmb: app.all_iicb]
             mt_dtdvzs = dtdvzs[:, :app.all_icmb]
-            mt_extend = [mt_rs[0], mt_rs[-1], x2[0],x2[-1]]
+            mt_extent = [mt_rs[0], mt_rs[-1], x2[0],x2[-1]]
             oc_dtdvzp = dtdvzp[:, app.all_icmb: app.all_iicb]
-            oc_extend = [oc_rs[0], oc_rs[-1], x2[0],x2[-1]]
+            oc_extent = [oc_rs[0], oc_rs[-1], x2[0],x2[-1]]
             ######
             if mt_dtdvzs.min() < mt_dtdvzs.max():
                 vmin, vmax = np.percentile(mt_dtdvzs, 1.0), 0.0
                 im4 = ax4.imshow(mt_dtdvzs, aspect='auto', cmap='Greys_r', origin='lower',
-                                extent=mt_extend, vmin=vmin, vmax=vmax) #, vmax=0.0) #, vmin=vmin, vmax=vmax)
+                                extent=mt_extent, vmin=vmin, vmax=vmax) #, vmax=0.0) #, vmin=vmin, vmax=vmax)
                 fig.colorbar(im4, cax=cax4, orientation='horizontal', label='Mantle $dT/dV_P$ ($s^2/km$)')
             if oc_dtdvzp.min() < oc_dtdvzp.max():
                 vmin, vmax = np.percentile(oc_dtdvzp, 1.0), 0.0
-                im5 = ax4.imshow(oc_dtdvzp, aspect='auto', cmap='PuRd_r', origin='lower', extent=oc_extend, vmin=vmin, vmax=vmax)
+                im5 = ax4.imshow(oc_dtdvzp, aspect='auto', cmap='PuRd_r', origin='lower', extent=oc_extent, vmin=vmin, vmax=vmax)
                 fig.colorbar(im5, cax=cax5, orientation='horizontal', label='Outer Core $dT/dV_S$ ($s^2/km$)')
             ax4.set_xlim((6371, 1300))
             ax4.set_xlabel('Radius (km)')
@@ -1481,7 +1926,7 @@ class FastTauP:
         fig, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(18, 6))
         x1 = np.arange(61.0, 140.0, 1)*np.pi/180.0*6371.0
         for phase_name in ['SKS', 'SKKS', 'SKKKS']:
-            app = FastTauP(R0=6371.0, dr=5.0)
+            app = FastTauP(R0=6371.0, max_dr=5.0)
             tmp = app.phase2xt(phase_name, grad=False, max_theta_step_rad=0.0017)
             db_inv_rp, db_x, db_t = tmp[:3]
             ax1.plot(db_x, db_t, '.', color='k', markersize=2)
@@ -2052,7 +2497,8 @@ if __name__ == '__main__':
         #FastTauP.benchmark_IJ_inv_rps()
         #FastTauP.benchmark_phase_p2xt()
         #FastTauP.benchmark_phase2xt_dist_range()
-        FastTauP.benchmark_dist2pxt_grad()
+        #FastTauP.benchmark_dist2pxt_grad()
+        FastTauP.benchmark_resolution_matrix()
     if False:
         np.set_printoptions(precision=6, suppress=True)
         z = np.arange(31)
