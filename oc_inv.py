@@ -1152,6 +1152,8 @@ def zv2pxt_v4(z, vz, theta_step_deg=0.1):
 #### Ray tracing given distance
 @jit(nopython=True, nogil=True)
 def single_dist2trvt(target_single_dist, z, vz, inv_rp_legs, dist_legs, trvt_legs, xerr=1e-20, niter=1000):
+    if target_single_dist <= 0.0:
+        return vz[0], 0.0, 0.0
     s_inv_rp, s_dist, s_trvt = np.nan, np.nan, np.nan
     flag_none_found=True
     dz = np.diff(z)
@@ -1828,7 +1830,9 @@ def get_obj_and_grad_func(dist, trvt_obs, std, model_z, model_vz_ref,
     ######### objective gradient #########
     @jit(nopython=True, nogil=True)
     def obj_grad(dvz):
-        _, _, d, jac = many_dist2trvt_jac(dist, model_z, dvz+model_vz_ref, theta_step_deg=theta_step_deg, xerr=xerr, niter=niter)
+        vol = many_dist2trvt_jac(dist, model_z, dvz+model_vz_ref, theta_step_deg=theta_step_deg, xerr=xerr, niter=niter)
+        d = vol[2]
+        jac = vol[7]  # d_trvt_v
         tmp = 2*(d-trvt_obs)*inv_var
         #grad = np.zeros(model_sz, dtype=np.float64)
         #for j in range(model_sz):
