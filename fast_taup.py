@@ -1478,7 +1478,8 @@ class FastTauP:
         print('oc dr range=', oc_dr.min(), oc_dr.max() )
         print('ic dr range=', ic_dr.min(), ic_dr.max() )
         vol_data = dict()
-        damping = 2e1
+        damping = 1e2
+        rm_vmax = 0.3
         ################################################################################################
         # The figure
         oc_fig, oc_axmat = plt.subplots(2, 4, figsize=(16, 8), gridspec_kw={'wspace':0.1, 'hspace':0.2})
@@ -1519,9 +1520,9 @@ class FastTauP:
             #x1_deg = np.arange(xmin+1, xmax-1, 0.1)
             #x1 = x1_deg * (np.pi/180.0) * 6371.0
             ######
-            target_x_deg = np.arange(62.0, db_x.max()-1, 2)
+            target_x_deg = np.arange(62.0, db_x.max()-1, 0.25)
             if phase_name in ['K', 'ScS']:
-                target_x_deg = np.arange(1.0, db_x.max()-1, 2)
+                target_x_deg = np.arange(1.0, db_x.max()-1, 0.25)
             target_x_km = target_x_deg*np.pi/180.0*6371.0
             result = app.dist2pxt(target_x_km, phase_name, xerr=1e-3, niter=1000, grad=True, first_arrival_only=True, keep_nonexistence=True)
             #####
@@ -1578,13 +1579,13 @@ class FastTauP:
             Ginv = np.linalg.inv(GtG) @ Gt
             Rm   = Ginv @ G
             extent = [app.all_r[app.all_icmb], app.all_r[app.all_iicb-1], app.all_r[app.all_iicb-1], app.all_r[app.all_icmb]]
-            ax5.imshow(Rm, aspect='auto', cmap='seismic', origin='upper', extent=extent, vmin=-0.1, vmax=0.1)
+            ax5.imshow(Rm, aspect='auto', cmap='seismic', origin='upper', extent=extent, vmin=-rm_vmax, vmax=rm_vmax)
             ax5.set_xlabel('Radius (km)')
             ax5.set_ylabel('Radius (km)')
             ax5.set_title(r'$R\{V_P^{OC}\}$')
             #
             if phase_name == 'K':
-                oc_axlst[0].imshow(Rm, aspect='auto', cmap='seismic', origin='upper', extent=extent, vmin=-0.1, vmax=0.1)
+                oc_axlst[0].imshow(Rm, aspect='auto', cmap='seismic', origin='upper', extent=extent, vmin=-rm_vmax, vmax=rm_vmax)
                 oc_axlst[0].set_title('$SKS$-$ScS$ (Coda Correlation)')
                 #oc_axlst[0].text(0.01, 0.01, '$SKS$-$ScS$\n(Coda Correlation)', transform=oc_axlst[0].transAxes, ha='left', va='bottom', color='black', fontsize=10)
             #
@@ -1599,7 +1600,7 @@ class FastTauP:
             Ginv = np.linalg.inv(GtG) @ Gt
             Rm   = Ginv @ G
             extent = [app.all_r[0], app.all_r[app.all_iicb-1], app.all_r[app.all_iicb-1], app.all_r[0]]
-            ax6.imshow(Rm, aspect='auto', cmap='seismic', origin='upper', extent=extent, vmin=-0.1, vmax=0.1)
+            ax6.imshow(Rm, aspect='auto', cmap='seismic', origin='upper', extent=extent, vmin=-rm_vmax, vmax=rm_vmax)
             rcmb = app.all_r[app.all_icmb-1]
             ricb = app.all_r[app.all_iicb-1]
             ax6.plot([6371, ricb], [rcmb, rcmb], ':', color='gray', lw=0.5)
@@ -1609,7 +1610,7 @@ class FastTauP:
             ax6.set_title(r'$R\{V_P^{OC}\}$ & $R\{V_S^{Mantle}\}$')
             #
             if phase_name == 'K':
-                mo_axlst[0].imshow(Rm, aspect='auto', cmap='seismic', origin='upper', extent=extent, vmin=-0.1, vmax=0.1)
+                mo_axlst[0].imshow(Rm, aspect='auto', cmap='seismic', origin='upper', extent=extent, vmin=-rm_vmax, vmax=rm_vmax)
                 mo_axlst[0].set_title('$SKS$-$ScS$ (Coda Correlation)')
                 #mo_axlst[0].text(0.01, 0.01, '$SKS$-$ScS$\n(Coda Correlation)', transform=mo_axlst[0].transAxes, ha='left', va='bottom', color='black', fontsize=10)
             #
@@ -1703,10 +1704,10 @@ class FastTauP:
                 plt.colorbar(im7, cax=cax7a, orientation='vertical').set_label(label=r'$\partial T / \partial V_S^{Mantle}$ ($s^2/km$)', size=6)
                 ###
                 vmin, vmax = -8, 0.0
-                im1 = ax1.imshow(dtdvzp1[   :,icmb:iicb], extent=oc_extent, aspect='auto', cmap='Reds_r', origin='lower', vmin=vmin, vmax=vmax)
-                im4 = ax4.imshow(dtdvzp2[   :,icmb:iicb], extent=oc_extent, aspect='auto', cmap='Reds_r', origin='lower', vmin=vmin, vmax=vmax)
+                im1 = ax1.imshow(dtdvzp1[   :,icmb:iicb], extent=oc_extent, aspect='auto', cmap='Reds_r', origin='lower', vmin=-rm_vmax, vmax=rm_vmax)
+                im4 = ax4.imshow(dtdvzp2[   :,icmb:iicb], extent=oc_extent, aspect='auto', cmap='Reds_r', origin='lower', vmin=-rm_vmax, vmax=rm_vmax)
                 vmin, vmax = -8, 8
-                im7 = ax7.imshow(dif_dtdvzp[:,icmb:iicb], extent=oc_extent, aspect='auto', cmap='RdBu', origin='lower', vmin=vmin, vmax=vmax)
+                im7 = ax7.imshow(dif_dtdvzp[:,icmb:iicb], extent=oc_extent, aspect='auto', cmap='RdBu', origin='lower', vmin=-rm_vmax, vmax=rm_vmax)
                 plt.colorbar(im1, cax=cax1b, orientation='vertical').set_label(label=r'$\partial T / \partial V_P^{OC}$ ($s^2/km$)', size=6)
                 plt.colorbar(im4, cax=cax4b, orientation='vertical').set_label(label=r'$\partial T / \partial V_P^{OC}$ ($s^2/km$)', size=6)
                 plt.colorbar(im7, cax=cax7b, orientation='vertical').set_label(label=r'$\partial T / \partial V_P^{OC}$ ($s^2/km$)', size=6)
@@ -1735,13 +1736,13 @@ class FastTauP:
                     Ginv = np.linalg.inv(GtG) @ Gt
                     Rm   = Ginv @ G
                     extent = [app.all_r[app.all_icmb], app.all_r[app.all_iicb-1], app.all_r[app.all_iicb-1], app.all_r[app.all_icmb]]
-                    im_oc = ax_oc.imshow(Rm, aspect='auto', cmap='seismic', origin='upper', extent=extent, vmin=-0.2, vmax=0.2)
+                    im_oc = ax_oc.imshow(Rm, aspect='auto', cmap='seismic', origin='upper', extent=extent, vmin=-rm_vmax, vmax=rm_vmax)
                     ax_oc.set_xlabel('Radius (km)')
                     ax_oc.set_ylabel('Radius (km)')
                     ax_oc.set_title(r'$R\{V_P^{OC}\}$')
                     #
                     if ax_oc is ax8:
-                        oc_axlst[idx].imshow(Rm, aspect='auto', cmap='seismic', origin='upper', extent=extent, vmin=-0.2, vmax=0.2)
+                        oc_axlst[idx].imshow(Rm, aspect='auto', cmap='seismic', origin='upper', extent=extent, vmin=-rm_vmax, vmax=rm_vmax)
                         oc_axlst[idx].set_title(f'${ph1}-{ph2}$')
                         #oc_axlst[idx].text(0.01, 0.01, f'${ph1}-{ph2}$', transform=oc_axlst[idx].transAxes, ha='left', va='bottom', color='black', fontsize=10)
                     #
@@ -1753,7 +1754,7 @@ class FastTauP:
                     Ginv = np.linalg.inv(GtG) @ Gt
                     Rm   = Ginv @ G
                     extent = [app.all_r[0], app.all_r[app.all_iicb-1], app.all_r[app.all_iicb-1], app.all_r[0]]
-                    im_mt_oc = ax_mt_oc.imshow(Rm, aspect='auto', cmap='seismic', origin='upper', extent=extent, vmin=-0.2, vmax=0.2)
+                    im_mt_oc = ax_mt_oc.imshow(Rm, aspect='auto', cmap='seismic', origin='upper', extent=extent, vmin=-rm_vmax, vmax=rm_vmax)
                     print(Rm.min(), Rm.max())
                     rcmb = app.all_r[app.all_icmb-1]
                     ricb = app.all_r[app.all_iicb-1]
@@ -1765,7 +1766,7 @@ class FastTauP:
                     #
                     if ax_oc is ax8:
                         #tmp = np.sign(Rm) * np.log(np.abs(Rm))/np.log(10)
-                        mo_axlst[idx].imshow(Rm, aspect='auto', cmap='seismic', origin='upper', extent=extent, vmin=-0.2, vmax=0.2)
+                        mo_axlst[idx].imshow(Rm, aspect='auto', cmap='seismic', origin='upper', extent=extent, vmin=-rm_vmax, vmax=rm_vmax)
                         mo_axlst[idx].set_title(f'${ph1}-{ph2}$')
                         #mo_axlst[idx].text(0.01, 0.01, f'${ph1}-{ph2}$', transform=mo_axlst[idx].transAxes, ha='left', va='bottom', color='black', fontsize=10)
                     ###
