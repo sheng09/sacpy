@@ -721,7 +721,7 @@ def zv2pxt(z, vz, theta_step_deg=0.1):
     inv_rp= np.array([it for leg in inv_rp_legs for it in leg])
     dist = np.array([it for leg in dist_legs for it in leg])
     trvt = np.array([it for leg in trvt_legs for it in leg])
-    idx_sort = np.argsort(inv_rp)[::-1]
+    idx_sort = np.argsort(inv_rp)
     inv_rp = inv_rp[idx_sort]
     dist = dist[idx_sort]
     trvt = trvt[idx_sort]
@@ -1801,12 +1801,43 @@ def get_obj_and_grad_func(dist, trvt_obs, std, model_z, model_vz_ref,
     model_z:      the model depth grid from surface to depth (in km, positive upward)
     model_vz_ref: the reference model velocities at model_z (in km/s)
     """
+    #### Test functions
+    def test_my_model(dvz):
+        vz = dvz + model_vz_ref
+        a, b = vz
+        y = a*a*dist + b
+        return y
+    def test_my_model_jac(dvz):
+        vz = dvz + model_vz_ref
+        a, b = vz
+        jac = np.zeros((dist.size, dvz.size), dtype=np.float64)
+        jac[:,0] = 2.0*a*dist
+        jac[:,1] = 1.0
+        return jac
+    ####
+    @jit(nopython=True, nogil=True)
+    def my_model(dvz):
+        tmp     = many_dist2trvt_v4(dist, model_z, dvz+model_vz_ref, theta_step_deg=theta_step_deg, xerr=xerr, niter=niter)
+        d_syn   = tmp[2]
+        idx_nan = np.where( np.isnan(d_syn) )[0]
+        d_syn[idx_nan] = 1e-2
+        return d_syn
+    @jit(nopython=True, nogil=True)
+    def my_model_jac(dvz):
+        tmp     = many_dist2trvt_jac_v4(dist, model_z, dvz+model_vz_ref, theta_step_deg=theta_step_deg, xerr=xerr, niter=niter)
+        d_syn   = tmp[2]
+        jac     = tmp[7]
+        # fix nan for none-exist distance given this dvz model
+        idx_nan = np.where( np.isnan(d_syn) )[0]
+        d_syn[idx_nan] = 1e-2
+        jac[idx_nan,:] = 0.0
+        return d_syn, jac
     inv_var = 1.0/(std*std)
     model_sz = len(model_z)
     ######### objective functions #########
     @jit(nopython=True, nogil=True)
     def obj_data_diff(dvz): # dvz is the perturbation from model_vz_ref
-        _,_,trvt_syn = many_dist2trvt(dist, model_z, dvz+model_vz_ref, theta_step_deg=theta_step_deg, xerr=xerr, niter=niter)
+        trvt_syn = my_model(dvz)
         idx_nan = np.where( np.isnan(trvt_syn) )[0]
         trvt_syn[idx_nan] = -1e2 # set a never impossible value so that the misfit is very large
         tmp = (trvt_obs-trvt_syn)
@@ -1830,10 +1861,8 @@ def get_obj_and_grad_func(dist, trvt_obs, std, model_z, model_vz_ref,
     ######### objective gradient #########
     @jit(nopython=True, nogil=True)
     def obj_grad(dvz):
-        vol = many_dist2trvt_jac(dist, model_z, dvz+model_vz_ref, theta_step_deg=theta_step_deg, xerr=xerr, niter=niter)
-        d = vol[2]
-        jac = vol[7]  # d_trvt_v
-        tmp = 2*(d-trvt_obs)*inv_var
+        trvt_syn, jac = my_model_jac(dvz)
+        tmp = 2*(trvt_syn-trvt_obs)*inv_var
         #grad = np.zeros(model_sz, dtype=np.float64)
         #for j in range(model_sz):
         #    grad[j] = np.sum(tmp * jac[:,j])
@@ -1856,6 +1885,30 @@ def get_obj_and_grad_func(dist, trvt_obs, std, model_z, model_vz_ref,
 
 ########### above this are black box functions ###########
 ########### below is an example to use the above functions ###########
+def benchmark_bfgs_inv():
+    from scipy.optimize import minimize
+    z      = np.array([0.,  -200])
+    vz_ref = np.array([6.0, 8.0])
+    #(inv_p1, x1, t1), (leg_p1, leg_x1, leg_t1) = zv2pxt(z, vz_ref, theta_step_deg=1)
+    dist = np.array( (50.0, 1000))
+    a, b = vz_ref
+    trvt_obs = a*a*dist + b
+    _,_,trvt_obs,_ = many_dist2trvt_v4(dist, z, vz_ref, 0.1, 1e-3, 1000)
+    std = 1.0
+    #####
+    dvz_init = np.zeros(z.size, dtype=np.float64) + 0.5
+    dvz_lower = -np.ones(z.size, dtype=np.float64)- 1.0
+    dvz_upper = np.ones(z.size, dtype=np.float64) + 1.0
+    bounds = np.array((dvz_lower, dvz_upper)).T
+    #####
+    tmp = get_obj_and_grad_func(dist, trvt_obs, std, z, vz_ref,
+                                alpha=1.0, beta=1.0,
+                                theta_step_deg=0.1, xerr=1e-20, niter=1000)
+    obj_func, obj_grad, _ = tmp
+    res = minimize(obj_func, dvz_init, method='L-BFGS-B', jac=obj_grad, bounds=bounds)
+                        #options={'gtol': 1e-3, 'ftol': 1e-3, 'disp': False, 'maxiter': 1000})
+    print(res.x)
+    pass
 def benchmark_speedup():
     from sacpy import utils
     r, vr = rd_prem_OC_model()
@@ -2116,7 +2169,9 @@ def benchmark_my_trvt_gradient():
     xmax -= xmax_minus_xmin*0.1
     dist = np.linspace(xmin, xmax, 10)
     ####
-    _, _, _, par_trvt_v = many_dist2trvt_jac_v4(dist, z, vz, theta_step_deg=theta_step_deg, xerr=1e-3, niter=niter)
+    #_, _, _, par_trvt_v = many_dist2trvt_jac_v4(dist, z, vz, theta_step_deg=theta_step_deg, xerr=1e-3, niter=niter)
+    tmp = many_dist2trvt_jac(dist, z, vz, theta_step_deg=theta_step_deg, xerr=1e-3, niter=niter)
+    par_trvt_v = tmp[7]
     par_trvt_v2 = np.zeros(par_trvt_v.shape)
     for iz in range(vz.size):
         vz1 = vz.copy()
@@ -2306,9 +2361,10 @@ def debug3():
     p2xt_grad_v2(rp, z, vz, dz, dv, 2, buf)
     ###
 if __name__ == "__main__":
+    benchmark_bfgs_inv()
     #plot_benchmark_my_trvt_gradient()
     #benchmark_my_trvt_gradient()
-    benchmark_speedup()
+    #benchmark_speedup()
     #benchmark_single_pxt_gradient()
     #debug2()
     #debug3()
