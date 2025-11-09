@@ -496,12 +496,14 @@ class FastTauP:
     MT_PHASE = 2
     OC_PHASE = 1
     IC_PHASE = 0
-    def __init__(self, R0=6371.0, uniform_dr=None, max_dr=20.0):
+    def __init__(self, R0=6371.0, uniform_dr=None, max_dr=20.0,
+                 r=None, vp=None, vs=None, icmb=None, iicb=None):
         """
         uniform_dr: first resample the model with uniform dr for mantle, outer core, and inner core.
         max_dr:     then process the model with denser layers with spacing no more than max_dr.
         """
-        r, vp, vs, icmb, iicb = rd_prem_model()
+        if r is None:
+            r, vp, vs, icmb, iicb = rd_prem_model()
         if uniform_dr is not None:
             r, vp, vs, icmb, iicb = self.resample_model(r, vp, vs, icmb, iicb, uniform_dr)
         self.proc_mod(r, vp, vs, icmb, iicb, R0=R0, max_dr=max_dr)
