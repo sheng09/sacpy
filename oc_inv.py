@@ -1818,19 +1818,13 @@ def get_obj_and_grad_func(dist, trvt_obs, std, model_z, model_vz_ref,
     @jit(nopython=True, nogil=True)
     def my_model(dvz):
         tmp     = many_dist2trvt_v4(dist, model_z, dvz+model_vz_ref, theta_step_deg=theta_step_deg, xerr=xerr, niter=niter)
-        d_syn   = tmp[2]
-        idx_nan = np.where( np.isnan(d_syn) )[0]
-        d_syn[idx_nan] = 1e-2
+        d_syn   = tmp[2] # d_syn can contain Nan
         return d_syn
     @jit(nopython=True, nogil=True)
     def my_model_jac(dvz):
         tmp     = many_dist2trvt_jac_v4(dist, model_z, dvz+model_vz_ref, theta_step_deg=theta_step_deg, xerr=xerr, niter=niter)
-        d_syn   = tmp[2]
+        d_syn   = tmp[2] # d_syn can contain Nan
         jac     = tmp[7]
-        # fix nan for none-exist distance given this dvz model
-        idx_nan = np.where( np.isnan(d_syn) )[0]
-        d_syn[idx_nan] = 1e-2
-        jac[idx_nan,:] = 0.0
         return d_syn, jac
     inv_var = 1.0/(std*std)
     model_sz = len(model_z)
@@ -1838,8 +1832,11 @@ def get_obj_and_grad_func(dist, trvt_obs, std, model_z, model_vz_ref,
     @jit(nopython=True, nogil=True)
     def obj_data_diff(dvz): # dvz is the perturbation from model_vz_ref
         trvt_syn = my_model(dvz)
-        idx_nan = np.where( np.isnan(trvt_syn) )[0]
-        trvt_syn[idx_nan] = -1e2 # set a never impossible value so that the misfit is very large
+        if np.any(np.isnan(trvt_syn)):
+            print('Nan obj_data_diff')
+            idx_nan = np.where(np.isnan(trvt_syn))[0][0]
+            print(dist[idx_nan]/6371.0*180.0/np.pi)
+            return np.inf
         tmp = (trvt_obs-trvt_syn)
         return np.sum(tmp*tmp*inv_var)
     @jit(nopython=True, nogil=True)
@@ -1862,10 +1859,13 @@ def get_obj_and_grad_func(dist, trvt_obs, std, model_z, model_vz_ref,
     @jit(nopython=True, nogil=True)
     def obj_grad(dvz):
         trvt_syn, jac = my_model_jac(dvz)
+        if np.any(np.isnan(trvt_syn)):
+            print('Nan obj_grad')
+            idx_nan = np.where(np.isnan(trvt_syn))[0]
+            print(dist[idx_nan])
+            jac[idx_nan, :] = 0.0
+            trvt_syn[idx_nan] = 0.0
         tmp = 2*(trvt_syn-trvt_obs)*inv_var
-        #grad = np.zeros(model_sz, dtype=np.float64)
-        #for j in range(model_sz):
-        #    grad[j] = np.sum(tmp * jac[:,j])
         grad = tmp @ jac
         #####
         if alpha > 0.0:

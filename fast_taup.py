@@ -496,8 +496,8 @@ class FastTauP:
     MT_PHASE = 2
     OC_PHASE = 1
     IC_PHASE = 0
-    def __init__(self, R0=6371.0, uniform_dr=None, max_dr=20.0,
-                 r=None, vp=None, vs=None, icmb=None, iicb=None):
+    def __init__(self, R0=6371.0, uniform_dr=None, max_dr=20.0, fix=True,
+                 r=None, vp=None, vs=None, icmb=None, iicb=None, ):
         """
         uniform_dr: first resample the model with uniform dr for mantle, outer core, and inner core.
         max_dr:     then process the model with denser layers with spacing no more than max_dr.
@@ -506,7 +506,7 @@ class FastTauP:
             r, vp, vs, icmb, iicb = rd_prem_model()
         if uniform_dr is not None:
             r, vp, vs, icmb, iicb = self.resample_model(r, vp, vs, icmb, iicb, uniform_dr)
-        self.proc_mod(r, vp, vs, icmb, iicb, R0=R0, max_dr=max_dr)
+        self.proc_mod(r, vp, vs, icmb, iicb, R0=R0, max_dr=max_dr, fix=fix)
     def resample_model(self, r, vp, vs, icmb, iicb, uniform_dr):
         """
         Resample the model with uniform dr for mantle, outer core, and inner core.
@@ -540,38 +540,38 @@ class FastTauP:
         new_iicb = new_mt_r.size + new_oc_r.size
         ######
         return new_r, new_vp, new_vs, new_icmb, new_iicb
-    def proc_mod(self, r, vp, vs, icmb, iicb, R0=6371.0, max_dr=None):
+    def proc_mod(self, r, vp, vs, icmb, iicb, R0=6371.0, max_dr=None, fix=True):
         self.R0 = R0
         ######
         mt_r, mt_vrp, mt_vrs = r[:icmb], vp[:icmb], vs[:icmb]
         oc_r, oc_vrp, oc_vrs = r[icmb:iicb], vp[icmb:iicb], vs[icmb:iicb]
         ic_r, ic_vrp, ic_vrs = r[iicb:], vp[iicb:], vs[iicb:]
-        ######
-        # Fix mantle
-        # The mantle's layers must be denser because of the flattening.
-        _,    mt_vrp = denser_xy(mt_r, mt_vrp, 50.0)
-        mt_r, mt_vrs = denser_xy(mt_r, mt_vrs, 50.0)
-        icmb = mt_r.size
-        ######
-        # Fix outer core
-        # The outer core's layers must be denser because of the flattening.
-        _,    oc_vrp = denser_xy(oc_r, oc_vrp, 50.0)
-        oc_r, oc_vrs = denser_xy(oc_r, oc_vrs, 50.0)
-        iicb = mt_r.size + oc_r.size
-        ######
-        # Fix inner core
-        #The inner core's  layers must be denser because of the flattening near the center.
-        _,    ic_vrp = denser_xy(ic_r, ic_vrp, 10.0)
-        ic_r, ic_vrs = denser_xy(ic_r, ic_vrs, 10.0)
-        #
-        ic_r[-1] = ic_r[-2]-1e-3
-        ic_vrp[-1]= ic_vrp[-2]+1e-3
-        ci = -20
-        _,     tmp_vrp = denser_xy(ic_r[ci:], ic_vrp[ci:], 0.5)
-        tmp_r, tmp_vrs = denser_xy(ic_r[ci:], ic_vrs[ci:], 0.5)
-        ic_r   = np.concatenate( (ic_r[  :ci],   tmp_r) )
-        ic_vrp = np.concatenate( (ic_vrp[:ci], tmp_vrp) )
-        ic_vrs = np.concatenate( (ic_vrs[:ci], tmp_vrs) )
+        if fix:######
+            # Fix mantle
+            # The mantle's layers must be denser because of the flattening.
+            _,    mt_vrp = denser_xy(mt_r, mt_vrp, 50.0)
+            mt_r, mt_vrs = denser_xy(mt_r, mt_vrs, 50.0)
+            icmb = mt_r.size
+            ######
+            # Fix outer core
+            # The outer core's layers must be denser because of the flattening.
+            _,    oc_vrp = denser_xy(oc_r, oc_vrp, 50.0)
+            oc_r, oc_vrs = denser_xy(oc_r, oc_vrs, 50.0)
+            iicb = mt_r.size + oc_r.size
+            ######
+            # Fix inner core
+            #The inner core's  layers must be denser because of the flattening near the center.
+            _,    ic_vrp = denser_xy(ic_r, ic_vrp, 10.0)
+            ic_r, ic_vrs = denser_xy(ic_r, ic_vrs, 10.0)
+            #
+            ic_r[-1] = ic_r[-2]-1e-3
+            ic_vrp[-1]= ic_vrp[-2]+1e-3
+            ci = -20
+            _,     tmp_vrp = denser_xy(ic_r[ci:], ic_vrp[ci:], 0.5)
+            tmp_r, tmp_vrs = denser_xy(ic_r[ci:], ic_vrs[ci:], 0.5)
+            ic_r   = np.concatenate( (ic_r[  :ci],   tmp_r) )
+            ic_vrp = np.concatenate( (ic_vrp[:ci], tmp_vrp) )
+            ic_vrs = np.concatenate( (ic_vrs[:ci], tmp_vrs) )
         ######
         if max_dr is not None:
             _,    mt_vrp = denser_xy(mt_r, mt_vrp, max_dr)
@@ -695,6 +695,60 @@ class FastTauP:
             ax.set_xlabel('Velocity (km/s)')
             ax.grid(True)
             ax.legend()
+    @property
+    def r(self):
+        return self.all_r
+    @property
+    def r_mantle(self):
+        return self.all_r[:self.all_icmb]
+    @property
+    def r_oc(self):
+        return self.all_r[self.all_icmb:self.all_iicb]
+    @property
+    def r_ic(self):
+        return self.all_r[self.all_iicb:]
+    #
+    @property
+    def vrp(self):
+        return self.all_vrp
+    @property
+    def vrp_mantle(self):
+        return self.all_vrp[:self.all_icmb]
+    @property
+    def vrp_oc(self):
+        return self.all_vrp[self.all_icmb:self.all_iicb]
+    @property
+    def vrp_ic(self):
+        return self.all_vrp[self.all_iicb:]
+    #
+    @property
+    def vrs(self):
+        return self.all_vrs
+    @property
+    def vrs_mantle(self):
+        return self.all_vrs[:self.all_icmb]
+    @property
+    def vrs_oc(self):
+        return self.all_vrs[self.all_icmb:self.all_iicb]
+    @property
+    def vrs_ic(self):
+        return self.all_vrs[self.all_iicb:]
+    #
+    @property
+    def icmb(self):
+        return self.all_icmb
+    @property
+    def iicb(self):
+        return self.all_iicb
+    @property
+    def z(self):
+        return self.all_z
+    @property
+    def vzp(self):
+        return self.all_vzp
+    @property
+    def vzs(self):
+        return self.all_vzs
     ################################################################################
     # Get inv_rps, ibs, ibreaks for specific ray types.
     #  or inv_rps, p_ibs, s_ibs, ibreaks for PS or IJ mixing.
