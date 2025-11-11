@@ -511,6 +511,7 @@ class geo_arrival:
                                 Will be useless if `arrival` is provided.
         ray_param:              ray parameter in sec/radian, which is used to generate an new `Arrival` object.
                                 Should be provided if `arrival` is not provided.
+                                Could be negative, so the ray's purist distance is negative!
                                 Will be useless if `arrival` is provided.
         #
         #Note:
@@ -540,13 +541,16 @@ class geo_arrival:
             tau_mod_corr = tau_mod.depth_correct(evdp_km)                # correct/split the source and receiver depth
             tau_mod_corr = tau_mod_corr.split_branch(rcvdp_km)
             seismic_phase = SeismicPhase(phase, tau_mod_corr, rcvdp_km)  # generate a seismic phase object
-            arr = seismic_phase.shoot_ray(0, float(ray_param))       # shoot the ray, please note, the first parameter is assigned to returned `Arrival.distance`!
+            arr = seismic_phase.shoot_ray(0, abs(float(ray_param)) )       # shoot the ray, please note, the first parameter is assigned to returned `Arrival.distance`!
             arr = seismic_phase.calc_path_from_arrival(arr)              # get the raypath
             arr.distance = arr.purist_distance % 360
             if arr.distance > 180:
                 arr.distance = 360 - arr.distance
             #########
-            self.__init__(eqdp, eqlo, stdp, arr.distance % 360, arrival=arr, model=model)
+            stlo = arr.purist_distance % 360
+            if ray_param < 0.0:
+                stlo = -stlo
+            self.__init__(eqdp, eqlo, stdp, stlo, arrival=arr, model=model)
     def get_raypath(self):
         """
         Return the ray paths (lons, rs) from earthquake to station.
@@ -669,6 +673,39 @@ class geo_arrival:
     def ray_param_sec_km(self):
         return self.ray_param /self.taupy_model.model.radius_of_planet
     @classmethod
+    def benchmark2(cls):
+        mod = taup.TauPyModel('PREM')
+        phase = 'SKKS'
+        geo_arrs = list()
+        for it in range(0, 180, 5):
+            tmp = mod.get_ray_paths(0.0, it, [phase])
+            for ita in tmp:
+                geo_arrs.append( geo_arrival(0.0, 0.0, 0.0, it, ita, model=mod) )
+        fig, ax = plt.subplots(subplot_kw=dict(projection='polar'), figsize=(6, 6) )
+        for it in geo_arrs:
+            it.plot_raypath(ax=ax)
+            print(it.ray_param_sec_km)
+        plt.show()
+        #######
+        geo_arrs = list()
+        for rp in np.linspace(120, 400, 50):
+            geo_arrs.append(geo_arrival(0.0, 0.0, 0.0, phase_name=phase, ray_param=rp))
+        fig, ax = plt.subplots(subplot_kw=dict(projection='polar'), figsize=(6, 6) )
+        for it in geo_arrs:
+            it.plot_raypath(ax=ax)
+            print(it.ray_param_sec_km)
+        #
+        geo_arrs = list()
+        for rp in np.linspace(-120, -400, 50):
+            geo_arrs.append(geo_arrival(0.0, 0.0, 0.0, phase_name=phase, ray_param=rp))
+        for it in geo_arrs:
+            it.plot_raypath(ax=ax, color='r')
+            print(it.ray_param_sec_km)
+        plt.show()
+        
+
+        pass
+    @classmethod
     def benchmark(cls):
         # obtain arrivals with obspy.taup
         import obspy.taup as taup
@@ -698,7 +735,8 @@ class geo_arrival:
         plt.show()
 
 if __name__ == '__main__':
-    if True:
+    geo_arrival.benchmark2()
+    if False:
         import matplotlib.pyplot as plt
         import obspy.taup as taup
         from sacpy.taupplotlib import geo_arrival

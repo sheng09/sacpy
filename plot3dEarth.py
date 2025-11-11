@@ -59,6 +59,10 @@ class Scene3D:
         self.clip_kw = None
         self.clip_box_kw = None
     def disable_add_mesh_to_plotter(self):
+        """
+        This is combined with `add_mesh(...)` function to disable adding mesh to the plotter.
+        So that the mesh can be created (clipped, and returned), but not added to the plotter.
+        """
         self.flag_add_mesh_to_plotter = False
     def enable_add_mesh_to_plotter(self):
         self.flag_add_mesh_to_plotter = True
@@ -347,8 +351,291 @@ class Scene3D:
                                      theta_resolution=theta_resolution, start_theta=start_theta, end_theta=end_theta,
                                      phi_resolution=phi_resolution, start_phi=start_phi, end_phi=end_phi,
                                      lighting=lighting, **kwargs)
-    def show(self):
-        self.pv_plotter.show()
+    def show(self, **kwargs):
+        self.pv_plotter.show(**kwargs)
+    @staticmethod
+    def benchmark_SKS_ScS_diagram():
+        from sacpy.taupplotlib import geo_arrival
+        ###
+        app = Scene3D(pv_plotter_kargs={'window_size':(3000, 2000)}, )
+        ### add a light source
+        light = pv.Light(light_type='headlight',position=(-100,-100,100), focal_point=(0,0,0))
+        light.diffuse_color = 0.3, 0.3, 0.3
+        app.pv_plotter.renderer.add_light(light)
+        if True: # add_earth & stock_img & coastlines
+            ### Earth map
+            norm = (-1,-0.3,1)
+            norm2 = (0,0,1)
+            norm3 = (np.sqrt(3)*0.5,0.5,0)
+            rotate_norm = np.cross(norm2, norm)
+            rotate_angle= np.arccos( np.dot(norm2, norm) / (np.linalg.norm(norm2)*np.linalg.norm(norm)) )
+            new_norm3 = Scene3D.rotate_about_axis(norm3, rotate_norm, rotate_angle )
+            ##
+            box = pv.Cube(center=(0, 0, 5000), x_length=20000, y_length=20000, z_length=10000)
+            box2 = box.rotate_vector(vector=rotate_norm, angle=np.rad2deg(rotate_angle) )
+            box3 = box2.rotate_vector(vector=norm, angle=30)
+            #app.add_mesh(box, color='#dddddd', opacity=0.5, lighting=True)
+            #app.add_mesh(box2, color='r', opacity=0.5, lighting=True)
+            #app.add_mesh(box3, color='b', opacity=0.5, lighting=True)
+            ##
+            #app.enable_clip(clip_box_kw={'bounds': (-10000, 10000, -10000, 10000, 0, 10000)}, clip_kw=None )
+            #app.enable_clip(clip_box_kw=None, clip_kw={'normal': norm, 'origin': (0, 0, 0)} )
+            app.enable_clip(clip_box_kw={'bounds': box3}, clip_kw=None )
+            app.add_earth(land_color='#999999ff', ocean_color='#00000000', 
+                  coastline_width=0, coastline_color='k', coastline_style='-', dpi=100,
+                  radius=6372, center=(0,0,0),
+                  north_pole_direction=(0., 0., 1.), lo0la0_direction=(1., 0., 0.),
+                  theta_resolution=720, start_theta=0, end_theta=360,
+                  phi_resolution=360,   start_phi=0,   end_phi=180,
+                  lighting=True)
+            app.add_sphere(radius=6371, center=(0.,0.,0.), opacity=1,
+                   north_pole_direction=(0., 0., 1.), lo0la0_direction=(1., 0., 0.),
+                   color='#eeeeee', texture=None,
+                   theta_resolution=720, start_theta=0, end_theta=360,
+                   phi_resolution=360,   start_phi=0,   end_phi=180,
+                   lighting=True)
+            app.disable_clip()
+            app.add_disk(color='#aaaaaa', center=(0,0,0), outer=6371, inner=3480, direction=norm, show_edges=False, opacity=1.0)
+            #app.add_disk(color='#999999', center=(0,0,0), outer=6371, inner=3480, direction=new_norm3, show_edges=False, opacity=1.0)
+            #### Inner core
+            app.add_sphere(radius=1220, center=(0.,0.,0.), opacity=0.3,
+                   north_pole_direction=(0., 0., 1.), lo0la0_direction=(1., 0., 0.),
+                   color='k', texture=None,
+                   theta_resolution=180, start_theta=0, end_theta=360,
+                   phi_resolution=90,   start_phi=0,   end_phi=180,
+                   lighting=True)
+            #### Outer core
+            app.enable_clip(clip_box_kw=None, clip_kw={'normal': norm, 'origin': (0, 0, 0)} )
+            app.add_sphere(radius=3480, center=(0.,0.,0.), opacity=1,
+                   north_pole_direction=(0., 0., 1.), lo0la0_direction=(1., 0., 0.),
+                   color='#ffffff', texture=None,
+                   theta_resolution=180, start_theta=0, end_theta=360,
+                   phi_resolution=90,   start_phi=0,   end_phi=180,
+                   lighting=True)
+            app.disable_clip()
+            app.add_disk(color='#ffffff', center=(0,0,0), inner=0, outer=3280, direction=norm, show_edges=False, opacity=1.0)
+            app.add_disk(color='#ffaaaa', center=(0,0,0), inner=3280, outer=3480, direction=norm, show_edges=False, opacity=1.0)
+            #app.add_disk(color='#ffffff', center=(0,0,0), outer=3480, direction=new_norm3, show_edges=False, opacity=1.0)
+            #app.add_disk(color='#ffffff', center=(0,0,0), outer=3480, direction=(0,1,0), show_edges=False, opacity=1.0)
+            ##### ray paths
+            flag_source = False
+            evlo = 190
+            clr_k = '#C72326'
+            for rp, clr_s in zip([], ['#999999']):
+                for phase in ['SKSSKSScS', 'ScSScSSKS', ]: #'SKSSKS', 'SKSScS', 'ScSSKS', 'SKSSKSSKS', 'SKSSKSScS']:
+                    geo_arr = geo_arrival(0.0, evlo, 0.0, 0.0, phase_name=phase, ray_param=rp, model='PREM')
+                    if True: # src and rcv
+                        lons, rs = geo_arr.get_raypath()
+                        xs = rs * np.cos(lons)
+                        ys = rs * np.sin(lons)
+                        zs = np.zeros_like(xs)
+                        xyz = np.array((xs, ys, zs)).T
+                        xyz = Scene3D.rotate_about_axis(xyz, rotate_norm, rotate_angle)
+                        xs, ys, zs = xyz.T
+                        if not flag_source:
+                            flag_source = True
+                            app.add_point(xs[0], ys[0], zs[0], size=230, shape='sphere', color='#eeeeee')
+                        app.add_point(xs[-1], ys[-1], zs[-1], direction=(-xs[-1], -ys[-1], -zs[-1]), size=230, shape='cone',
+                                      color=clr_s,
+                                      shift_along_direction=-200, lighting=True)
+                    for (leg_name, (lons, rs)) in  geo_arr.get_split_raypath():
+                        xs = rs * np.cos(lons)
+                        ys = rs * np.sin(lons)
+                        zs = np.zeros_like(xs)
+                        xyz = np.array((xs, ys, zs)).T
+                        xyz = Scene3D.rotate_about_axis(xyz, rotate_norm, rotate_angle)
+                        xs, ys, zs = xyz.T
+                        clr = clr_k if leg_name=='K' else clr_s
+                        lw  = 10  if leg_name=='K' else 6
+                        app.add_spline(xs, ys, zs, color=clr, render_lines_as_tubes=True, line_width=lw)
+            for rp, clr_s in zip([-400], ['#777777']):
+                for phase in ['ScSSKSScS', 'ScSScSScS', ]: #'SKSSKS', 'SKSScS', 'ScSSKS', 'SKSSKSSKS', 'SKSSKSScS']:
+                    geo_arr = geo_arrival(0.0, evlo, 0.0, 0.0, phase_name=phase, ray_param=rp, model='PREM')
+                    if True: # src and rcv
+                        lons, rs = geo_arr.get_raypath()
+                        xs = rs * np.cos(lons)
+                        ys = rs * np.sin(lons)
+                        zs = np.zeros_like(xs)
+                        xyz = np.array((xs, ys, zs)).T
+                        xyz = Scene3D.rotate_about_axis(xyz, rotate_norm, rotate_angle)
+                        xs, ys, zs = xyz.T
+                        if not flag_source:
+                            flag_source = True
+                            app.add_point(xs[0], ys[0], zs[0], size=230, shape='sphere', color='#eeeeee')
+                        app.add_point(xs[-1], ys[-1], zs[-1], direction=(-xs[-1], -ys[-1], -zs[-1]), size=230, shape='cone',
+                                      color=clr_s,
+                                      shift_along_direction=-200, lighting=True)
+                    for (leg_name, (lons, rs)) in  geo_arr.get_split_raypath():
+                        xs = rs * np.cos(lons)
+                        ys = rs * np.sin(lons)
+                        zs = np.zeros_like(xs)
+                        xyz = np.array((xs, ys, zs)).T
+                        xyz = Scene3D.rotate_about_axis(xyz, rotate_norm, rotate_angle)
+                        xs, ys, zs = xyz.T
+                        clr = 'r' if leg_name=='K' else clr_s
+                        lw  = 10  if leg_name=='K' else 6
+                        app.add_spline(xs, ys, zs, color=clr, render_lines_as_tubes=True, line_width=lw)
+            for rp, clr_s in zip([405,], ['#dddddd',]):
+                for phase in ['ScSSKS', 'ScSScS', ]: #'SKSSKS', 'SKSScS', 'ScSSKS', 'SKSSKSSKS', 'SKSSKSScS']:
+                    geo_arr = geo_arrival(0.0, evlo, 0.0, 0.0, phase_name=phase, ray_param=rp, model='PREM')
+                    if True: # src and rcv
+                        lons, rs = geo_arr.get_raypath()
+                        xs = rs * np.cos(lons)
+                        ys = rs * np.sin(lons)
+                        zs = np.zeros_like(xs)
+                        xyz = np.array((xs, ys, zs)).T
+                        xyz = Scene3D.rotate_about_axis(xyz, rotate_norm, rotate_angle)
+                        xs, ys, zs = xyz.T
+                        if not flag_source:
+                            flag_source = True
+                            app.add_point(xs[0], ys[0], zs[0], size=230, shape='sphere', color='#eeeeee')
+                        app.add_point(xs[-1], ys[-1], zs[-1], direction=(-xs[-1], -ys[-1], -zs[-1]), size=230, shape='cone',
+                                      color=clr_s,
+                                      shift_along_direction=-200, lighting=True)
+                    for (leg_name, (lons, rs)) in  geo_arr.get_split_raypath():
+                        xs = rs * np.cos(lons)
+                        ys = rs * np.sin(lons)
+                        zs = np.zeros_like(xs)
+                        xyz = np.array((xs, ys, zs)).T
+                        xyz = Scene3D.rotate_about_axis(xyz, rotate_norm, rotate_angle)
+                        xs, ys, zs = xyz.T
+                        clr = clr_k if leg_name=='K' else clr_s
+                        lw  = 10  if leg_name=='K' else 6
+                        app.add_spline(xs, ys, zs, color=clr, render_lines_as_tubes=True, line_width=lw)
+            for rp, clr_s in zip([420,], ['#444444']):
+                for phase in ['SKS', 'ScS', ]: #'SKSSKS', 'SKSScS', 'ScSSKS', 'SKSSKSSKS', 'SKSSKSScS']:
+                    geo_arr = geo_arrival(0.0, evlo, 0.0, 0.0, phase_name=phase, ray_param=rp, model='PREM')
+                    if True: # src and rcv
+                        lons, rs = geo_arr.get_raypath()
+                        xs = rs * np.cos(lons)
+                        ys = rs * np.sin(lons)
+                        zs = np.zeros_like(xs)
+                        xyz = np.array((xs, ys, zs)).T
+                        xyz = Scene3D.rotate_about_axis(xyz, rotate_norm, rotate_angle)
+                        xs, ys, zs = xyz.T
+                        if not flag_source:
+                            flag_source = True
+                            app.add_point(xs[0], ys[0], zs[0], size=230, shape='sphere', color='#eeeeee')
+                        app.add_point(xs[-1], ys[-1], zs[-1], direction=(-xs[-1], -ys[-1], -zs[-1]), size=230, shape='cone',
+                                      color=clr_s,
+                                      shift_along_direction=-200, lighting=True)
+                    for (leg_name, (lons, rs)) in  geo_arr.get_split_raypath():
+                        xs = rs * np.cos(lons)
+                        ys = rs * np.sin(lons)
+                        zs = np.zeros_like(xs)
+                        xyz = np.array((xs, ys, zs)).T
+                        xyz = Scene3D.rotate_about_axis(xyz, rotate_norm, rotate_angle)
+                        xs, ys, zs = xyz.T
+                        clr = clr_k if leg_name=='K' else clr_s
+                        lw  = 10  if leg_name=='K' else 6
+                        app.add_spline(xs, ys, zs, color=clr, render_lines_as_tubes=True, line_width=lw)
+        #app.pv_plotter.add_axes()
+        app.pv_plotter.camera_position =  [ (-28290.974432366187, 5512.347382088301, -4120.525256893221),
+                                            (0.490478515625, 0.0, 0.0),
+                                            (-0.2026463078455576, -0.3590334581430495, 0.9110595204762457)]
+        #app.show(screenshot='benchmark_SKS_ScS_diagram.png')
+        #####
+        # print camera position
+        print("Camera position:", app.pv_plotter.camera_position)
+        # plot legend
+        app = Scene3D(pv_plotter_kargs={'window_size':(800, 600)}, )
+        app.add_point(230,1700,0, size=230, shape='sphere', color='#eeeeee')
+        app.add_point(230,1000,0, size=230, shape='cone', direction=(0,-1,-0.5), color='#eeeeee')
+        app.add_spline([0, 500], [500,500], [0,0], color='r', render_lines_as_tubes=True, line_width=10)
+        app.add_spline([0, 500], [100,100], [0,0], color='#aaaaaa', render_lines_as_tubes=True, line_width=10)
+        app.pv_plotter.view_xy()
+        app.show(screenshot='benchmark_SKS_ScS_diagram_legend.png')
+    @staticmethod
+    def benchmark_SKS_ScS_diagram_quarter():
+        from sacpy.taupplotlib import geo_arrival
+        ###
+        app = Scene3D(pv_plotter_kargs={'window_size':(3000, 2000)})
+        if True: # add_earth & stock_img & coastlines
+            ### Earth map
+            norm = (-1,-0.3,1)
+            norm2 = (0,0,1)
+            norm3 = (np.sqrt(3)*0.5,0.5,0)
+            rotate_norm = np.cross(norm2, norm)
+            rotate_angle= np.arccos( np.dot(norm2, norm) / (np.linalg.norm(norm2)*np.linalg.norm(norm)) )
+            new_norm3 = Scene3D.rotate_about_axis(norm3, rotate_norm, rotate_angle )
+            ##
+            box = pv.Cube(center=(5000, 0, 5000), x_length=10000, y_length=20000, z_length=10000)
+            box2 = box.rotate_vector(vector=rotate_norm, angle=np.rad2deg(rotate_angle) )
+            box3 = box2.rotate_vector(vector=norm, angle=30)
+            #app.add_mesh(box, color='#dddddd', opacity=0.5, lighting=True)
+            #app.add_mesh(box2, color='r', opacity=0.5, lighting=True)
+            #app.add_mesh(box3, color='b', opacity=0.5, lighting=True)
+            ##
+            #app.enable_clip(clip_box_kw={'bounds': (-10000, 10000, -10000, 10000, 0, 10000)}, clip_kw=None )
+            #app.enable_clip(clip_box_kw=None, clip_kw={'normal': norm, 'origin': (0, 0, 0)} )
+            app.enable_clip(clip_box_kw={'bounds': box3}, clip_kw=None )
+            app.add_earth(land_color='#999999ff', ocean_color='#00000000', 
+                  coastline_width=0.5, coastline_color='k', coastline_style='-', dpi=100,
+                  radius=6371, center=(0,0,0),
+                  north_pole_direction=(0., 0., 1.), lo0la0_direction=(1., 0., 0.),
+                  theta_resolution=180, start_theta=0, end_theta=360,
+                  phi_resolution=90,   start_phi=0,   end_phi=180,
+                  lighting=True)
+            app.add_sphere(radius=6371, center=(0.,0.,0.), opacity=1,
+                   north_pole_direction=(0., 0., 1.), lo0la0_direction=(1., 0., 0.),
+                   color='#eeeeee', texture=None,
+                   theta_resolution=180, start_theta=0, end_theta=360,
+                   phi_resolution=90,   start_phi=0,   end_phi=180,
+                   lighting=True)
+            app.disable_clip()
+            app.add_disk(color='#999999', center=(0,0,0), outer=6371, inner=3480, direction=norm, show_edges=False, opacity=1.0)
+            app.add_disk(color='#999999', center=(0,0,0), outer=6371, inner=3480, direction=new_norm3, show_edges=False, opacity=1.0)
+            #### Inner core
+            app.add_sphere(radius=1220, center=(0.,0.,0.), opacity=0.5,
+                   north_pole_direction=(0., 0., 1.), lo0la0_direction=(1., 0., 0.),
+                   color='k', texture=None,
+                   theta_resolution=180, start_theta=0, end_theta=360,
+                   phi_resolution=90,   start_phi=0,   end_phi=180,
+                   lighting=True)
+            #### Outer core
+            app.enable_clip(clip_box_kw=None, clip_kw={'normal': norm, 'origin': (0, 0, 0)} )
+            app.add_sphere(radius=3480, center=(0.,0.,0.), opacity=1,
+                   north_pole_direction=(0., 0., 1.), lo0la0_direction=(1., 0., 0.),
+                   color='#ffffff', texture=None,
+                   theta_resolution=180, start_theta=0, end_theta=360,
+                   phi_resolution=90,   start_phi=0,   end_phi=180,
+                   lighting=True)
+            app.disable_clip()
+            app.add_disk(color='#ffffff', center=(0,0,0), outer=3480, direction=norm, show_edges=False, opacity=1.0)
+            app.add_disk(color='#ffffff', center=(0,0,0), outer=3480, direction=new_norm3, show_edges=False, opacity=1.0)
+            #app.add_disk(color='#ffffff', center=(0,0,0), outer=3480, direction=(0,1,0), show_edges=False, opacity=1.0)
+            ##### ray paths
+            for rp in np.linspace(120, 400, 10):
+                #### SKS
+                geo_arr = geo_arrival(0.0, 0.0, 0.0, phase_name='SKS', ray_param=rp, model='PREM')
+                for (leg_name, (lons, rs)) in  geo_arr.get_split_raypath():
+                    xs = rs * np.cos(1.57-lons)
+                    ys = rs * np.sin(1.57-lons)
+                    zs = np.zeros_like(xs)
+                    xyz = np.array((xs, ys, zs)).T
+                    xyz = Scene3D.rotate_about_axis(xyz, rotate_norm, rotate_angle)
+                    xs, ys, zs = xyz.T
+                    clr = 'r' if leg_name=='K' else 'k'
+                    lw  = 10  if leg_name=='K' else 4
+                    app.add_spline(xs, ys, zs, color=clr, line_width=lw)
+                #### ScS
+                geo_arr = geo_arrival(0.0, 0.0, 0.0, phase_name='ScS', ray_param=rp, model='PREM')
+                lons, rs = geo_arr.get_raypath()
+                xs = rs * np.cos(1.57-lons)
+                ys = rs * np.sin(1.57-lons)
+                zs = np.zeros_like(xs)
+                xyz = np.array((xs, ys, zs)).T
+                xyz = Scene3D.rotate_about_axis(xyz, rotate_norm, rotate_angle)
+                xs, ys, zs = xyz.T
+                app.add_spline(xs, ys, zs, color='k', line_width=4)
+                #
+        app.pv_plotter.add_axes()
+        app.pv_plotter.camera_position =  [(-1656.9956662285072, 13577.474367935813, 25703.63045028977),
+                                            (0.490478515625, 0.0, 0.0),
+                                            (-0.7972962491881405, -0.5534216001319333, 0.2409216128493525)]
+        app.show()
+        # print camera position
+        print("Camera position:", app.pv_plotter.camera_position)
     @staticmethod
     def rotate_and_translate2(xyz, current_origin_xyz, current_orientation_direction1, current_orientation_direction2,
                                new_origin_xyz, new_orientation_direction1, new_orientation_direction2 ):
@@ -2637,7 +2924,8 @@ class beachball3d:
         p.export_gltf("DC_P_SV_SH.gltf")
         app.show()
 if __name__ == '__main__':
-    #Scene3D.benchmark()
+    Scene3D.benchmark_SKS_ScS_diagram()
+    sys.exit(0)
     beachball3d.benchmark9()
     sys.exit(0)
     #sys.exit(0)

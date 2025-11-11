@@ -16,3 +16,5 @@ correlation4.png
 test.ipynb
 test_speed/
 test_station_selection/
+benchmark*.png
+benchmark*.pdf
