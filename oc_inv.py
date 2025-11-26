@@ -213,8 +213,9 @@ def p2xt_grad(inv_p, z, v, dz, dv, buf_six_by_zsize):
     for j in range(1, ib+1):
         par_dist_v[j] = par_xi_v0[j] + par_xi_v1[j-1]
         par_trvt_v[j] = par_ti_v0[j] + par_ti_v1[j-1]
-    par_dist_v[ib+1] = par_xi_v1[ib]
-    par_trvt_v[ib+1] = par_ti_v1[ib]
+    if ib != z.size-1:
+        par_dist_v[ib+1] = par_xi_v1[ib]
+        par_trvt_v[ib+1] = par_ti_v1[ib]
     ###
     par_dist_v *= 2.0
     par_trvt_v *= 2.0
@@ -382,8 +383,9 @@ def p2xt_grad_v2(inv_p, z, v, dz, dv, ib, buf_six_by_zsize):
     for j in range(1, ib+1):
         par_dist_v[j] = par_xi_v0[j] + par_xi_v1[j-1]
         par_trvt_v[j] = par_ti_v0[j] + par_ti_v1[j-1]
-    par_dist_v[ib+1] = par_xi_v1[ib]
-    par_trvt_v[ib+1] = par_ti_v1[ib]
+    if ib != z.size-1:
+        par_dist_v[ib+1] = par_xi_v1[ib]
+        par_trvt_v[ib+1] = par_ti_v1[ib]
     ###
     par_dist_v *= 2.0
     par_trvt_v *= 2.0
@@ -552,8 +554,9 @@ def p2xt_grad_v4(inv_p, z, v, dz, dv, dzdv, layer_type, ib, buf_six_by_zsize):
     for j in range(1, ib+1):
         par_dist_v[j] = par_xi_v0[j] + par_xi_v1[j-1]
         par_trvt_v[j] = par_ti_v0[j] + par_ti_v1[j-1]
-    par_dist_v[ib+1] = par_xi_v1[ib]
-    par_trvt_v[ib+1] = par_ti_v1[ib]
+    if ib != z.size-1:
+        par_dist_v[ib+1] = par_xi_v1[ib]
+        par_trvt_v[ib+1] = par_ti_v1[ib]
     ###
     par_dist_v *= 2.0
     par_trvt_v *= 2.0

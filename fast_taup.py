@@ -231,11 +231,11 @@ def z2inv_rp_penetrate(z, vz, debug=0):
     Return: inv_rps, ibs, ibreaks
     Refer to z2inv_rp_turn_back(...)'s docstring for details about the return values.
     """
-    vmax = np.max(vz)
-    inv_rps = np.array((vmax, 1.0e100), dtype=np.float64) # 1e100 means infinite here for ray parameter =0.0
+    idx_max = np.argmax(vz)
+    inv_rps = np.array((vz[idx_max], 1.0e100), dtype=np.float64) # 1e100 means infinite here for ray parameter =0.0
     ibs     = np.array((z.size-2, z.size-1), dtype=np.int64)
     ibreaks = np.array((0,2), dtype=np.int64)
-    if inv_rps[0] != vz[-1]:
+    if idx_max != z.size-1:
         # If the vmax is not at the bottom-most interface, need to increase the starting inv_rp a little bit.
         #inv_rps[0] = np.nextafter(inv_rps[0], inv_rps[0]+2.0)
         inv_rps[0] += 1e-6
@@ -750,37 +750,37 @@ class FastTauP:
     def vzs(self):
         return self.all_vzs
     ################################################################################
-    # Get inv_rps, ibs, ibreaks for specific ray types.
+    # Get inv_rps, ibs, ibreaks for specific ray legs.
     #  or inv_rps, p_ibs, s_ibs, ibreaks for PS or IJ mixing.
-    def get_P_turnback_inv_rps(self, max_theta_step_rad=0.0017): # For P, PP, PPP,...
+    def q4P(self, max_theta_step_rad=0.0017): # For P, PP, PPP,...
         z  = self.mt_z
         vz = self.mt_vzp
         inv_rps, ibs, ibreaks = z2inv_rp_turn_back(z, vz)
         return denser_inv_rps(inv_rps, ibs, ibreaks, vz[0], max_theta_step_rad)
-    def get_S_turnback_inv_rps(self, max_theta_step_rad=0.0017): # For S, SS, SSS,...
+    def q4S(self, max_theta_step_rad=0.0017): # For S, SS, SSS,...
         z  = self.mt_z
         vz = self.mt_vzs
         inv_rps, ibs, ibreaks = z2inv_rp_turn_back(z, vz)
         return denser_inv_rps(inv_rps, ibs, ibreaks, vz[0], max_theta_step_rad)
-    def get_PS_turnback_inv_rps(self, max_theta_step_rad=0.0017): # For PS, PSP, PSSP,...
+    def q4PS(self, max_theta_step_rad=0.0017): # For PS, PSP, PSSP,...
         #    need to find the intersection of P and S turn-back inv_rp intervals.
-        p_inv_rps, p_ibs, p_ibreaks = self.get_P_turnback_inv_rps(max_theta_step_rad)
-        s_inv_rps, s_ibs, s_ibreaks = self.get_S_turnback_inv_rps(max_theta_step_rad)
+        p_inv_rps, p_ibs, p_ibreaks = self.q4P(max_theta_step_rad)
+        s_inv_rps, s_ibs, s_ibreaks = self.q4S(max_theta_step_rad)
         inv_rps, p_ibs, s_ibs, ibreaks = common_x_two_segs(p_inv_rps, p_ibs, p_ibreaks, s_inv_rps, s_ibs, s_ibreaks)
         return inv_rps, p_ibs, s_ibs, ibreaks
-    def get_PcP_inv_rps(self, max_theta_step_rad=0.0017):   # For PcP, PcPPcP,...
+    def q4PcP(self, max_theta_step_rad=0.0017):   # For PcP, PcPPcP,...
         z = self.mt_z
         vz = self.mt_vzp
         inv_rps, ibs, ibreaks = z2inv_rp_penetrate(z, vz)
         return denser_inv_rps(inv_rps, ibs, ibreaks, vz[0], max_theta_step_rad)
-    def get_ScS_inv_rps(self, max_theta_step_rad=0.0017):   # For ScS, ScSSScS,...
+    def q4ScS(self, max_theta_step_rad=0.0017):   # For ScS, ScSSScS,...
         z = self.mt_z
         vz = self.mt_vzs
         inv_rps, ibs, ibreaks = z2inv_rp_penetrate(z, vz)
         return denser_inv_rps(inv_rps, ibs, ibreaks, vz[0], max_theta_step_rad)
-    def get_PcS_inv_rps(self, max_theta_step_rad=0.0017):   # For PcS, PcSPcP, PcSScS,...
-        return self.get_PcP_inv_rps(max_theta_step_rad) # same as PcP as the intersection of PcP and ScS inv_rp intervals.
-    def get_K_inv_rps(self,  mantle_P=True, mantle_S=True, max_theta_step_rad=0.0017): # For K(SKS-ScS), PKP, SKS, SKP, SKPPcS,...
+    def q4PcS(self, max_theta_step_rad=0.0017):   # For PcS, PcSPcP, PcSScS,...
+        return self.q4PcP(max_theta_step_rad) # same as PcP as the intersection of PcP and ScS inv_rp intervals.
+    def q4K(self,  mantle_P=True, mantle_S=True, max_theta_step_rad=0.0017): # For K(SKS-ScS), PKP, SKS, SKP, SKPPcS,...
         """
         mantle_P: True for the ray having mantle P legs, False for no mantle P legs.
         mantle_S: True for the ray having mantle S legs, False for no mantle S legs.
@@ -802,7 +802,7 @@ class FastTauP:
         result = denser_inv_rps(inv_rps, ibs, ibreaks, vz[0], max_theta_step_rad)
         vz[0] = vz0_backup
         return result
-    def get_KiK_inv_rps(self, mantle_P=True, mantle_S=True, max_theta_step_rad=0.0017): # For KiK(SKiKS-ScS), PKiKP, SKiS, SKiP,...
+    def q4KiK(self, mantle_P=True, mantle_S=True, max_theta_step_rad=0.0017): # For KiK(SKiKS-ScS), PKiKP, SKiS, SKiP,...
         z = self.oc_z
         vz= self.oc_vzp
         vz0_backup = vz[0]
@@ -820,7 +820,7 @@ class FastTauP:
         result = denser_inv_rps(inv_rps, ibs, ibreaks, vz[0], max_theta_step_rad)
         vz[0] = vz0_backup
         return result
-    def get_I_inv_rps(self, mantle_P=True, mantle_S=True, oc_K=True, max_theta_step_rad=0.0017): # For PKIKP, PKIKS, SKIKS, KIK, I,...
+    def q4I(self, mantle_P=True, mantle_S=True, oc_K=True, max_theta_step_rad=0.0017): # For PKIKP, PKIKS, SKIKS, KIK, I,...
         """
         mantle_P: True for the ray having mantle P legs, False for no mantle P legs.
         mantle_S: True for the ray having mantle S legs, False for no mantle S legs.
@@ -841,13 +841,13 @@ class FastTauP:
             oc_vp_max = np.max(self.oc_vzp)
             vz[0] = oc_vp_max if vz[0] < oc_vp_max else vz[0]
         ######
-        inv_rps, ibs, ibreaks = z2inv_rp_both(z, vz)
+        #inv_rps, ibs, ibreaks = z2inv_rp_both(z, vz)
         inv_rps, ibs, ibreaks = z2inv_rp_turn_back(z, vz)
         ibs += (self.mt_z.size + self.oc_z.size)
         result = denser_inv_rps(inv_rps, ibs, ibreaks, vz[0], max_theta_step_rad)
         vz[0] = vz0_backup
         return result
-    def get_J_inv_rps(self, mantle_P=True, mantle_S=True, oc_K=True, max_theta_step_rad=0.0017): # For PKJKP, PKJKS, SKJKS, KJK, J,...
+    def q4J(self, mantle_P=True, mantle_S=True, oc_K=True, max_theta_step_rad=0.0017): # For PKJKP, PKJKS, SKJKS, KJK, J,...
         """
         mantle_P: True for the ray having mantle P legs, False for no mantle P legs.
         mantle_S: True for the ray having mantle S legs, False for no mantle S legs.
@@ -865,20 +865,21 @@ class FastTauP:
             mt_vs_max = np.max(self.mt_vzs)
             vz[0] = mt_vs_max if vz[0] < mt_vs_max else vz[0]
         if oc_K:
-            oc_vs_max = np.max(self.oc_vzs)
-            vz[0] = oc_vs_max if vz[0] < oc_vs_max else vz[0]
+            oc_vp_max = np.max(self.oc_vzp)
+            vz[0] = oc_vp_max if vz[0] < oc_vp_max else vz[0]
         ######
         inv_rps, ibs, ibreaks = z2inv_rp_both(z, vz)
+        inv_rps, ibs, ibreaks = z2inv_rp_turn_back(z, vz)
         ibs += (self.mt_z.size + self.oc_z.size)
         result = denser_inv_rps(inv_rps, ibs, ibreaks, vz[0], max_theta_step_rad)
         vz[0] = vz0_backup
         return result
-    def get_IJ_inv_rps(self, mantle_P=True, mantle_S=True, oc_K=True, max_theta_step_rad=0.0017): # For JKIKJ, PKIKS, JKIKP,...
-        p_inv_rps, p_ibs, p_ibreaks = self.get_I_inv_rps(max_theta_step_rad)
-        s_inv_rps, s_ibs, s_ibreaks = self.get_J_inv_rps(max_theta_step_rad)
+    def q4IJ(self, mantle_P=True, mantle_S=True, oc_K=True, max_theta_step_rad=0.0017): # For JKIKJ, PKIKS, JKIKP,...
+        p_inv_rps, p_ibs, p_ibreaks = self.q4I(max_theta_step_rad)
+        s_inv_rps, s_ibs, s_ibreaks = self.q4J(max_theta_step_rad)
         inv_rps, p_ibs, s_ibs, ibreaks = common_x_two_segs(p_inv_rps, p_ibs, p_ibreaks, s_inv_rps, s_ibs, s_ibreaks)
-        p_ibs += (self.mt_z.size + self.oc_z.size)
-        s_ibs += (self.mt_z.size + self.oc_z.size)
+        #p_ibs += (self.mt_z.size + self.oc_z.size)
+        #s_ibs += (self.mt_z.size + self.oc_z.size)
         return inv_rps, p_ibs, s_ibs, ibreaks
     @staticmethod
     def benchmark_PS_inv_rps():
@@ -893,17 +894,17 @@ class FastTauP:
         ax2.plot(vzp, z, '-', color='b', lw=10, label='P velocity')
         ax2.plot(vzs, z, '-', color='g', lw=10, label='S velocity')
         #
-        inv_rps, ibs, ibreaks = app.get_P_turnback_inv_rps()
+        inv_rps, ibs, ibreaks = app.q4P()
         for ileg, c, ib in yield_lines(inv_rps, ibs, ibreaks):
             ax1.plot(c, ib,    '-', color='r', lw=5)
             ax1.plot([c[0], c[-1]], [ib[0], ib[-1]], 'o', color='r', markersize=8)
             ax2.plot(c, z[ib], '-', color='r', lw=5)
-        inv_rps, ibs, ibreaks = app.get_S_turnback_inv_rps()
+        inv_rps, ibs, ibreaks = app.q4S()
         for ileg, c, ib in yield_lines(inv_rps, ibs, ibreaks):
             ax1.plot(c, ib,    '-', color='C1', lw=5)
             ax1.plot([c[0], c[-1]], [ib[0], ib[-1]], 'o', color='C1', markersize=8)
             ax2.plot(c, z[ib], '-', color='C1', lw=5)
-        inv_rps, p_ibs, s_ibs, ibreaks = app.get_PS_turnback_inv_rps()
+        inv_rps, p_ibs, s_ibs, ibreaks = app.q4PS()
         for ileg, c, ib in yield_lines(inv_rps, p_ibs, ibreaks):
             ax1.plot(c, ib,    '-', color='k', label='P leg')
             ax1.plot([c[0], c[-1]], [ib[0], ib[-1]], 'o', color='k', markersize=8)
@@ -919,30 +920,30 @@ class FastTauP:
         app = FastTauP()
         fig, (ax1, ax2, ax3, ax4) = plt.subplots(1, 4, figsize=(18,6))
         ###### P & S turn-back rays
-        z = app.ic_z
-        vzp = app.ic_vzp
-        vzs = app.ic_vzs
+        z = app.z
+        vzp = app.vzp
+        vzs = app.vzs
         #vzp[3] = 4.0 # for testing shadow zones
         #vzs[3] = 1.0
         ax2.semilogx(vzp, z, '-', color='k', lw=10, label='P velocity')
         ax4.semilogx(vzs, z, '-', color='k', lw=10, label='S velocity')
         #
         cmap = plt.get_cmap('tab10_r', 10)
-        inv_rps, ibs, ibreaks = app.get_I_inv_rps()
+        inv_rps, ibs, ibreaks = app.q4I()
         for ileg, c, ib in yield_lines(inv_rps, ibs, ibreaks):
             clr = cmap(ileg % 10)
             ax1.semilogx(c, ib,    '-',  lw=5, color=clr)
             ax1.semilogx([c[0], c[-1]], [ib[0], ib[-1]], 's',  markersize=12, color=clr)
             ax2.semilogx(c, z[ib], '-', lw=5, color=clr)
             ax2.semilogx([c[0], c[-1]], [z[ib][0], z[ib][-1]], 's', markersize=12, color=clr)
-        inv_rps, ibs, ibreaks = app.get_J_inv_rps()
+        inv_rps, ibs, ibreaks = app.q4J()
         for ileg, c, ib in yield_lines(inv_rps, ibs, ibreaks):
             clr = cmap(ileg % 10)
             ax3.semilogx(c, ib,    '-', color=clr, lw=5)
             ax3.semilogx([c[0], c[-1]], [ib[0], ib[-1]], 's', color=clr, markersize=12)
             ax4.semilogx(c, z[ib], '-', color=clr, lw=5)
             ax4.semilogx([c[0], c[-1]], [z[ib][0], z[ib][-1]], 's', color=clr, markersize=12)
-        inv_rps, p_ibs, s_ibs, ibreaks = app.get_IJ_inv_rps()
+        inv_rps, p_ibs, s_ibs, ibreaks = app.q4IJ()
         for ileg, c, ib in yield_lines(inv_rps, p_ibs, ibreaks):
             clr = 'r'
             ax1.semilogx(c, ib,    '-', color=clr, label='P leg')
@@ -1066,34 +1067,34 @@ class FastTauP:
         s_ibs = None
         if phase_type == FastTauP.MT_PHASE : #'MT':
             if (nP>0) and (nS>0):     # PS
-                inv_rps, p_ibs, s_ibs, ibreaks = self.get_PS_turnback_inv_rps(max_theta_step_rad=max_theta_step_rad)
+                inv_rps, p_ibs, s_ibs, ibreaks = self.q4PS(max_theta_step_rad=max_theta_step_rad)
             elif (nP>0) and (nS==0):  # P
-                inv_rps, p_ibs, ibreaks = self.get_P_turnback_inv_rps(max_theta_step_rad=max_theta_step_rad)
+                inv_rps, p_ibs, ibreaks = self.q4P(max_theta_step_rad=max_theta_step_rad)
             elif (nP==0) and (nS>0):  # S
-                inv_rps, s_ibs, ibreaks = self.get_S_turnback_inv_rps(max_theta_step_rad=max_theta_step_rad)
+                inv_rps, s_ibs, ibreaks = self.q4S(max_theta_step_rad=max_theta_step_rad)
             else:
                 raise ValueError(f'Invalid phase name for MT phase: nP={nP}, nS={nS}.')
         elif phase_type == FastTauP.OC_PHASE : #'OC':
             if nK==0:
                 if (nP>0) and (nS>0):    # PcS
-                    inv_rps, p_ibs, ibreaks = self.get_PcS_inv_rps(max_theta_step_rad=max_theta_step_rad)
+                    inv_rps, p_ibs, ibreaks = self.q4PcS(max_theta_step_rad=max_theta_step_rad)
                 elif (nP>0) and (nS==0): # PcP
-                    inv_rps, p_ibs, ibreaks = self.get_PcP_inv_rps(max_theta_step_rad=max_theta_step_rad)
+                    inv_rps, p_ibs, ibreaks = self.q4PcP(max_theta_step_rad=max_theta_step_rad)
                 elif (nP==0) and (nS>0): # ScS
-                    inv_rps, s_ibs, ibreaks = self.get_ScS_inv_rps(max_theta_step_rad=max_theta_step_rad)
+                    inv_rps, s_ibs, ibreaks = self.q4ScS(max_theta_step_rad=max_theta_step_rad)
                 else:
                     raise ValueError(f'Invalid phase name for OC phase without K legs: nP={nP}, nS={nS}.')
             else:                        # PKP, SKS, SKP, K(SKS-ScS)
-                inv_rps, p_ibs, ibreaks = self.get_K_inv_rps(mantle_P=(nP>0), mantle_S=(nS>0), max_theta_step_rad=max_theta_step_rad)
+                inv_rps, p_ibs, ibreaks = self.q4K(mantle_P=(nP>0), mantle_S=(nS>0), max_theta_step_rad=max_theta_step_rad)
         elif phase_type == FastTauP.IC_PHASE: #'IC':
             if (nI==0) and (nJ==0):    # PKiKP, PKiKS, SKiKS, KiK(SKiKS-ScS)
-                inv_rps, p_ibs, ibreaks = self.get_KiK_inv_rps(mantle_P=(nP>0), mantle_S=(nS>0), max_theta_step_rad=max_theta_step_rad)
+                inv_rps, p_ibs, ibreaks = self.q4KiK(mantle_P=(nP>0), mantle_S=(nS>0), max_theta_step_rad=max_theta_step_rad)
             elif (nI>0) and (nJ==0):   # PKIKP, PKIKS, SKIKS, KIK(SKIKS-ScS), I(SKIKS-SKiKS)
-                inv_rps, p_ibs, ibreaks = self.get_I_inv_rps(mantle_P=(nP>0), mantle_S=(nS>0), oc_K=(nK>0), max_theta_step_rad=max_theta_step_rad)
+                inv_rps, p_ibs, ibreaks = self.q4I(mantle_P=(nP>0), mantle_S=(nS>0), oc_K=(nK>0), max_theta_step_rad=max_theta_step_rad)
             elif (nI==0) and (nJ>0):   # PKJKP, PKJKS, SKJKS, KJK(SKJKS-ScS), J(SKJKS-SKiKS)
-                inv_rps, s_ibs, ibreaks = self.get_J_inv_rps(mantle_P=(nP>0), mantle_S=(nS>0), oc_K=(nK>0), max_theta_step_rad=max_theta_step_rad)
+                inv_rps, s_ibs, ibreaks = self.q4J(mantle_P=(nP>0), mantle_S=(nS>0), oc_K=(nK>0), max_theta_step_rad=max_theta_step_rad)
             elif (nI>0) and (nJ>0):    # PKIJKP, ...
-                inv_rps, p_ibs, s_ibs, ibreaks = self.get_IJ_inv_rps(mantle_P=(nP>0), mantle_S=(nS>0), oc_K=(nK>0), max_theta_step_rad=max_theta_step_rad)
+                inv_rps, p_ibs, s_ibs, ibreaks = self.q4IJ(mantle_P=(nP>0), mantle_S=(nS>0), oc_K=(nK>0), max_theta_step_rad=max_theta_step_rad)
             else:
                 raise ValueError(f'Invalid phase name for IC phase: nI={nI}, nJ={nJ}.')
         else:
@@ -1523,6 +1524,9 @@ class FastTauP:
         import pickle
         plt.rcParams.update({'font.size': 8, 'figure.dpi': 150, 'font.family':'Arial'})
         from matplotlib.gridspec import GridSpec
+        ################################################################################################
+        my_cmap = 'seismic'
+        ################################################################################################
         app = FastTauP(R0=6371.0, uniform_dr=25)
         mt_r = app.all_r[:app.all_icmb]
         oc_r = app.all_r[app.all_icmb: app.all_iicb]
@@ -1635,13 +1639,13 @@ class FastTauP:
             Ginv = np.linalg.inv(GtG) @ Gt
             Rm   = Ginv @ G
             extent = [app.all_r[app.all_icmb], app.all_r[app.all_iicb-1], app.all_r[app.all_iicb-1], app.all_r[app.all_icmb]]
-            ax5.imshow(Rm, aspect='auto', cmap='seismic', origin='upper', extent=extent, vmin=-rm_vmax, vmax=rm_vmax)
+            ax5.imshow(Rm, aspect='auto', cmap=my_cmap, origin='upper', extent=extent, vmin=-rm_vmax, vmax=rm_vmax)
             ax5.set_xlabel('Radius (km)')
             ax5.set_ylabel('Radius (km)')
             ax5.set_title(r'$R\{V_P^{OC}\}$')
             #
             if phase_name == 'K':
-                oc_axlst[0].imshow(Rm, aspect='auto', cmap='seismic', origin='upper', extent=extent, vmin=-rm_vmax, vmax=rm_vmax)
+                oc_axlst[0].imshow(Rm, aspect='auto', cmap=my_cmap, origin='upper', extent=extent, vmin=-rm_vmax, vmax=rm_vmax)
                 oc_axlst[0].set_title('$SKS$-$ScS$ (Coda Correlation)')
                 #oc_axlst[0].text(0.01, 0.01, '$SKS$-$ScS$\n(Coda Correlation)', transform=oc_axlst[0].transAxes, ha='left', va='bottom', color='black', fontsize=10)
             #
@@ -1656,7 +1660,7 @@ class FastTauP:
             Ginv = np.linalg.inv(GtG) @ Gt
             Rm   = Ginv @ G
             extent = [app.all_r[0], app.all_r[app.all_iicb-1], app.all_r[app.all_iicb-1], app.all_r[0]]
-            ax6.imshow(Rm, aspect='auto', cmap='seismic', origin='upper', extent=extent, vmin=-rm_vmax, vmax=rm_vmax)
+            ax6.imshow(Rm, aspect='auto', cmap=my_cmap, origin='upper', extent=extent, vmin=-rm_vmax, vmax=rm_vmax)
             rcmb = app.all_r[app.all_icmb-1]
             ricb = app.all_r[app.all_iicb-1]
             ax6.plot([6371, ricb], [rcmb, rcmb], ':', color='gray', lw=0.5)
@@ -1666,7 +1670,7 @@ class FastTauP:
             ax6.set_title(r'$R\{V_P^{OC}\}$ & $R\{V_S^{Mantle}\}$')
             #
             if phase_name == 'K':
-                mo_axlst[0].imshow(Rm, aspect='auto', cmap='seismic', origin='upper', extent=extent, vmin=-rm_vmax, vmax=rm_vmax)
+                mo_axlst[0].imshow(Rm, aspect='auto', cmap=my_cmap, origin='upper', extent=extent, vmin=-rm_vmax, vmax=rm_vmax)
                 mo_axlst[0].set_title('$SKS$-$ScS$ (Coda Correlation)')
                 #mo_axlst[0].text(0.01, 0.01, '$SKS$-$ScS$\n(Coda Correlation)', transform=mo_axlst[0].transAxes, ha='left', va='bottom', color='black', fontsize=10)
             #
@@ -1792,13 +1796,13 @@ class FastTauP:
                     Ginv = np.linalg.inv(GtG) @ Gt
                     Rm   = Ginv @ G
                     extent = [app.all_r[app.all_icmb], app.all_r[app.all_iicb-1], app.all_r[app.all_iicb-1], app.all_r[app.all_icmb]]
-                    im_oc = ax_oc.imshow(Rm, aspect='auto', cmap='seismic', origin='upper', extent=extent, vmin=-rm_vmax, vmax=rm_vmax)
+                    im_oc = ax_oc.imshow(Rm, aspect='auto', cmap=my_cmap, origin='upper', extent=extent, vmin=-rm_vmax, vmax=rm_vmax)
                     ax_oc.set_xlabel('Radius (km)')
                     ax_oc.set_ylabel('Radius (km)')
                     ax_oc.set_title(r'$R\{V_P^{OC}\}$')
                     #
                     if ax_oc is ax8:
-                        oc_axlst[idx].imshow(Rm, aspect='auto', cmap='seismic', origin='upper', extent=extent, vmin=-rm_vmax, vmax=rm_vmax)
+                        oc_axlst[idx].imshow(Rm, aspect='auto', cmap=my_cmap, origin='upper', extent=extent, vmin=-rm_vmax, vmax=rm_vmax)
                         oc_axlst[idx].set_title(f'${ph1}-{ph2}$')
                         #oc_axlst[idx].text(0.01, 0.01, f'${ph1}-{ph2}$', transform=oc_axlst[idx].transAxes, ha='left', va='bottom', color='black', fontsize=10)
                     #
@@ -1810,7 +1814,7 @@ class FastTauP:
                     Ginv = np.linalg.inv(GtG) @ Gt
                     Rm   = Ginv @ G
                     extent = [app.all_r[0], app.all_r[app.all_iicb-1], app.all_r[app.all_iicb-1], app.all_r[0]]
-                    im_mt_oc = ax_mt_oc.imshow(Rm, aspect='auto', cmap='seismic', origin='upper', extent=extent, vmin=-rm_vmax, vmax=rm_vmax)
+                    im_mt_oc = ax_mt_oc.imshow(Rm, aspect='auto', cmap=my_cmap, origin='upper', extent=extent, vmin=-rm_vmax, vmax=rm_vmax)
                     print(Rm.min(), Rm.max())
                     rcmb = app.all_r[app.all_icmb-1]
                     ricb = app.all_r[app.all_iicb-1]
@@ -1822,7 +1826,7 @@ class FastTauP:
                     #
                     if ax_oc is ax8:
                         #tmp = np.sign(Rm) * np.log(np.abs(Rm))/np.log(10)
-                        mo_axlst[idx].imshow(Rm, aspect='auto', cmap='seismic', origin='upper', extent=extent, vmin=-rm_vmax, vmax=rm_vmax)
+                        mo_axlst[idx].imshow(Rm, aspect='auto', cmap=my_cmap, origin='upper', extent=extent, vmin=-rm_vmax, vmax=rm_vmax)
                         mo_axlst[idx].set_title(f'${ph1}-{ph2}$')
                         #mo_axlst[idx].text(0.01, 0.01, f'${ph1}-{ph2}$', transform=mo_axlst[idx].transAxes, ha='left', va='bottom', color='black', fontsize=10)
                     ###
@@ -1842,7 +1846,9 @@ class FastTauP:
         plt.colorbar(im_oc,    cax=oc_cax, orientation='horizontal', label='Model resolution matrix coefficient', extend='both')
         plt.colorbar(im_mt_oc, cax=mo_cax, orientation='horizontal', label='Model resolution matrix coefficient', extend='both')
         for idx, ax in enumerate(oc_axlst[:-1]):
-            ax.set_xlim((r_cmb, r_cmb-1000))
+            #ax.set_xlim((r_cmb, r_cmb-1000))
+            #ax.set_ylim((r_cmb-1000, r_cmb))
+            ax.set_xlim((r_cmb, r_icb))
             ax.set_ylim((r_cmb-1000, r_cmb))
             ax.set_xlabel('Radius (km)')
             ax.set_ylabel('Radius (km)')
@@ -1852,8 +1858,10 @@ class FastTauP:
         for idx, ax in enumerate(mo_axlst[:-1]):
             ax.plot([6371, ricb], [rcmb, rcmb], ':', color='gray', lw=0.5)
             ax.plot([rcmb, rcmb], [6371, ricb], ':', color='gray', lw=0.5)
-            ax.set_xlim((r_cmb+2000, r_cmb-2000))
-            ax.set_ylim((r_cmb-2000, r_cmb+2000))
+            #ax.set_xlim((r_cmb+2000, r_cmb-2000))
+            #ax.set_ylim((r_cmb-2000, r_cmb+2000))
+            ax.set_xlim((r_cmb+2000, r_icb))
+            ax.set_ylim((r_icb, r_cmb+2000))
             ax.set_xlabel('Radius (km)')
             ax.set_ylabel('Radius (km)')
             letter = chr(ord('a') + idx)
@@ -1867,10 +1875,13 @@ class FastTauP:
         for axmat in [mo_axmat, oc_axmat]:
             for ax in axmat[0,:-1]:
                 ax.set_xlabel('')
+        for ax in mo_axlst[:-1]:
+            ax.text(3480, 1500, r'$R_{CMB}$', rotation=90, color='gray', fontsize=10, ha='center', va='bottom')
+            ax.text(1500, 3480, r'$R_{CMB}$', rotation=0,  color='gray', fontsize=10, ha='right', va='center')
         oc_fig.savefig('benchmark_dist2pxt_grad_oc_matrix.png', dpi=300, bbox_inches='tight', pad_inches=0.05)
         mo_fig.savefig('benchmark_dist2pxt_grad_mo_matrix.png', dpi=300, bbox_inches='tight', pad_inches=0.05)
-        oc_fig.savefig('benchmark_dist2pxt_grad_oc_matrix.pdf', dpi=300, bbox_inches='tight', pad_inches=0.05)
-        mo_fig.savefig('benchmark_dist2pxt_grad_mo_matrix.pdf', dpi=300, bbox_inches='tight', pad_inches=0.05)
+        #oc_fig.savefig('benchmark_dist2pxt_grad_oc_matrix.pdf', dpi=300, bbox_inches='tight', pad_inches=0.05)
+        #mo_fig.savefig('benchmark_dist2pxt_grad_mo_matrix.pdf', dpi=300, bbox_inches='tight', pad_inches=0.05)
         plt.close(oc_fig)
         plt.close(mo_fig)
         ##################################
@@ -2551,11 +2562,12 @@ class JUNK:
 
 if __name__ == '__main__':
     if True:
+        FastTauP.benchmark_IJ_inv_rps()
         #FastTauP.benchmark_IJ_inv_rps()
         #FastTauP.benchmark_phase_p2xt()
         #FastTauP.benchmark_phase2xt_dist_range()
         #FastTauP.benchmark_dist2pxt_grad()
-        FastTauP.benchmark_resolution_matrix()
+        #FastTauP.benchmark_resolution_matrix()
     if False:
         np.set_printoptions(precision=6, suppress=True)
         z = np.arange(31)
