@@ -1206,7 +1206,7 @@ class CS_InterRcv:
     def __del__(self):
         if self.intermediate_out_h5fid is not None:
             self.intermediate_out_h5fid.close()
-    def add(self, zne_mat_f32, stlo_rad, stla_rad, evlo_rad, evla_rad, event_name=None, local_time_summary=None, wmat_nn=None, inter_dist_add_deg=None, cc_right_tshift_sec=None):
+    def add(self, zne_mat_f32, stlo_rad, stla_rad, evlo_rad, evla_rad, event_name=None, local_time_summary=None, wmat_nn=None, inter_dist_add_deg=None, cc_right_tshift_sec=None, random_selection_ratio=1.0001):
         """
         local_time_summary: a TimeSummary object to record the time consumption for this function.
                             If `None`, a internal empty TimeSummary object will be created.
@@ -1290,6 +1290,21 @@ class CS_InterRcv:
                 dict_output_inter_mediate_data['gc_center_selection_mat'] = gc_center_selection_mat
                 ccpairs_selection_mat &= gc_center_selection_mat ##### merge this selection to the functional selection matrix
                 log_print(2, 'gc_center_selection_mat: ', gc_center_selection_mat.shape, gc_center_selection_mat.dtype)
+                log_print(2, 'Finished.', flush=True)
+        ############################################################################################################
+        #### random selection
+        with Timer(tag='random selection of cc pairs', verbose=False, summary=local_time_summary):
+            if random_selection_ratio<1.0:
+                log_print(1, 'Random random_selection_ratio:', random_selection_ratio)
+                one_indices = np.where(ccpairs_selection_mat>0)
+                total_ones  = len(one_indices[0])
+                num_to_flip = int(total_ones * (1.0-random_selection_ratio) )
+                all_indices = np.arange(total_ones)
+                indices_to_flip = np.random.choice(all_indices, size=num_to_flip, replace=False)
+                ccpairs_selection_mat[
+                                        one_indices[0][indices_to_flip],  # Row indices of the selected ones
+                                        one_indices[1][indices_to_flip]   # Column indices of the selected ones
+                                            ] = 0
                 log_print(2, 'Finished.', flush=True)
         ############################################################################################################
         #### The weight matrix
