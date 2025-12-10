@@ -2241,11 +2241,21 @@ class TSFuncs:
         plt.show()
 
     ######### delay time picker between two time series
+    @staticmethod
+    def phase_correlation(sig1, sig2):
+        n = len(sig1) + len(sig2) - 1
+        f1 = rfft(sig1, n=n)
+        f2 = rfft(sig2, n=n)
+        r  = f1 * np.conj(f2)
+        r /= (np.abs(r)+1e-20)
+        cc = irfft(r, n)
+        cc = np.roll(cc, len(sig2)-1)
+        return cc 
     """ Measure time difference between two time series using cross correlation method.
     """
     @staticmethod
     def time_diff_cc(ref, dat, dt, ref_start=0.0, dat_start=0.0, pre_normlized=False, denser_time_ratio=1,
-                     diff_lim=None, std_ratio=0.95):
+                     diff_lim=None, std_ratio=0.95, method='cc'):
         """
         Measure time difference between two time series using cross correlation method.
         :param ref:         the reference time series.
@@ -2261,7 +2271,7 @@ class TSFuncs:
                             (default is None, which means no limit.)
         :param std_ratio:   (default is 0.95) the ratio of the maximum correlation value used to estimate the standard deviation
                             of the obtained time difference.
-
+        :param method:      'cc' or 'pcc'.
 
         :return: tshift
             tshift: time difference between reference `ref` and `dat`, and in the same unit as dt.
@@ -2271,7 +2281,11 @@ class TSFuncs:
         if np.iscomplexobj(ref) or np.iscomplexobj(dat):
             raise ValueError("time_diff_cc(...) does not support complex time series.")
         ####
-        corr = scipy.signal.correlate(dat, ref, mode='full')
+        if method == 'cc':
+            corr = scipy.signal.correlate(dat, ref, mode='full')
+        elif method == 'pcc':
+            corr = TSFuncs.phase_correlation(dat, ref)
+        #
         if not pre_normlized:
             corr /= np.sqrt( np.sum(ref*ref) * np.sum(dat*dat) )
         ####

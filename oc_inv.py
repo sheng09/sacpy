@@ -1837,7 +1837,7 @@ def get_obj_and_grad_func(dist, trvt_obs, std, model_z, model_vz_ref,
         trvt_syn = my_model(dvz)
         if np.any(np.isnan(trvt_syn)):
             print('Nan obj_data_diff')
-            idx_nan = np.where(np.isnan(trvt_syn))[0][0]
+            idx_nan = np.where(np.isnan(trvt_syn))[0]
             print(dist[idx_nan]/6371.0*180.0/np.pi)
             return np.inf
         tmp = (trvt_obs-trvt_syn)
