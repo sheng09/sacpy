@@ -2242,7 +2242,7 @@ class TSFuncs:
 
     ######### delay time picker between two time series
     @staticmethod
-    def time_pick_array1d(data, tstart, dt, tmin, tmax, max_amp='pos'):
+    def time_pick_array1d(data, tstart, dt, tmin, tmax, max_amp='pos', denser_n=1):
         """
         Pick the timing for the maximal amplitude (could be positive, negative, or absolute amplitude).
 
@@ -2253,6 +2253,9 @@ class TSFuncs:
         :param tmax: The upper limit ...
         :param max_amp: could be `pos`, `neg`, or `abs`.
         """
+        if denser_n > 1:
+            data, dt = TSFuncs.rfft_interpolate(data, dt, data.size * denser_n)
+        ####
         imin = int(np.ceil(  (tmin-tstart)/dt ) )
         imax = int(np.floor( (tmax-tstart)/dt ) )
         imin = imin if imin>=0 else 0
@@ -2270,14 +2273,14 @@ class TSFuncs:
         return t_found, ifound
     @staticmethod
     def time_pick_mat2d(mat, tstart, dt, xstart, dx,
-                        tmin_x, tmin, tmax_x, tmax, max_amp='pos'):
+                        tmin_x, tmin, tmax_x, tmax, max_amp='pos', denser_n=1):
         x = np.arange(mat.shape[0])*dx + xstart
         tmin = np.interp(x, tmin_x, tmin)
         tmax = np.interp(x, tmax_x, tmax)
         t   = np.zeros(x.size, dtype=np.float32)
         t_idx = np.zeros(x.size, dtype=np.int32)
         for irow in range(x.size):
-            t[irow], t_idx[irow] = TSFuncs.time_pick_array1d(mat[irow], tstart, dt, tmin[irow], tmax[irow], max_amp=max_amp)
+            t[irow], t_idx[irow] = TSFuncs.time_pick_array1d(mat[irow], tstart, dt, tmin[irow], tmax[irow], max_amp=max_amp, denser_n=denser_n)
         return t, t_idx
     @staticmethod
     def phase_correlation(sig1, sig2):
@@ -2378,6 +2381,29 @@ class TSFuncs:
         err_mean  = (-err_left + err_right)*0.5
         ####
         corr_tstart = (-nref + 1)* dt + dat_start - ref_start
+        ####
+        return t_max, (corr_max, err_left, err_right, err_mean, corr_tstart, dt, corr)
+    @staticmethod
+    def time_diff_cc_mat2d(ref_mat, dat_mat, dt, ref_start=0.0, dat_start=0.0, pre_normlized=False, denser_time_ratio=1,
+                           diff_lim=None, std_ratio=0.95, method='cc'):
+        if ref_mat.shape[0] != dat_mat.shape[0]:
+            raise ValueError('Inconsistant number of rows for time_diff_cc_mat2d(...)')
+        nrow = ref_mat.shape[0]
+        tmp  = list()
+        for irow in range(nrow):
+            v = TSFuncs.time_diff_cc(   ref_mat[irow], dat_mat[irow], dt,
+                                        ref_start=ref_start, dat_start=dat_start, pre_normlized=pre_normlized, denser_time_ratio=denser_time_ratio,
+                                        diff_lim=diff_lim, std_ratio=std_ratio, method=method)
+            tmp.append(v)
+        ####
+        t_max = np.array([it[0] for it in tmp])
+        corr_max   = np.array([it[1][0] for it in tmp])
+        err_left   = np.array([it[1][1] for it in tmp])
+        err_right  = np.array([it[1][2] for it in tmp])
+        err_mean   = np.array([it[1][3] for it in tmp])
+        corr_tstart= np.array([it[1][4] for it in tmp])
+        dt         = np.array([it[1][5] for it in tmp])
+        corr       = np.array([it[1][6] for it in tmp])
         ####
         return t_max, (corr_max, err_left, err_right, err_mean, corr_tstart, dt, corr)
     @staticmethod
