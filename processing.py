@@ -2242,6 +2242,44 @@ class TSFuncs:
 
     ######### delay time picker between two time series
     @staticmethod
+    def time_pick_array1d(data, tstart, dt, tmin, tmax, max_amp='pos'):
+        """
+        Pick the timing for the maximal amplitude (could be positive, negative, or absolute amplitude).
+
+        :param data: Description
+        :param tstart: Description
+        :param dt: Description
+        :param tmin: The lower limit for time picking
+        :param tmax: The upper limit ...
+        :param max_amp: could be `pos`, `neg`, or `abs`.
+        """
+        imin = int(np.ceil(  (tmin-tstart)/dt ) )
+        imax = int(np.floor( (tmax-tstart)/dt ) )
+        imin = imin if imin>=0 else 0
+        imax = imax if imax<=(data.size-1) else (data.size-1)
+        ###
+        if max_amp == 'pos':
+            ifound = np.argmax( data[imin: imax+1] )+imin
+        elif max_amp == 'neg':
+            ifound = np.argmin( data[imin: imax+1] )+imin
+        else:
+            ifound1 = np.argmax( data[imin: imax+1] )+imin
+            ifound2 = np.argmin( data[imin: imax+1] )+imin
+            ifound = ifound1 if data[ifound1] > -data[ifound2] else ifound2
+        t_found = ifound*dt + tstart
+        return t_found, ifound
+    @staticmethod
+    def time_pick_mat2d(mat, tstart, dt, xstart, dx,
+                        tmin_x, tmin, tmax_x, tmax, max_amp='pos'):
+        x = np.arange(mat.shape[0])*dx + xstart
+        tmin = np.interp(x, tmin_x, tmin)
+        tmax = np.interp(x, tmax_x, tmax)
+        t   = np.zeros(x.size, dtype=np.float32)
+        t_idx = np.zeros(x.size, dtype=np.int32)
+        for irow in range(x.size):
+            t[irow], t_idx[irow] = TSFuncs.time_pick_array1d(mat[irow], tstart, dt, tmin[irow], tmax[irow], max_amp=max_amp)
+        return t, t_idx
+    @staticmethod
     def phase_correlation(sig1, sig2):
         n = len(sig1) + len(sig2) - 1
         f1 = rfft(sig1, n=n)
