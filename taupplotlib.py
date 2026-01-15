@@ -199,7 +199,7 @@ def plotStation(ax, model, stdp_list, stlo_list, color = '#E5E5E5', markersize=1
     #arrowprops = dict(arrowstyle='-|>,head_length=0.8,' 'head_width=0.5', color='#C95241', lw=1.5)
     scale = markersize / 12
     arrowstyle='-|>,head_length=%.1f,head_width=%.1f' % (scale, scale*0.6)
-    arrowprops = dict(arrowstyle=arrowstyle, color=color, lw=1.2, alpha= alpha)
+    arrowprops = dict(arrowstyle=arrowstyle, color=color, lw=0.0, alpha= alpha)
     for stlo, station_radius in zip(stlo_list, station_radius_list):
         ax.annotate('', xy=(stlo, station_radius), xycoords='data',
                     xytext=(stlo, station_radius + radius * 0.01), textcoords='data',
@@ -609,9 +609,11 @@ class geo_arrival:
                 selected_rs   = rs
                 selected_lons = lons
             else:
-                selected_idx = np.where( (rs >= radius_range[0]) & (rs <= radius_range[1]) )[0]
-                selected_rs   = rs[selected_idx]
-                selected_lons = lons[selected_idx]
+                selected_idx = np.where( (rs < radius_range[0]) | (rs > radius_range[1]) )[0]
+                selected_rs   = rs#[selected_idx]
+                selected_lons = lons#[selected_idx]
+                selected_rs[selected_idx] = np.nan
+                selected_lons[selected_idx] = np.nan
             if 'color' not in kwargs:
                 default_clr = default_clr_lst[idx_leg % len(default_clr_lst)]
                 ax.plot(selected_lons, selected_rs, color=default_clr, **kwargs)
