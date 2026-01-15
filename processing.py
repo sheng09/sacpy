@@ -2240,7 +2240,7 @@ class TSFuncs:
         ax3.legend(loc=(0, 1.01))
         plt.show()
 
-    ######### delay time picker between two time series
+    ######### time picker for max or min amplitude
     @staticmethod
     def time_pick_array1d(data, tstart, dt, tmin, tmax, max_amp='pos', denser_n=1):
         """
@@ -2282,6 +2282,220 @@ class TSFuncs:
         for irow in range(x.size):
             t[irow], t_idx[irow] = TSFuncs.time_pick_array1d(mat[irow], tstart, dt, tmin[irow], tmax[irow], max_amp=max_amp, denser_n=denser_n)
         return t, t_idx
+    #
+    ########## time picker for zeros, local min, or local max.
+    @staticmethod
+    def time_pick_zeros_array1d(data, tstart, dt, tref, n=1, zero_threshold=1e-20):
+        """
+        Return an array ts where the time series are zeros. The array has the size of `n`
+        and its elements are sorted with increasing distance from the `tref`.
+        An empty array (of size 0) will be returned if none zeros are found.
+
+        data:   input 1d array.
+        tstart: start of the array.
+        dt:     sampling nterval of the array.
+        tref:   a reference time point from which distance is measured for each of the found ts.
+        n:      number of ts to return.
+        zero_threshold: the absolute threshold below which (after abs) a number is considered as zero.
+
+        return ts: a sorted array of size `n`. The array is sorted with increasing distance from the `tref`.
+        """
+        data = np.array(data)
+        #### where data[i] is zero (zero_threshold)
+        inds = np.where(np.abs(data)<zero_threshold)[0]
+        #### where data[i], data[i+1] cross zero
+        # set those found as zeros to avoid repeated results
+        data = data.copy()
+        data[inds] = 0
+        # find the index (float) where zeros are
+        inds = list( inds )
+        cross = (data[:-1] * data[1:])
+        for x1 in np.where(cross<0)[0]:
+            x2 = x1 + 1
+            y1, y2 = data[x1], data[x2]
+            x  = (x1*y2-x2*y1)/(y2-y1)
+            inds.append(x)
+        inds = np.array(inds, dtype=np.float64)
+        ts = inds*dt + tstart
+        #### sort
+        dist = np.abs(ts-tref)
+        idxs = np.argsort(dist)
+        ts = ts[idxs]
+        ####
+        return ts[:n]
+    @staticmethod
+    def time_pick_local_max_array1d(data, tstart, dt, tref, n=1, sign='all', zero_threshold=1e-20):
+        """
+        Return an array ts where the time series are local maximal (negative or positive).
+        Specifically, the data will first be splitted into many segment so that each segment
+        has all element positive or negative. Then, for each segment, find the location of its maximal.
+
+        The returned array has the size of `n` and its elements are sorted with increasing distance from the `tref`.
+        An empty array (of size 0) will be returned if none zeros are found.
+
+        data:   input 1d array.
+        tstart: start of the array.
+        dt:     sampling nterval of the array.
+        tref:   a reference time point from which distance is measured for each of the found ts.
+        n:      number of ts to return.
+        sign:   'pos' or 'neg' or 'all' to select only positive, only negative, or all, respectively.
+        zero_threshold: the absolute threshold below which (after abs) a number is considered as zero.
+
+        return ts: a sorted array of size `n`. The array is sorted with increasing distance from the `tref`.
+        """
+        ts = list()
+        data = np.array(data)
+        segments = TSFuncs.split_at_zero_array1d(data, tstart, dt, zero_threshold=1e-20)
+        #######
+        if sign == 'pos':
+            for (local_data, local_tstart, _) in segments:
+                ifound = np.argmax(local_data) if (local_data[0]>0) else np.argmin(local_data)
+                if local_data[ifound] > zero_threshold:
+                    tfound = ifound * dt + local_tstart
+                    ts.append(tfound)
+        elif sign == 'neg':
+            for (local_data, local_tstart, _) in segments:
+                ifound = np.argmax(local_data) if (local_data[0]>0) else np.argmin(local_data)
+                if local_data[ifound] < -zero_threshold:
+                    tfound = ifound * dt + local_tstart
+                    ts.append(tfound)
+        else:
+            for (local_data, local_tstart, _) in segments:
+                ifound = np.argmax(local_data) if (local_data[0]>0) else np.argmin(local_data)
+                if np.abs(local_data[ifound]) > zero_threshold:
+                    tfound = ifound * dt + local_tstart
+                    ts.append(tfound)
+        ######## sort
+        ts = np.array(ts)
+        dist = np.abs(ts-tref)
+        idxs = np.argsort(dist)
+        ts = ts[idxs]
+        ####
+        return ts[:n]
+    @staticmethod
+    def split_at_zero_array1d(data, tstart, dt, zero_threshold=1e-20):
+        """
+        Split an array into segments so that each segment has elements all positive or negative.
+
+        data:   input 1d array.
+        tstart: start of the array.
+        dt:     sampling nterval of the array.
+        zero_threshold: the absolute threshold below which (after abs) a number is considered as zero.
+
+        Return: a list: [seg1, seg2,...] each seg_i=(seg_data, seg_tstart, idx) where the idx is the index of
+                segment's first element in the input data.
+        """
+        data = np.array(data)
+        #### where data[i] is zero (zero_threshold)
+        inds = np.where(np.abs(data)<zero_threshold)[0]
+        # set those found as zeros to avoid repeated results
+        data = data.copy()
+        data[inds] = 0
+        boundary_inds = list(inds)
+        ####
+        cross = (data[:-1] * data[1:])
+        tmp = np.where(cross<0)[0]
+        boundary_inds.extend( tmp  )
+        boundary_inds.extend( tmp+1 )
+        boundary_inds.extend([0, len(data)] )
+        boundary_inds = sorted(boundary_inds)
+        ####
+        res = list()
+        for i0, i1 in zip(boundary_inds[::2], boundary_inds[1::2]):
+            seg_data   = data[i0:i1+1]
+            seg_tstart = i0*dt + tstart
+            res.append( (seg_data, seg_tstart, i0) )
+        return res
+    @staticmethod
+    def benchmark_find_zero_and_max():
+        tstart = 13.2
+        dt     = 0.03
+        ts     = np.arange(1024) * dt + tstart
+        data   = np.cos(ts) + np.sin(ts*2)
+        #######
+        tref = 22.1
+        zero_ts = TSFuncs.time_pick_zeros_array1d(    data, tstart, dt, tref=tref, n=10)
+        max_ts  = TSFuncs.time_pick_local_max_array1d(data, tstart, dt, tref=tref, n=10)
+        max_pos_ts  = TSFuncs.time_pick_local_max_array1d(data, tstart, dt, tref=tref, n=100, sign='pos')
+        max_neg_ts  = TSFuncs.time_pick_local_max_array1d(data, tstart, dt, tref=tref, n=10, sign='neg')
+        #######
+        print(zero_ts)
+        #######
+        plt.plot(ts, data)
+        plt.scatter(zero_ts, zero_ts*0.0, c=np.arange(zero_ts.size), s=50, cmap='RdBu', marker='s')
+        plt.scatter(max_ts,  max_ts*0.0+1.0, c=np.arange(max_ts.size), s=50, cmap='RdBu', marker='s')
+        plt.scatter(max_pos_ts,  max_pos_ts*0.0+2.0, c=np.arange(max_pos_ts.size), s=50, cmap='RdBu', marker='s')
+        plt.scatter(max_neg_ts,  max_neg_ts*0.0+3.0, c=np.arange(max_neg_ts.size), s=50, cmap='RdBu', marker='s')
+        plt.show()
+        pass
+    @staticmethod
+    def time_pick_zeros_mat2d(mat, tstart, dt, tref, n=1, zero_threshold=1e-20):
+        """
+        Given a matrix where each row a single time series, run time_pick_zeros_array1d(...) for each row.
+
+        tref: a single value or a list of values of size mat.shape[1].
+
+        Return: a matrix of shape (mat.shape[0], n). Each row corresponds to each row of the input matrix. 
+        """
+        nrow = mat.shape[0]
+        #####
+        tref = np.array(tref)
+        if tref.size == 1:
+            tref = np.zeros(nrow) + tref
+        ####
+        res = np.zeros((nrow, n) )
+        for irow in range(nrow):
+            res[irow] = TSFuncs.time_pick_zeros_array1d(mat[irow], tstart, dt, tref[irow], n, zero_threshold)
+        ####
+        return res
+    @staticmethod
+    def time_pick_local_max_mat2d(mat, tstart, dt, tref, n=1, sign='all', zero_threshold=1e-20):
+        """
+        Given a matrix where each row a single time series, run time_pick_local_max_array1d(...) for each row.
+
+        tref: a single value or a list of values of size mat.shape[1].
+
+        Return: a matrix of shape (mat.shape[0], n). Each row corresponds to each row of the input matrix. 
+        """
+        nrow = mat.shape[0]
+        #####
+        tref = np.array(tref)
+        if tref.size == 1:
+            tref = np.zeros(nrow) + tref
+        ####
+        res = np.zeros((nrow, n) ) + np.nan
+        for irow in range(nrow):
+            tmp = TSFuncs.time_pick_local_max_array1d(mat[irow], tstart, dt, tref[irow], n, sign, zero_threshold)
+            res[irow][:tmp.size] = tmp
+        ####
+        return res
+    @staticmethod
+    def benchmark_find_zero_and_max_mat():
+        tstart = 13.2
+        dt     = 0.03
+        ts     = np.arange(1024) * dt + tstart
+        #####
+        nrow = 5
+        mat  = np.zeros((nrow, 1024))
+        for irow in range(nrow):
+            mat[irow] =  np.cos(ts+irow) + np.sin(ts*2)
+        #####
+        tref = np.arange(nrow)*5 + 10
+        n = 10
+        res1 = TSFuncs.time_pick_zeros_mat2d(    mat, tstart, dt, tref, n)
+        res2 = TSFuncs.time_pick_local_max_mat2d(mat, tstart, dt, tref, n, sign='all', zero_threshold=1e-2 )
+        res3 = TSFuncs.time_pick_local_max_mat2d(mat, tstart, dt, tref, n, sign='pos', zero_threshold=1e-2 )
+        res4 = TSFuncs.time_pick_local_max_mat2d(mat, tstart, dt, tref, n, sign='neg', zero_threshold=1e-2 )
+        #####
+        res = res2
+        for irow in range(nrow):
+            dy = irow*5
+            plt.plot(ts, mat[irow]+dy, color='k')
+            plt.plot(ts, mat[irow]*0.0+dy, color='k', lw=0.1)
+            plt.scatter(res[irow], res[irow]*0.0+dy, c=np.arange(n), marker='s', s=20, cmap='RdBu')
+        plt.show()
+    ########
+
     @staticmethod
     def phase_correlation(sig1, sig2):
         n = len(sig1) + len(sig2) - 1
@@ -2501,6 +2715,9 @@ class TSFuncs:
 if __name__ == "__main__":
     import matplotlib.pyplot as plt
     if True:
+        #TSFuncs.benchmark_find_zero_and_max()
+        TSFuncs.benchmark_find_zero_and_max_mat()
+    if False:
         pass
         #RandFunc1DGenerator.benchmark()
         #TSFuncs.benchmark1()
