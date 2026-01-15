@@ -1819,6 +1819,7 @@ def plot_globe3d(p, globe, style='simple', coastline=False, land=None, ocean=Non
         z -= cz
         sphere.t_coords[:,0] = 0.5+(np.arctan2(y, x)*PI2_INV) % 1.0
         sphere.t_coords[:,1] = 0.5+ np.arcsin(z/radius)*PI_INV
+        sphere.active_t_coords = sphere.t_coords
 
         p.add_mesh(sphere, texture=tex2, show_edges=False, opacity=alpha, smooth_shading=True, lighting=True, culling=culling)
     elif '.png' in style:
@@ -3153,6 +3154,8 @@ class beachball3d:
         p.export_gltf("DC_P_SV_SH.gltf")
         app.show()
 if __name__ == '__main__':
+    globe3d.benchmark()
+    sys.exit(0)
     Scene3D.benchmark_SKS_ScS_diagram()
     Scene3D.benchmark_SKS_ScS_diagram2()
     sys.exit(0)
