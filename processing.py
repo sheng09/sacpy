@@ -2148,6 +2148,7 @@ class TSFuncs:
             ####
             dy = (nx*dx)/ny
             return y, dy
+    @staticmethod
     def rfft_interpolate(x, dx, ny):
         """
         Interpolate the time series x to a new time series y of size ny.
@@ -2210,6 +2211,13 @@ class TSFuncs:
             y  = scipy.fft.irfft(sy, n=ny, norm='forward')
             dy = (nx*dx)/ny
             return y, dy
+    @staticmethod
+    def rfft_interpolate_mat2d(mat2d, dx, ny):
+        new_mat2d = np.zeros((mat2d.shape[0], ny))
+        for i, x in enumerate(mat2d)    :
+            y, dy = TSFuncs.rfft_interpolate(x, dx, ny)
+            new_mat2d[i] = y
+        return new_mat2d, dy
     @staticmethod
     def benchmark5():
         import sacpy.processing as processing

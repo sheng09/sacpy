@@ -1767,12 +1767,16 @@ def rd_ak135_OC_model(fnm=__ak135_oc_fnm):
     return r, vp
 
 __prem_oc_fnm = '%s/dataset/models/oc_model_prem.txt' % sacpy.__path__[0]
-def rd_prem_OC_model(fnm=__prem_oc_fnm):
+def rd_prem_OC_model(fnm=__prem_oc_fnm, flag_rho=False):
     tab = np.loadtxt(fnm, comments='#')
     depth = tab[:, 0]
     r = 6371.0 - depth
     vp = tab[:, 2]
-    return r, vp
+    rho = tab[:, 4]
+    if flag_rho:
+        return r, vp, rho
+    else:
+        return r, vp
 
 __prem_fnm = '%s/dataset/models/taup_prem.txt' % sacpy.__path__[0]
 def rd_prem_model(fnm=__prem_fnm): # return r, vp, vs, icmb_index, iicb_index # mantle is [:icmb], OC is [icmb:iicb], IC is [iicb:]
