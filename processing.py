@@ -2710,7 +2710,132 @@ class TSFuncs:
         plt.show()
         pass
 
+    @staticmethod
+    def time_diff_cc2d(ref, dat, dt, ref_start=0.0, dat_start=0.0,
+                       denser_time_ratio=1,
+                       diff_lim=None, std_ratio=0.95, method='cc'):
+        """
+        Measure time difference in column directions between two field images.
+        :param ref: the reference field images. Each row is a single time series.
+        :paran dat: the field image to be aligned with the reference. Each row is a single time series.
+        :param dt:          time step of the time series
+        :param ref_start:   (default is zero) start time of the reference time series
+        :param dat_start:   (default is zero) start time of the data time series
+        :param pre_normlized: (default is False) if True, the time series x and y are already normalized.
+                              so that the summation of the autocorrelation of x or y is 1.0.
+        :param denser_time_ratio: (default is 1) an int >=1, we will search for the time difference in a denser time grid so
+                                  that the time step will be `dt/denser_time_ratio`.
+        :param diff_lim:    a tuple (tmin, tmax) to limit the range of the time difference.
+                            (default is None, which means no limit.)
+        :param std_ratio:   (default is 0.95) the ratio of the maximum correlation value used to estimate the standard deviation
+                            of the obtained time difference.
+        :param method:      'cc' or 'pcc'.
 
+        """
+        if np.iscomplexobj(ref) or np.iscomplexobj(dat):
+            raise ValueError("time_diff_cc(...) does not support complex time series.")
+        ####
+        if ref.shape[0] != dat.shape[0]:
+            raise ValueError("the ref and dat are not different shape")
+        ####
+        nrow, ncol1 = ref.shape
+        nrow, ncol2 = dat.shape
+        corr = np.zeros(ncol1+ncol2-1)
+        if method == 'cc':
+            for irow in range(nrow):
+                c = np.sum( (dat[irow] * dat[irow]) )
+                c*= np.sum( (ref[irow] * ref[irow]) )
+                c = 1.0 #p.sqrt(c)
+                corr += (c * scipy.signal.correlate(dat[irow], ref[irow], mode='full'))
+        elif method == 'pcc':
+            for irow in range(nrow):
+                c = np.sum( (dat[irow] * dat[irow]) )
+                c*= np.sum( (ref[irow] * ref[irow]) )
+                c = 1.0 #np.sqrt(c)
+                corr += (c * TSFuncs.phase_correlation(dat[irow], ref[irow]) )
+        #print(nrow, corr.sum() )
+        ####
+        nref, ndat = ncol1, ncol2
+        if denser_time_ratio > 1:
+            denser_time_ratio = int(denser_time_ratio)
+            # Make corr denser by interpolating it. However, please note this is different from (1) make the time series denser and (2) correlation the denser time series.
+            # Method below return a corr with          size1 = (ref.size + dat.size - 1) * denser_time_ratio
+            # The other method will return a corr with size2 = ref.size* denser_time_ratio + dat.size*denser_time_ratio - 1
+            # So, there will be a size difference of  size1-size2 = -denser_time_ratio+1.
+            # It means, we lack (-denser_time_ratio+1) points at the beginning of the correlation.
+            # Then, we solve this problem through cheating! We just roll the correlation array to the right by (denser_time_ratio-1) points.
+            # This cheating is valid if the ref and dat are both tapered which means zero outside their valid time ranges.
+            corr, dt = TSFuncs.rfft_interpolate(corr, dt, corr.size * denser_time_ratio)
+            corr = np.roll(corr, denser_time_ratio-1)
+            nref *= denser_time_ratio
+            ndat *= denser_time_ratio
+        ####
+        if diff_lim is None:
+            idx_max = np.argmax(corr)
+        else:
+            tdif_min, tdif_max = diff_lim
+            i0 = int(np.ceil(  (tdif_min-(dat_start-ref_start))/dt)) - (1-nref)
+            i1 = int(np.floor( (tdif_max-(dat_start-ref_start))/dt)) - (1-nref) + 1
+            i0 = max(i0, 0)
+            i1 = min(i1, len(corr))
+            idx_max = np.argmax(corr[i0:i1]) + i0
+        ####
+        #corr_ts = np.arange(-nref + 1, ndat) * dt + dat_start - ref_start
+        # t =  (idx -nref + 1) * dt + dat_start-ref_start
+        # fuc_get_t = lambda idx: (idx -nref + 1) * dt + dat_start-ref_start
+        #### find the maximum correlation value and its index
+        t_max    =  (idx_max -nref + 1) * dt + dat_start-ref_start
+        corr_max =  corr[idx_max]
+        #### get the std at left and right
+        if std_ratio<=0.0 or std_ratio>=1.0:
+            raise ValueError("std_ratio should be in (0, 1).")
+        lvl = corr_max * std_ratio
+        # take care of the left of the maximum
+        cc_left = corr[:idx_max+1]
+        tmp = np.where(cc_left>lvl, 1, 0)
+        index_err_left = np.where(tmp == 0)[0][-1] # get the last non-zero index from tmp
+        # take care of the right of the maximum
+        cc_right = corr[idx_max:]
+        tmp = np.where(cc_right>lvl, 1, 0)
+        index_err_right = np.where(tmp == 0)[0][0]+idx_max # get the first non-zero index from tmp
+        #
+        index_err_left  -= idx_max
+        index_err_right -= idx_max
+        err_left  = (index_err_left * dt)
+        err_right = (index_err_right * dt)
+        err_mean  = (-err_left + err_right)*0.5
+        ####
+        corr_tstart = (-nref + 1)* dt + dat_start - ref_start
+        ####
+        return t_max, (corr_max, err_left, err_right, err_mean, corr_tstart, dt, corr)
+    @staticmethod
+    def time_diff_cc2d_mat2d(ref_mat, dat_mat, dt, ref_start=0.0, dat_start=0.0, half_width=0,
+                             denser_time_ratio=1,
+                             diff_lim=None, std_ratio=0.95, method='cc'):
+        if ref_mat.shape[0] != dat_mat.shape[0]:
+            raise ValueError('Inconsistant number of rows for time_diff_cc_mat2d(...)')
+        nrow = ref_mat.shape[0]
+        tmp  = list()
+        for irow in range(nrow):
+            i0 = irow - half_width
+            i1 = irow + half_width+1
+            i0 = max(0, i0)
+            i1 = min(i1, nrow)
+            v = TSFuncs.time_diff_cc2d( ref_mat[i0:i1, :], dat_mat[i0:i1, :], dt,
+                                        ref_start=ref_start, dat_start=dat_start, denser_time_ratio=denser_time_ratio,
+                                        diff_lim=diff_lim, std_ratio=std_ratio, method=method)
+            tmp.append(v)
+        ####
+        t_max = np.array([it[0] for it in tmp])
+        corr_max   = np.array([it[1][0] for it in tmp])
+        err_left   = np.array([it[1][1] for it in tmp])
+        err_right  = np.array([it[1][2] for it in tmp])
+        err_mean   = np.array([it[1][3] for it in tmp])
+        corr_tstart= np.array([it[1][4] for it in tmp])
+        dt         = np.array([it[1][5] for it in tmp])
+        corr       = np.array([it[1][6] for it in tmp])
+        ####
+        return t_max, (corr_max, err_left, err_right, err_mean, corr_tstart, dt, corr)
 
 if __name__ == "__main__":
     import matplotlib.pyplot as plt

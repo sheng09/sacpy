@@ -2865,7 +2865,7 @@ class beachball3d:
         mee, men, meu = matENU[0]
         mne, mnn, mnu = matENU[1]
         mue, mun, muu = matENU[2]
-        mus, mss, mse = -mue, mnn, -mne
+        mus, mss, mse = -mun, mnn, -mne
         return np.array( (muu, mss, mee, mus, mue, mse), dtype=np.float64 )
     @staticmethod
     def xyz2uvw(matxyz, xyz='ENU', uvw='USE'):
