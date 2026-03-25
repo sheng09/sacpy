@@ -1771,8 +1771,8 @@ def rd_prem_OC_model(fnm=__prem_oc_fnm, flag_rho=False):
     tab = np.loadtxt(fnm, comments='#')
     depth = tab[:, 0]
     r = 6371.0 - depth
-    vp = tab[:, 2]
-    rho = tab[:, 4]
+    vp = tab[:, 2].copy()  # make it contiguous
+    rho = tab[:, 4].copy() # make it contiguous
     if flag_rho:
         return r, vp, rho
     else:
