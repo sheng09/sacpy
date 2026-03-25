@@ -1448,7 +1448,7 @@ def benchmark_phase_x2pt():
 def calculate_x_over_y(x, y):
     x_over_y = np.zeros_like(x)
     for i in range(x.size):
-        if y[i] >= 1e-3:
+        if np.abs(y[i]) >= 1e-3:
             x_over_y[i] = x[i] / y[i]
     return x_over_y
 
