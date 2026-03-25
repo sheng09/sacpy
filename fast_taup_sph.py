@@ -12,7 +12,7 @@ import pylab as pl
 __zero_k_tol__           = 1e-9
 __zero_dr_tol__          = 1e-5
 __zero_p_sph_tol__       = 1e-2    # Empirical value: p=1e-2 correspond to theta = 0.0005 degree from surface with v=6km/s
-__zero_k_mul_p_sph_tol__ = 1e-5    # Zero for c=p*k. Used in F2(...) function.
+__zero_k_mul_p_sph_tol__ = 1e-8    # Zero for c=p*k. Used in F2(...) function.
 __next_after_zero_p_sph__= 1e-10  # The next float after zero for p in spherical model.
 __ENABLE_NUMBA__ = False
 def jit_wrapper(*args, **kwargs):
