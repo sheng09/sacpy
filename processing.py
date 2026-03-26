@@ -433,7 +433,7 @@ def norm_mat2d(mat, row_wise=True, percentile=-1, scale=1.0):
 
 
 #############################################################################################################################
-# JIT cut
+# JIT cut and sum mat2d
 #############################################################################################################################
 @jit(nopython=True, nogil=True)
 def cut(xs, delta, t0, wnd_start, wnd_end):
@@ -506,6 +506,36 @@ def cut2d(mat, delta, t0, wnd_start, wnd_end, dx, x0, x_start, x_end):
     new_mat[new_irow0:new_irow1, new_icol0:new_icol1] = mat[irow0:irow1, icol0:icol1]
     return new_mat, new_t0, new_x0
 
+def sum2d(lst_of_mat_data):
+    """
+    Sum a list of mat2d provided by `lst_of_mat_data`.
+
+    :param lst_of_mat_data: a list of tuple of (ndarray object, delta, t0, dx, x0) that specifies the data and their metdata.
+
+    :return: a tuple of (ndarray object, delta, t0, dx, x0).
+                         0               1      2   3   4
+    """
+    if len(set([it[1] for it in lst_of_mat_data] ))  > 1:
+        raise ValueError("The delta of all the input data must be the same. Please check the input `lst_of_mat_data`.", set([it[1] for it in lst_of_mat_data] ) )
+    if len(set([it[3] for it in lst_of_mat_data] ) ) > 1:
+        raise ValueError("The dx of all the input data must be the same. Please check the input `lst_of_mat_data`.", set([it[3] for it in lst_of_mat_data] ) )
+    ################
+    tstart = np.max( [it[2] for it in lst_of_mat_data] )
+    xstart = np.max( [it[4] for it in lst_of_mat_data] )
+    tmp  = [it[2] + it[1]*(it[0].shape[1]-1) for it in lst_of_mat_data]
+    tend = np.min(tmp)
+    tmp  = [it[4] + it[3]*(it[0].shape[0]-1) for it in lst_of_mat_data]
+    xend = np.min(tmp)
+    ################
+    first_one = lst_of_mat_data[0]
+    result_mat, result_t0, result_x0 = cut2d(first_one[0], first_one[1], first_one[2], tstart, tend, first_one[3], first_one[4], xstart, xend)
+    for it in lst_of_mat_data[1:]:
+        new_mat, new_t0, new_x0 = cut2d(it[0], it[1], it[2], tstart, tend, it[3], it[4], xstart, xend)
+        if (new_t0 != result_t0) or (new_x0 != result_x0) or (new_mat.shape != result_mat.shape):
+            raise ValueError("The input axis are mis-matched. Please check the input `lst_of_mat_data`.")
+        result_mat += new_mat
+    ################
+    return result_mat, first_one[1], result_t0, first_one[3], result_x0
 
 #############################################################################################################################
 # Mask (not inplace)
