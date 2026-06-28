@@ -872,7 +872,7 @@ def cc_stack(ch1, ch2, znert_mat_spec_c64, lo_rad, la_rad, stack_mat_spec_c64, s
     #return(dtypes)
 
 
-def rd_proc_correlogram(h5file, filter_band=(0.02, 0.06666), taper_sec=50, taper_dist_range=(-1.0, 180.0), cut_sec=(0, 3000), norm=True ):
+def rd_proc_correlogram(h5file, filter_band=(0.02, 0.06666), taper_sec=50, taper_dist_range=(-1.0, 180.0), cut_sec=(0, 3000), norm=100 ):
     """
     Read a correlogram from the h5file, preprocess it, and return the processed correlogram.
 
@@ -881,6 +881,11 @@ def rd_proc_correlogram(h5file, filter_band=(0.02, 0.06666), taper_sec=50, taper
     2. Apply a taper given the distance range.
     3. Cut
     4. Normalize
+
+    norm: False, True, or a number between 0 and 100. 
+            False: no normalization.
+            True: normalize by the maximum value. 
+            A number (0, 100]: normalize by the percentile of the absolute value.
     """
     with h5_File(h5file, 'r') as h5:
         stack_mat   = h5['dat'][:]
@@ -907,15 +912,23 @@ def rd_proc_correlogram(h5file, filter_band=(0.02, 0.06666), taper_sec=50, taper
             cut1, cut2 = cut_sec
             cut1 = max(cut1, cc_t1)
             cut2 = min(cut2, cc_t2)
+            tmp = cc_t1
             cc_t1, cc_t2 = cut1, cut2
-            cut1, cut2 = int((cut1-cc_t1)/delta), int((cut2-cc_t1)/delta)
+            cut1, cut2 = int((cut1-tmp)/delta), int((cut2-tmp)/delta)
             stack_mat = stack_mat[:, cut1:cut2]
         ######
-        if norm:
+        if norm is False:
+            pass
+        elif norm is True:
             for xs in stack_mat:
                 v = xs.max()
                 if v> 0.0:
                     xs *= (1.0/v)
+        elif isinstance(norm, (int, float)):
+            for xs in stack_mat:
+                v = np.percentile(np.abs(xs), norm)
+                if v> 0.0:
+                    xs *= (norm/v)
         ######
         return stack_mat, stack_count, stack_bin_centers, (cc_t1, cc_t2, delta)
     pass

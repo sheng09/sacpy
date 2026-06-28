@@ -559,9 +559,11 @@ def mask_time_window(xs, delta, t0, wnds, fill_value=0.0, taper_half_size=0, tap
     :return:           a new 1D array with the same size as `xs`, but only values within the time window are kept.
     """
     wnds = np.array(wnds).reshape((-1, 2)) # make sure wnds is a 2D array
+    tmp = wnds.copy()
     wnds = np.array( [it for it in wnds if it[0] < it[1] ]) # remove invalid windows
     if wnds.size  <= 0:
-        raise ValueError("No valid time windows provided. Please check the input `wnds`.")
+        return xs
+        #raise ValueError("No valid time windows provided. Please check the input `wnds`.")
     ####
     wnds = wnds[np.argsort(wnds[:,0])]
     tmp = [wnds[0,0], wnds[0,1]] # start with the first window

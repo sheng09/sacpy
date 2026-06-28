@@ -1564,4 +1564,9 @@ if __name__ == '__main__':
     #benchmark_phase_x2pt()
     #benchmark_manyx2t()
     #benchmark_manyx2t2()
-    fix_zero_division()
+    #fix_zero_division()
+
+    y1 = np.array([0.2, 0.3])
+    y2 = np.array([3480.0, 1200.0])
+    y3 = np.array([10.0, 10.0])
+    _,_,data_ref = many_dist2trvt(y1, y2, y3, 1e-5, 1000)

@@ -545,12 +545,12 @@ def compress_human_cc_feature_name(human_feature_name, debug=False):
             if temp[phase] == 1:
                 part1 += phase
             else:
-                part1 += '{%s}_%d' % (phase, temp[phase])
+                part1 += '{%s}{%d}' % (phase, temp[phase])
         else:
             if temp[phase] == -1:
                 part2 += phase
             else:
-                part2 += '{%s}_%d' % (phase, -temp[phase])
+                part2 += '{%s}{%d}' % (phase, -temp[phase])
     ####
     result = '%s-%s' % (part1, part2)
     if part2 == '':
