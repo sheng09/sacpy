@@ -40,9 +40,17 @@ class Scene3D:
         else:
             self.pv_plotter = pv.Plotter(**pv_plotter_kargs)
         if number_of_peels>0:
-            self.pv_plotter.enable_depth_peeling(number_of_peels=number_of_peels) #  to handles multiple transparent surfaces correctly
+            nrow, ncol = self.pv_plotter.shape
+            for irow in range(nrow):
+                for icol in range(ncol):
+                    self.pv_plotter.subplot(irow, icol)
+                    self.pv_plotter.enable_depth_peeling(number_of_peels=number_of_peels) #  to handles multiple transparent surfaces correctly
         else:
-            self.pv_plotter.disable_depth_peeling()  # disable depth peeling for efficiency
+            nrow, ncol = self.pv_plotter.shape
+            for irow in range(nrow):
+                for icol in range(ncol):
+                    self.pv_plotter.subplot(irow, icol)
+                    self.pv_plotter.disable_depth_peeling()  # disable depth peeling for efficiency
         self.disable_clip()
         self.enable_add_mesh_to_plotter()
     def enable_clip(self, clip_kw={'normal': (0, 0, 1), 'origin': (0, 0, 0)},
@@ -166,7 +174,7 @@ class Scene3D:
         if shape == 'sphere':
             mesh = pv.Sphere(center=(x, y, z), direction=direction, radius=size, theta_resolution=180, phi_resolution=90)
         elif shape == 'cone':
-            mesh = pv.Cone(center=(x, y, z), direction=direction, height=size*2, capping=True, angle=30, resolution=90)
+            mesh = pv.Cone(center=(x, y, z), direction=direction, height=size*2, capping=True, angle=28, resolution=90)
         elif shape == 'cylinder':
             mesh = pv.Cylinder(center=(x, y, z), direction=direction, radius=size, height=size*2, resolution=90, capping=True)
         else:
