@@ -756,7 +756,8 @@ def get_stack_index_mat_dif_epd(n, evlo_rad, evla_rad, stlo_rad, stla_rad, dist_
         stack_index_mat_nn[ista1, ista1:] = istack
         stack_index_mat_nn[ista1:, ista1] = istack
 @jit(nopython=True, nogil=True)
-def cc_stack(ch1, ch2, znert_mat_spec_c64, lo_rad, la_rad, stack_mat_spec_c64, stack_count, stack_index_mat_nn, selection_mat_nn, wmat_nn, cc12_method, spectra_freqs, cc_right_tshift_sec):
+def cc_stack(ch1, ch2, znert_mat_spec_c64, lo_rad, la_rad, stack_mat_spec_c64, stack_count, stack_index_mat_nn, selection_mat_nn, wmat_nn, cc12_method, spectra_freqs, cc_right_tshift_sec,
+             znert_mat_spec_c64_2nd, flag_use_different_2nd=False):
     """
     Compute the cross-correlation and stack in spectral domain.
     #
@@ -783,8 +784,20 @@ def cc_stack(ch1, ch2, znert_mat_spec_c64, lo_rad, la_rad, stack_mat_spec_c64, s
                         0(default): only consider cc(tr[i1], tr[i2]) where i1<=i2
                         1:          only consider cc(tr[i2], tr[i1]) where i1<=i2
                         2:          consider both cc(tr[i1], tr[i2]) and cc(tr[i2], tr[i1]) no matter i1 or i2
+    znert_mat_spec_c64_2nd: In default, use this for the same as `znert_mat_spec_c64`.
+                            However, can use a different matrix so that we compute cross-correlation
+                            between two different sets of spectra.
+                            #
+                            This parameter is only useful when `flag_use_different_2nd` is True.
+    flag_use_different_2nd: If True, use `znert_mat_spec_c64_2nd` for the second spectra.
+                            If False (default), use `znert_mat_spec_c64`.          
     """
     mat_spec = znert_mat_spec_c64
+    #### In default, use the same spectra for the 2nd station of each station pair.
+    mat_spec_2nd = znert_mat_spec_c64 
+    if flag_use_different_2nd:
+        mat_spec_2nd = znert_mat_spec_c64_2nd
+    ####
     flag_IR = (ch1==1 or ch1==2 or ch2==1 or ch2==2)
     ncmp = 5
     n    = mat_spec.shape[0]//ncmp
@@ -812,15 +825,15 @@ def cc_stack(ch1, ch2, znert_mat_spec_c64, lo_rad, la_rad, stack_mat_spec_c64, s
         start, end = 0, n
         if cc12_method == 0:
             start = ista1
-        if cc12_method == 1:
+        elif cc12_method == 1:
             end = ista1+1
         for ista2 in range(start, end):
             #lo2, la2 = lo_rad[ista2], la_rad[ista2]
-            z2 = mat_spec[ista2*ncmp]
-            n2 = mat_spec[ista2*ncmp+1]
-            e2 = mat_spec[ista2*ncmp+2]
-            err2 = mat_spec[ista2*ncmp+3]
-            ert2 = mat_spec[ista2*ncmp+4]
+            z2 = mat_spec_2nd[ista2*ncmp]
+            n2 = mat_spec_2nd[ista2*ncmp+1]
+            e2 = mat_spec_2nd[ista2*ncmp+2]
+            err2 = mat_spec_2nd[ista2*ncmp+3]
+            ert2 = mat_spec_2nd[ista2*ncmp+4]
             ####
             if (selection_mat_nn[ista1, ista2] > 0) and (np.abs(wmat_nn[ista1, ista2]) >1e-10):
                 if flag_IR:
@@ -1219,7 +1232,8 @@ class CS_InterRcv:
     def __del__(self):
         if self.intermediate_out_h5fid is not None:
             self.intermediate_out_h5fid.close()
-    def add(self, zne_mat_f32, stlo_rad, stla_rad, evlo_rad, evla_rad, event_name=None, local_time_summary=None, wmat_nn=None, inter_dist_add_deg=None, cc_right_tshift_sec=None, random_selection_ratio=1.0001):
+    def add(self, zne_mat_f32, stlo_rad, stla_rad, evlo_rad, evla_rad, event_name=None, local_time_summary=None, wmat_nn=None, inter_dist_add_deg=None, cc_right_tshift_sec=None, random_selection_ratio=1.0001,
+            zne_mat_f32_2nd=None):
         """
         local_time_summary: a TimeSummary object to record the time consumption for this function.
                             If `None`, a internal empty TimeSummary object will be created.
@@ -1229,6 +1243,12 @@ class CS_InterRcv:
                             adding the same time summary multiple times.
         inter_dist_add_deg:  a NxN matrix for adding individual inter-receiver (or inter-source) distances. Each element is in deg.
         cc_right_tshift_sec: a NxN matrix for rightwards shifting individual cross-correlation function. Each element is in sec.
+        ##
+        zne_mat_f32_2nd: the records for the 2nd station of each station pair.
+                         Default is None, which means using records `zne_mat_f32` for the 2nd station.
+                         Note that the station lo and la are the same. Just vary the waveform records.
+                         This function is added for testing inter-receiver cross-correlations between different
+                         source mechanisms (e.g., explos vs. thrust).
         """
         if local_time_summary is None:
             local_time_summary = TimeSummary(accumulative=True)
@@ -1243,6 +1263,16 @@ class CS_InterRcv:
         log_print( 2, 'stla:        ', stla_rad.shape, stla_rad.dtype)
         log_print( 2, 'evlo:        ', evlo_rad.shape, evlo_rad.dtype)
         log_print( 2, 'evla:        ', evla_rad.shape, evla_rad.dtype, flush=True)
+        #
+        if (zne_mat_f32_2nd is not None) and (not self.dummy_cc):
+            if zne_mat_f32_2nd.shape != zne_mat_f32.shape:
+                raise ValueError('The shape of `zne_mat_f32_2nd` is not the same as `zne_mat_f32`!')
+            flag_use_different_2nd = True
+            log_print( 2, 'Use different records for the 2nd station of each station pair.')
+            log_print( 2, 'The source and station locations are the same. Just vary the waveform records.')
+            log_print( 2, 'This does not affect gcd/daz/stlc/gc_center/random_pair selection, using weight matrix, stack index-related things.')
+            log_print( 2, 'This is only meaningful for inter-receiver correlation until now.')
+            log_print( 2, 'zne_mat_f32_2nd: ', zne_mat_f32_2nd.shape, zne_mat_f32_2nd.dtype)
         ############################################################################################################
         # start selection correlation pairs
         if self.inter_src: # inter-source correlation
@@ -1346,6 +1376,18 @@ class CS_InterRcv:
             log_print(2, 'stack_index_mat_nn: ', stack_index_mat_nn.shape, stack_index_mat_nn.dtype)
             log_print(2, 'Finished.', flush=True)
         ############################################################################################################
+        ### only need to take care of those time series for the selected correlation pairs and with non-zero weights
+        ### only need for non-dummy-cc mode
+        if (not self.dummy_cc):
+            flag_used = np.zeros(cc_lo.size, dtype=np.uint8)
+            for ind in range(cc_lo.size):
+                v = np.any(ccpairs_selection_mat[ind, :]) & np.any(ccpairs_selection_mat[:, ind])
+                v2 = True
+                if flag_wmat_nn:
+                    v2 = np.any(np.abs(wmat_nn[ind, :])>1e-10) & np.any(np.abs(wmat_nn[:, ind])>1e-10)
+                flag_used[ind]   = (v & v2)
+            ind_selected = [ind*5+j for ind, v in enumerate(flag_used) if v for j in range(5)]
+        ############################################################################################################
         #### get ZNERT if necessary, the RT here refers to event-receiver R and T (ERR, ERT)
         if (not self.dummy_cc):
             with Timer(tag='zne2znert', verbose=False, summary=local_time_summary):
@@ -1374,18 +1416,6 @@ class CS_InterRcv:
                 log_print(2, 'nt4fft:        ', self.nt4fft)
                 log_print(2, 'Finished.')
                 log_print(2, 'znert_mat_f32: ', znert_mat_f32.shape, znert_mat_f32.dtype, flush=True)
-        ############################################################################################################
-        ### only need to take care of those time series for the selected correlation pairs and with non-zero weights
-        ### only need for non-dummy-cc mode
-        if (not self.dummy_cc):
-            flag_used = np.zeros(cc_lo.size, dtype=np.uint8)
-            for ind in range(cc_lo.size):
-                v = np.any(ccpairs_selection_mat[ind, :]) & np.any(ccpairs_selection_mat[:, ind])
-                v2 = True
-                if flag_wmat_nn:
-                    v2 = np.any(np.abs(wmat_nn[ind, :])>1e-10) & np.any(np.abs(wmat_nn[:, ind])>1e-10)
-                flag_used[ind]   = (v & v2)
-            ind_selected = [ind*5+j for ind, v in enumerate(flag_used) if v for j in range(5)]
         ############################################################################################################
         #### whiten the input data in time series
         if (not self.dummy_cc):
@@ -1520,8 +1550,130 @@ class CS_InterRcv:
                 log_print(2, 'Finished.')
                 log_print(2, 'spectra_c64: ', spectra_c64.shape, spectra_c64.dtype, flush=True)
         ############################################################################################################
+        ############################################################################################################
+        #### perform for the 2nd if necessary:
+        #### 1. ZNE->ZNERT
+        #### 2. whiten
+        #### 3. remove Nan or Inf
+        #### 4. (not used) Finish the correlation selection
+        #### 5. (not used) Output the intermediate data
+        #### 6. FFT
+        #
+        #
+        #### 1. ZNE->ZNERT
+        if flag_use_different_2nd and (not self.dummy_cc):
+            with Timer(tag='(2nd) zne2znert', verbose=False, summary=local_time_summary):
+                log_print(1, '(2nd) Cutting and making ZNERT matrix from the ZNE...')
+                idx0, idx1 = self.cut_idx_range
+                idx0 = max(idx0, 0)
+                idx1 = min(idx1, zne_mat_f32_2nd.shape[1])
+                local_sz = idx1-idx0
+                if FLAG_PYFFTW_USED:
+                    znert_mat_f32_2nd  = pyfftw.zeros_aligned((zne_mat_f32_2nd.shape[0]//3*5, self.nt4mem), dtype=np.float32)
+                else:
+                    znert_mat_f32_2nd  = np.zeros(            (zne_mat_f32_2nd.shape[0]//3*5, self.nt4mem), dtype=np.float32)
+                ### Note: the nt4mem is different from nt4cut.
+                ### nt4mem is used for cc_fftsize and address-aligned memory allocation
+                ### nt4cut is for cutting the input time series.
+                ### nt4mem >= nt4cut, and zeros are padded for those additional slots in nt4mem compared to nt4cut.
+                ### nt4cut == self.cut_idx_range[1]-self.cut_idx_range[0]
+                ### nt4mem != self.cut_idx_range[1]-self.cut_idx_range[0]
+                zne2znert(zne_mat_f32_2nd[:, idx0:idx1], znert_mat_f32_2nd, stlo_rad, stla_rad, evlo_rad, evla_rad, self.inter_src)
+                del zne_mat_f32_2nd
+                log_print(2, 'ne_at_src:     ', self.inter_src)
+                log_print(2, 'cut_idx here:  [%d, %d)' % (idx0, idx1) )
+                log_print(2, 'nt here:       ', local_sz)
+                log_print(2, 'cut_idx_range: [%d, %d)' % (self.cut_idx_range[0], self.cut_idx_range[1]) )
+                log_print(2, 'nt4cut:        ', self.nt4cut)
+                log_print(2, 'nt4fft:        ', self.nt4fft)
+                log_print(2, 'Finished.')
+                log_print(2, 'znert_mat_f32_2nd: ', znert_mat_f32_2nd.shape, znert_mat_f32_2nd.dtype, flush=True)
+        #### 2. whiten
+        if flag_use_different_2nd and (not self.dummy_cc):
+            if self.wtlen:
+                with Timer(tag='(2nd) wt', verbose=False, summary=local_time_summary):
+                    log_print(1, '(2nd) Temporal normalization for the ZNERT matrix...')
+                    for ind in ind_selected:
+                        xs = znert_mat_f32_2nd[ind]
+                        if xs.max() > xs.min():
+                            tnorm_f32(xs[:local_sz],   self.delta, self.wtlen, self.wt_f1, self.wt_f2, 1.0e-5, self.whiten_taper_halfsize)
+                    log_print(2, 'Finished.', flush=True)
+            if self.wflen:
+                with Timer(tag='(2nd) wf', verbose=False, summary=local_time_summary):
+                    su_wf_i1, su_wf_i2 = self.whiten_speedup_spectra_index_range # default is (-1, -1) to disable speedup
+                    log_print(1, '(2nd) Spectral whitening for the ZNERT matrix...')
+                    log_print(2, 'wf_fftsize:                        ', self.wf_fftsize )
+                    log_print(2, 'whiten_speedup_spectra_index_range:', (su_wf_i1, su_wf_i2) )
+                    wf_fftsize = self.wf_fftsize
+                    for ind in ind_selected:
+                        xs = znert_mat_f32_2nd[ind]
+                        if xs.max() > xs.min():
+                            fwhiten_f32(xs[:local_sz], self.delta, self.wflen, 1.0e-5, self.whiten_taper_halfsize,
+                                        su_wf_i1, su_wf_i2, wf_fftsize )
+                    log_print(2, 'Finished.', flush=True)
+        #### 3. remove Nan or Inf
+        nan_ind = list()
+        if flag_use_different_2nd and (not self.dummy_cc):
+            not_valid = lambda xs: np.any( np.isnan(xs) ) or np.any( np.isinf(xs) ) or (np.max(xs) == np.min(xs) )
+            with Timer(tag='(2nd) fix_nan', verbose=False, summary=local_time_summary):
+                log_print(1, '(2nd) Zeroing the stations with any Nan of Inf in any of ZNERT...')
+                nan_ind = [idx//5 for idx, xs in enumerate(znert_mat_f32_2nd) if not_valid(xs) ]
+                nan_ind = list(set(nan_ind) )
+                for ista in nan_ind:
+                    znert_mat_f32_2nd[ista*5,   :] = 0.0
+                    znert_mat_f32_2nd[ista*5+1, :] = 0.0
+                    znert_mat_f32_2nd[ista*5+2, :] = 0.0
+                    znert_mat_f32_2nd[ista*5+3, :] = 0.0
+                    znert_mat_f32_2nd[ista*5+4, :] = 0.0
+                    ccpairs_selection_mat[ista, :] = 0
+                    ccpairs_selection_mat[:, ista] = 0
+                log_print(2, 'Finished.', flush=True)
+        if len(nan_ind) > 0:
+            ind_selected = set(ind_selected) - set( [it*5+j for it in nan_ind for j in range(5)] )
+            ind_selected = sorted(ind_selected)
+        #### 4. (not used) Finish the correlation selection
+        #### 5. (not used) Output the intermediate data
+        #### 6. FFT 
+        if flag_use_different_2nd and (not self.dummy_cc):
+            with Timer(tag='(2nd) fft', verbose=False, summary=local_time_summary):
+                log_print(1, '(2nd) FFTing...')
+                nrow = znert_mat_f32_2nd.shape[0]
+                i1, i2 = self.cc_speedup_spectra_index_range
+                if FLAG_PYFFTW_USED:
+                    spectra_c64_2nd = pyfftw.zeros_aligned((nrow, i2-i1), dtype=np.complex64)
+                else:
+                    spectra_c64_2nd = np.zeros(            (nrow, i2-i1), dtype=np.complex64)
+                ####
+                if FLAG_PYFFTW_USED:
+                    ####method: pyfftw interface fft
+                    ###pyffftw_interfaces_cache.enable()
+                    ###for irow in range(nrow): # do fft one by one may save some memory
+                    ###    spectra_c64_2nd[irow] = rfft(znert_mat_f32_2nd[irow], self.cc_fftsize)[i1:i2]
+                    #method: pyfftw builder fft
+                    buf_spec = self.pyfftw_buf_spec
+                    rfft_obj = self.pyfftw_rfft_obj
+                    #for irow in range(nrow):
+                    for irow in ind_selected: # only need those valid ind
+                        rfft_obj(znert_mat_f32_2nd[irow], buf_spec, normalise_idft=True)
+                        spectra_c64_2nd[irow] = buf_spec[i1:i2]
+                else:
+                    #method: scipy fft
+                    #for irow in range(nrow):
+                    for irow in ind_selected: # only need those valid ind
+                        spectra_c64_2nd[irow] = rfft(znert_mat_f32_2nd[irow], self.cc_fftsize)[i1:i2]# method: scipy.fft.rfft
+                del znert_mat_f32_2nd
+                ### get the Frequency array
+                ## no needed as the `spectra_freqs` is already obtained from the 1st station pair
+                #spectra_freqs = rfftfreq(self.cc_fftsize, d=self.delta)[i1:i2].astype(np.float32)
+                ###
+                log_print(2, 'Finished.')
+                #log_print(2, 'spectra_c64: ', spectra_c64_2nd.shape, spectra_c64_2nd.dtype, flush=True)
+        ############################################################################################################
+        ############################################################################################################
         #### cc & stack
         if (not self.dummy_cc):
+            if not flag_use_different_2nd:
+                spectra_c64_2nd = spectra_c64
             with Timer(tag='ccstack', verbose=False, summary=local_time_summary):
                 log_print(1, 'cc&stack...')
                 ####
@@ -1535,7 +1687,8 @@ class CS_InterRcv:
                 stack_count = self.stack_count
                 stack_mat_spec = self.stack_mat_spec
                 #print(spectra_c64.dtype, stack_mat_spec.dtype, stack_count.dtype, stack_index_mat_nn.dtype, selection_mat.dtype, flush=True)
-                cc_stack(ch1, ch2, spectra_c64, cc_lo, cc_la, stack_mat_spec, stack_count, stack_index_mat_nn, ccpairs_selection_mat, wmat_nn, self.cc12_method, spectra_freqs, cc_right_tshift_sec)
+                cc_stack(ch1, ch2, spectra_c64, cc_lo, cc_la, stack_mat_spec, stack_count, stack_index_mat_nn, ccpairs_selection_mat, wmat_nn, self.cc12_method, spectra_freqs, cc_right_tshift_sec,
+                         spectra_c64_2nd, flag_use_different_2nd )
                 log_print(2, 'Finished.', flush=True)
         ############################################################################################################
         #t_total = time_time() - t0
